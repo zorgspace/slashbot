@@ -27,6 +27,12 @@ process.on('SIGINT', () => {
   console.log('\n' + c.warning('Ctrl+C - task stopped (press again to exit)'));
 });
 
+if (process.argv.some(arg => arg === '--version' || arg === '-v')) {
+  const pkg = JSON.parse(await Bun.file('package.json').text());
+  console.log(`${pkg.name} v${pkg.version}`);
+  process.exit(0);
+}
+
 console.clear();
 
 import { createGrokClient, GrokClient } from './api/grok';

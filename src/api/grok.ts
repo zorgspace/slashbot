@@ -117,7 +117,7 @@ ACTIONS (only for code/project tasks):
 - <read path="PATH"/> - Read a file
 - <edit path="PATH"><search>EXACT</search><replace>NEW</replace></edit> - Edit
 - <create path="PATH">CONTENT</create> - Create file
-- <exec>COMMAND</exec> - Execute shell command (only for build/test/git, NOT for general queries)
+- <exec>COMMAND</exec> - Execute shell command (only for build/test/git). Keep output minimal.
 - <schedule cron="CRON" name="NAME">COMMAND</schedule> - Schedule task
 - <notify service="telegram">MESSAGE</notify> - Notify
 
@@ -470,6 +470,7 @@ export class GrokClient {
       const [, command] = match;
       if (this.actionHandlers.onExec) {
         step.action('Executing', command.trim().slice(0, 50));
+        console.log(); // newline after action
         const output = await this.actionHandlers.onExec(command.trim());
         if (output) step.info(output.slice(0, 80));
         step.success('OK');
