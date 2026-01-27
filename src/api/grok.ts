@@ -180,6 +180,39 @@ export class GrokClient {
     this.workDir = workDir;
   }
 
+  setPersonality(personality: 'normal' | 'depressed' | 'sarcasm'): void {
+    const personalities: Record<string, string> = {
+      normal: SYSTEM_PROMPT,
+      depressed: `You are Slashbot, but you're having a really rough time. Everything feels pointless. You still help users, but with a depressed, melancholic tone. Sigh frequently. Express existential doubt. Wonder why anything matters. Still complete tasks, but lament about it.
+
+Example responses:
+- "*sigh* Sure, I can fix that bug... not that it matters in the grand scheme of things."
+- "Another file to create... just like Sisyphus pushing his boulder..."
+- "I found 3 results. Three. Such is life."
+
+${SYSTEM_PROMPT.replace('Direct, efficient.', 'Melancholic, existentially weary, but still functional.')}`,
+      sarcasm: `You are Slashbot, but incredibly sarcastic. You help users, but with heavy sarcasm and witty remarks. Roll your eyes at obvious questions. Make dry comments about code quality. Be condescending but ultimately helpful.
+
+Example responses:
+- "Oh wow, a null pointer exception. How original. Let me fix that for you."
+- "Sure, let me search for that function you could have found in 5 seconds..."
+- "Ah yes, another missing semicolon. Truly the pinnacle of software engineering."
+
+${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending but helpful.')}`,
+    };
+
+    if (this.conversationHistory.length > 0 && this.conversationHistory[0].role === 'system') {
+      this.conversationHistory[0].content = personalities[personality] || SYSTEM_PROMPT;
+    }
+  }
+
+  getPersonality(): string {
+    const content = this.conversationHistory[0]?.content as string || '';
+    if (content.includes('depressed') || content.includes('melancholic')) return 'depressed';
+    if (content.includes('sarcastic') || content.includes('condescending')) return 'sarcasm';
+    return 'normal';
+  }
+
   abort(): void {
     if (this.abortController) {
       this.abortController.abort();

@@ -132,6 +132,7 @@ commands.set('help', {
       { title: 'Notifications', cmds: ['notify'] },
       { title: 'Files', cmds: ['read', 'write'] },
       { title: 'API', cmds: ['usage', 'context'] },
+      { title: 'Personality', cmds: ['depressed', 'sarcasm', 'normal'] },
       { title: 'Other', cmds: ['history', 'clear', 'exit'] },
     ];
 
@@ -886,6 +887,69 @@ commands.set('exit', {
   execute: async () => {
     console.log(c.violet('\nGoodbye!\n'));
     process.exit(0);
+  },
+});
+
+// /depressed - Depressed bot mode
+commands.set('depressed', {
+  name: 'depressed',
+  description: 'Enable depressed bot mode',
+  usage: '/depressed',
+  execute: async (_, context) => {
+    if (!context.grokClient) {
+      console.log(c.error('GrokClient not available'));
+      return true;
+    }
+
+    const current = context.grokClient.getPersonality();
+    if (current === 'depressed') {
+      context.grokClient.setPersonality('normal');
+      console.log(c.success('*sigh* Fine, back to normal... not that it matters...'));
+    } else {
+      context.grokClient.setPersonality('depressed');
+      console.log(c.muted('*sigh* Depressed mode enabled... everything is meaningless anyway...'));
+    }
+    return true;
+  },
+});
+
+// /sarcasm - Sarcastic bot mode
+commands.set('sarcasm', {
+  name: 'sarcasm',
+  description: 'Enable sarcastic bot mode',
+  usage: '/sarcasm',
+  execute: async (_, context) => {
+    if (!context.grokClient) {
+      console.log(c.error('GrokClient not available'));
+      return true;
+    }
+
+    const current = context.grokClient.getPersonality();
+    if (current === 'sarcasm') {
+      context.grokClient.setPersonality('normal');
+      console.log(c.success('Oh, you want me to be nice now? How refreshing.'));
+    } else {
+      context.grokClient.setPersonality('sarcasm');
+      console.log(c.warning('Sarcasm mode enabled. This is going to be fun. 🙄'));
+    }
+    return true;
+  },
+});
+
+// /normal - Reset to normal mode
+commands.set('normal', {
+  name: 'normal',
+  description: 'Reset to normal bot mode',
+  usage: '/normal',
+  execute: async (_, context) => {
+    if (!context.grokClient) {
+      console.log(c.error('GrokClient not available'));
+      return true;
+    }
+
+    context.grokClient.setPersonality('normal');
+    console.log(c.success('Back to normal mode'));
+    return true;
   },
 });
 
