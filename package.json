@@ -1,0 +1,28 @@
+{
+  "name": "slashbot",
+  "version": "1.0.0",
+  "description": "CLI assistant powered by Grok API - lightweight Claude Code alternative",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "slashbot": "./dist/slashbot"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build --compile --minify src/index.ts --outfile dist/slashbot",
+    "start": "./dist/slashbot",
+    "tsc": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "clipboardy": "^4.0.0",
+    "terminal-image": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.3.0"
+  },
+  "keywords": ["cli", "ai", "grok", "terminal", "assistant"],
+  "author": "",
+  "license": "MIT"
+}
