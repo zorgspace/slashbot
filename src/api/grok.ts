@@ -144,6 +144,8 @@ export class GrokClient {
   private contextCompressionEnabled: boolean = false;
   private maxContextMessages: number = 20;
   private workDir: string = '';
+  private abortController: AbortController | null = null;
+  private currentThinking: ThinkingAnimation | null = null;
 
   constructor(config: GrokConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -174,6 +176,17 @@ export class GrokClient {
 
   setWorkDir(workDir: string): void {
     this.workDir = workDir;
+  }
+
+  abort(): void {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    if (this.currentThinking) {
+      this.currentThinking.stop();
+      this.currentThinking = null;
+    }
   }
 
   async chat(userMessage: string): Promise<{ response: string; thinking: string }> {
@@ -270,6 +283,10 @@ export class GrokClient {
     let buffer = '';
     let displayBuffer = ''; // Buffer to handle partial XML tags
     const thinking = new ThinkingAnimation();
+    this.currentThinking = thinking;
+
+    // Create abort controller for this request
+    this.abortController = new AbortController();
 
     // Start thinking animation
     thinking.start('Thinking...', this.workDir);
@@ -284,6 +301,7 @@ export class GrokClient {
         'Authorization': `Bearer ${this.config.apiKey}`,
       },
       body: JSON.stringify(requestBody),
+      signal: this.abortController.signal,
     });
 
     if (!response.ok) {
