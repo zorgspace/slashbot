@@ -366,6 +366,8 @@ export class GrokClient {
 
     // Stop thinking animation (shows duration)
     thinking.stop();
+    this.currentThinking = null;
+    this.abortController = null;
 
     // Clean all XML tags from display content
     const cleanContent = responseContent

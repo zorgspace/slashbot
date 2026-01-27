@@ -9,6 +9,8 @@ import * as readline from 'readline';
 import { banner, inputPrompt, inputClose, responseStart, c, errorBlock, colors } from './ui/colors';
 
 let lastCtrlC = 0;
+let currentBot: Slashbot | null = null;
+
 process.on('SIGINT', () => {
   const now = Date.now();
   if (now - lastCtrlC < 500) {
@@ -16,6 +18,12 @@ process.on('SIGINT', () => {
     process.exit(0);
   }
   lastCtrlC = now;
+
+  // Abort current operation
+  if (currentBot) {
+    currentBot.abortCurrentOperation();
+  }
+
   console.log('\n' + c.warning('Ctrl+C - task stopped (press again to exit)'));
 });
 
@@ -69,6 +77,12 @@ class Slashbot {
       codeEditor: this.codeEditor,
       reinitializeGrok: () => this.initializeGrok(),
     };
+  }
+
+  abortCurrentOperation(): void {
+    if (this.grokClient) {
+      this.grokClient.abort();
+    }
   }
 
   private async initializeGrok(): Promise<void> {
@@ -268,6 +282,11 @@ class Slashbot {
       await this.grokClient.chat(trimmed);
       console.log(inputClose());
     } catch (error) {
+      // Don't show error for aborted requests
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log(inputClose());
+        return;
+      }
       console.log(errorBlock(error instanceof Error ? error.message : String(error)));
       console.log(inputClose());
     }
@@ -447,6 +466,7 @@ ${c.bold('Commands:')}
 
   // Start Slashbot
   const bot = new Slashbot();
+  currentBot = bot;
   await bot.start();
 }
 
