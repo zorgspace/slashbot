@@ -27,9 +27,17 @@ process.on('SIGINT', () => {
   console.log('\n' + c.warning('Ctrl+C - task stopped (press again to exit)'));
 });
 
+declare const __VERSION__: string | undefined;
+
+let versionStr = process.env.SLASHBOT_VERSION || "dev";
+try {
+  // @ts-expect-error build-time __VERSION__ injection
+  versionStr = __VERSION__ || versionStr;
+} catch {}
+const VERSION = versionStr;
+
 if (process.argv.some(arg => arg === '--version' || arg === '-v')) {
-  const pkg = JSON.parse(await Bun.file('package.json').text());
-  console.log(`${pkg.name} v${pkg.version}`);
+  console.log(`slashbot v${VERSION}`);
   process.exit(0);
 }
 
@@ -44,7 +52,7 @@ import { createConfigManager, ConfigManager } from './config/config';
 import { createCodeEditor, CodeEditor } from './code/editor';
 import { createCommandPermissions, CommandPermissions } from './security/permissions';
 
-const VERSION = 'v1.0.0';
+
 
 interface SlashbotConfig {
   basePath?: string;

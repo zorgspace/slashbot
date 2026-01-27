@@ -1,6 +1,6 @@
 {
   "name": "slashbot",
-  "version": "1.0.3",
+  "version": "1.0.1",
   "description": "CLI assistant powered by Grok API - lightweight Claude Code alternative",
   "type": "module",
   "main": "src/index.ts",
@@ -8,8 +8,8 @@
     "slashbot": "./dist/slashbot"
   },
   "scripts": {
-    "dev": "bun run src/index.ts",
-    "build": "bun build --compile --minify src/index.ts --outfile dist/slashbot",
+    "dev": "version=$(bun -e 'console.log(JSON.parse(await Bun.file(\"package.json\").text()).version)') && SLASHBOT_VERSION=$version bun run src/index.ts",
+    "build": "version=$(bun -e 'console.log(JSON.parse(await Bun.file(\"package.json\").text()).version)') && bun build --compile --minify src/index.ts --define __VERSION__=\\\"${version}\\\" --outfile dist/slashbot",
     "build:all": "./scripts/build.sh",
     "deploy": "./scripts/deploy.sh",
     "start": "./dist/slashbot",
