@@ -10,11 +10,9 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "bun build --compile --minify src/index.ts --outfile dist/slashbot",
-    
     "start": "./dist/slashbot",
     "tsc": "tsc",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "clipboardy": "^4.0.0",
