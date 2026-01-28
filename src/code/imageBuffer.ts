@@ -1,9 +1,11 @@
-import fs from 'fs';
-import path from 'path';
+/**
+ * Image Buffer Module
+ * Stores image paths or base64 for reference in conversations
+ */
 
-export const imageBuffer: string[] = []; // paths ou base64
+export const imageBuffer: string[] = []; // image paths or base64 data
 
-export function addImage(filePath: string) {
+export function addImage(filePath: string): void {
   imageBuffer.push(filePath);
 }
 

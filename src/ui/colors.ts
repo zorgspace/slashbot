@@ -263,39 +263,58 @@ export class ThinkingAnimation {
   }
 }
 
-// Step-by-step process display with colored dots (compact)
+// Claude Code-style output formatting
 export const step = {
-  // Search actions (gray dot) - inline result
+  // User prompt (yellow >)
+  prompt: (message: string) => {
+    console.log(`${colors.warning}>${colors.reset} ${colors.white}${message}${colors.reset}`);
+  },
+  // Assistant message (white bullet)
+  message: (text: string) => {
+    console.log(`${colors.white}●${colors.reset} ${text}`);
+  },
+  // Tool call with result underneath (white bullet + tree)
+  tool: (toolName: string, args?: string) => {
+    const argsStr = args ? `(${args})` : '';
+    console.log(`${colors.white}●${colors.reset} ${colors.bold}${toolName}${colors.reset}${colors.muted}${argsStr}${colors.reset}`);
+  },
+  // Tool result (tree branch └)
+  result: (text: string) => {
+    console.log(`  ${colors.muted}└${colors.reset} ${colors.muted}${text}${colors.reset}`);
+  },
+  // Search actions (gray dot)
   search: (label: string, detail?: string) => {
     const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    process.stdout.write(`${colors.muted}●${colors.reset} ${label}${detailStr}`);
+    console.log(`${colors.muted}●${colors.reset} ${label}${detailStr}`);
   },
-  // Edit actions (red dot) - inline result
+  // Edit actions (red dot)
   edit: (label: string, detail?: string) => {
     const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    process.stdout.write(`${colors.error}●${colors.reset} ${label}${detailStr}`);
+    console.log(`${colors.error}●${colors.reset} ${label}${detailStr}`);
   },
-  // Exec/action (green dot) - inline result
+  // Exec/action (green dot)
   action: (label: string, detail?: string) => {
     const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    process.stdout.write(`${colors.success}●${colors.reset} ${label}${detailStr}`);
+    console.log(`${colors.success}●${colors.reset} ${label}${detailStr}`);
   },
+  // Success (green bullet)
   success: (label: string, detail?: string) => {
     const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    console.log(` ${colors.success}●${colors.reset} ${label}${detailStr}`);
+    console.log(`${colors.success}●${colors.reset} ${label}${detailStr}`);
   },
+  // Error (red X)
   error: (label: string, detail?: string) => {
     const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    console.log(` ${colors.error}✗${colors.reset} ${label}${detailStr}`);
+    console.log(`${colors.error}✗${colors.reset} ${label}${detailStr}`);
   },
+  // Info (muted, indented)
   info: (label: string) => {
-    console.log(`  ${colors.muted}${label}${colors.reset}`);
+    console.log(`  ${colors.muted}└${colors.reset} ${colors.muted}${label}${colors.reset}`);
   },
-  // Show diff with red/green lines (more compact)
+  // Show diff with red/green lines
   diff: (removed: string, added: string) => {
-    console.log(); // newline after action label
-    const removedLines = removed.split('\n').slice(0, 2);
-    const addedLines = added.split('\n').slice(0, 2);
+    const removedLines = removed.split('\n').slice(0, 3);
+    const addedLines = added.split('\n').slice(0, 3);
     removedLines.forEach(line => {
       if (line.trim()) console.log(`  ${colors.error}- ${line.slice(0, 60)}${colors.reset}`);
     });
@@ -303,8 +322,17 @@ export const step = {
       if (line.trim()) console.log(`  ${colors.success}+ ${line.slice(0, 60)}${colors.reset}`);
     });
   },
-  end: () => {} // no extra newline
+  end: () => {}
 };
+
+// Status line (muted, with timing info)
+export function statusLine(action: string, elapsed?: string, tokens?: number, thinkTime?: string): string {
+  let parts = [`${colors.violetLight}* ${action}${colors.reset}`];
+  if (elapsed) parts.push(`${elapsed}`);
+  if (tokens) parts.push(`↓ ${tokens} tokens`);
+  if (thinkTime) parts.push(`thought for ${thinkTime}`);
+  return `${colors.muted}${parts.join(' · ')}${colors.reset}`;
+}
 
 // Build status indicator
 export function buildStatus(success: boolean, errors?: string[]): string {

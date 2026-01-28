@@ -27,14 +27,7 @@ process.on('SIGINT', () => {
   console.log('\n' + c.warning('Ctrl+C - task stopped (press again to exit)'));
 });
 
-declare const __VERSION__: string | undefined;
-
-let versionStr = process.env.SLASHBOT_VERSION || "dev";
-try {
-  // @ts-expect-error build-time __VERSION__ injection
-  versionStr = __VERSION__ || versionStr;
-} catch {}
-const VERSION = versionStr;
+const VERSION = process.env.SLASHBOT_VERSION || "dev";
 
 if (process.argv.some(arg => arg === '--version' || arg === '-v')) {
   console.log(`slashbot v${VERSION}`);
