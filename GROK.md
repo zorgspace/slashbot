@@ -2,7 +2,7 @@
 
 CLI assistant powered by Grok API - lightweight Claude Code alternative
 
-## Stack technique
+## Stack
 
 - TypeScript
 
@@ -14,7 +14,7 @@ slashbot/
 ├── src/
 ```
 
-## Commandes
+## Commands
 
 ### Build
 
@@ -28,7 +28,9 @@ bun run dev
 
 ## Conventions
 
-- (ajouter les conventions de code ici)
+- Consistent TypeScript usage
+- Factorize code
+- Minimal token usage in prompts
 
 ## Notes
 
