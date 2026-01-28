@@ -87,12 +87,20 @@ export class TaskScheduler {
   private running = false;
   private lastCheck: Date = new Date();
   private notifier: Notifier | null = null;
+  private onTaskComplete: (() => void) | null = null;
 
   /**
    * Set the notifier for sending task notifications
    */
   setNotifier(notifier: Notifier): void {
     this.notifier = notifier;
+  }
+
+  /**
+   * Set callback to run after task completes (e.g., to redraw prompt)
+   */
+  setOnTaskComplete(callback: () => void): void {
+    this.onTaskComplete = callback;
   }
 
   async init(): Promise<void> {
@@ -368,8 +376,10 @@ export class TaskScheduler {
       }
     }
 
-    // Tick every second to check for due tasks
-    this.tickInterval = setInterval(() => this.tick(), 1000);
+    // Tick every second to check for due tasks (fire and forget, don't block)
+    this.tickInterval = setInterval(() => {
+      this.tick().catch(() => {});
+    }, 1000);
 
     const taskCount = this.activeTasks.size;
     if (taskCount > 0) {
@@ -514,6 +524,11 @@ export class TaskScheduler {
       } catch {
         console.log(c.warning('Failed to send notification'));
       }
+    }
+
+    // Trigger prompt redraw callback if set
+    if (this.onTaskComplete) {
+      this.onTaskComplete();
     }
   }
 

@@ -399,6 +399,13 @@ class Slashbot {
       completer: completer, // Tab autocomplete for /commands
     });
 
+    // Set scheduler callback to redraw prompt after task execution
+    this.scheduler.setOnTaskComplete(() => {
+      if (this.rl) {
+        process.stdout.write(inputPrompt());
+      }
+    });
+
     this.running = true;
 
     // Handle line input
