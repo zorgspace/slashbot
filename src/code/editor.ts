@@ -3,7 +3,7 @@
  * Allows AI to search and edit code files
  */
 
-import { c, colors } from '../ui/colors';
+import { c, colors, fileViewer } from '../ui/colors';
 import * as path from 'path';
 
 const CONFIG_FILE = '.slashbot';
@@ -162,6 +162,8 @@ export class CodeEditor {
       const newContent = content.replace(edit.search, edit.replace);
       await Bun.write(fullPath, newContent);
 
+      // Display the diff with Claude Code style viewer
+      fileViewer.displayInlineEdit(edit.path, edit.search, edit.replace);
       console.log(c.success(`Modified: ${edit.path}`));
       return true;
     } catch (error) {
@@ -185,6 +187,10 @@ export class CodeEditor {
       await mkdir(dir, { recursive: true });
 
       await Bun.write(fullPath, content);
+
+      // Display preview of created file
+      const previewContent = content.split('\n').slice(0, 10).join('\n');
+      fileViewer.displayFile(filePath, previewContent, 1, Math.min(10, content.split('\n').length));
       console.log(c.success(`Created: ${filePath}`));
       return true;
     } catch (error) {

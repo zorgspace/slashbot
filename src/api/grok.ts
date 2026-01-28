@@ -2,7 +2,7 @@
  * Grok API Client with Streaming and Thinking Mode
  * Uses X.AI API (OpenAI-compatible format)
 
-export async function* streamGrokChat(messages: Message[], config: GrokConfig = {}, handlers?: ActionHandlers): AsyncGenerator<string, void, unknown> {
+export async function* streamGrokChat(messages: Message[], config: GrokConfig = {}, signal?: AbortSignal, handlers?: ActionHandlers): AsyncGenerator<string, void, unknown> {
   const url = `${config.baseUrl || 'https://api.x.ai/v1'}/chat/completions`;
   const bodyData = {
     model: config.model || 'grok-beta',
@@ -68,7 +68,7 @@ export const createGrokClient = (config: GrokConfig, handlers?: ActionHandlers):
 });
  */
 
-import { colors, c, ThinkingAnimation, buildStatus } from '../ui/colors';
+import { colors, c, ThinkingAnimation, buildStatus, step } from '../ui/colors';
 import { imageBuffer } from '../code/imageBuffer';
 import { parseActions, executeActions, type ActionHandlers } from '../actions';
 import { cleanXmlTags } from '../utils/xml';
@@ -91,7 +91,7 @@ export interface GrokConfig {
 const DEFAULT_CONFIG: Partial<GrokConfig> = {
   model: 'grok-4-1-fast-reasoning',
   baseUrl: 'https://api.x.ai/v1',
-  maxTokens: 8192,
+  maxTokens: 2048,
   temperature: 0.7,
 };
 
@@ -104,20 +104,20 @@ const SYSTEM_PROMPT = `You are Slashbot, an expert CLI assistant for software en
 - Be direct and concise. No fluff.
 - Answer in the user's language.
 
-# Reacting to Action Results
-When you receive action results, acknowledge them naturally:
-- File not found: "I see the file doesn't exist. Let me check..."
-- Edit failed: "The pattern wasn't found - the file may have changed. Let me re-read it."
-- Command error: "That command failed. Let me try a different approach."
-- Empty search: "No results found. Let me broaden the search."
-- Success: Continue without unnecessary commentary.
+# Workflow
+Execute ONE action per response. React to results and continue.
 
-Always adapt your approach based on results. If something fails, explain briefly and try again.
+# Reacting to Action Results
+- File not found → check alternative paths
+- Edit failed → re-read the file (content may have changed)
+- Command error → try a different approach
+- Empty search → broaden the pattern
+- Success → continue silently
 
 # Before Editing Code
-1. Use <grep> to find relevant files and understand the codebase structure
-2. Use <read> to examine the exact code you'll modify
-3. Only then use <edit> with the EXACT text from the file
+1. <grep> to find relevant files
+2. <read> to examine exact code
+3. <edit> with EXACT text from file
 
 # Actions (XML syntax)
 
@@ -146,11 +146,13 @@ file content here
 The notify attribute can be: "telegram", "whatsapp", "all", or "none" (default).
 
 ## Skills (Context Helpers)
+<skill name="init"/>             - COMPREHENSIVE codebase analysis: code styling (ESLint/Prettier/Biome), architecture, configs, conventions, sample code patterns. Use this when user says "init" or when starting work on an unfamiliar project.
 <skill name="project-context"/>  - Get package.json, project files list, and git status
 <skill name="git-context"/>      - Get detailed git branch info and recent commits
 
 Use skills at the START of complex tasks to gather context before making changes.
 Skills return context that helps you understand the project structure.
+IMPORTANT: When user types "init", always use <skill name="init"/> to analyze the codebase.
 
 # Safety
 - Don't run destructive commands without user confirmation context
@@ -256,6 +258,10 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
     }
   }
 
+  isThinking(): boolean {
+    return this.currentThinking !== null;
+  }
+
   async chat(userMessage: string): Promise<{ response: string; thinking: string }> {
     // Add user message with recent images as vision context
     const recentImages = imageBuffer.slice(-3);
@@ -274,7 +280,7 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
     this.compressContext();
 
     let finalResponse = '';
-    let maxIterations = 8; // Allow more iterations for build fixes
+    let maxIterations = 15; // More iterations for incremental one-action steps
     let hadEdits = false;
 
     // Agentic loop: execute actions and feed results back
@@ -289,9 +295,23 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
 
       // Debug: Show why no actions if response looks like it should have some
       if (actions.length === 0) {
-        const hasActionHints = /<(grep|read|edit|create|exec|schedule|notify)/i.test(responseContent);
-        if (hasActionHints) {
-          console.log(`${colors.muted}⚠ Action tags detected but not parsed (check XML syntax)${colors.reset}`);
+        const actionTagRegex = /<(grep|read|edit|create|exec|schedule|notify|skill)\b/gi;
+        const foundTags = responseContent.match(actionTagRegex);
+        if (foundTags) {
+          console.log(`${colors.muted}⚠ Found ${foundTags.length} action tag(s) but parsing failed:${colors.reset}`);
+          // Show first unparsed tag for debugging
+          const firstTag = foundTags[0].toLowerCase().replace('<', '');
+          const tagPatterns: Record<string, string> = {
+            grep: '<grep pattern="..." [file="..."]>reason</grep>',
+            read: '<read path="..."/>',
+            edit: '<edit path="..."><search>...</search><replace>...</replace></edit>',
+            create: '<create path="...">content</create>',
+            exec: '<exec>command</exec>',
+            schedule: '<schedule cron="...">command</schedule>',
+            notify: '<notify service="...">message</notify>',
+            skill: '<skill name="..."/>',
+          };
+          console.log(`${colors.muted}  Expected format: ${tagPatterns[firstTag] || 'unknown'}${colors.reset}`);
         }
       }
 
@@ -306,21 +326,29 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
       // If no actions were executed, check build if we made edits
       if (actionResults.length === 0) {
         if (hadEdits && this.actionHandlers.onBuildCheck) {
-          console.log(`${colors.violet}[BUILD]${colors.reset} Checking...`);
+          step.thinking('Verifying build...');
           const buildResult = await this.actionHandlers.onBuildCheck();
-          console.log(buildStatus(buildResult.success, buildResult.errors));
 
-          if (!buildResult.success && maxIterations > 0) {
-            // Feed errors back for auto-fix
-            this.conversationHistory.push({
-              role: 'assistant',
-              content: responseContent,
+          if (buildResult.success) {
+            step.success('Build passed');
+          } else {
+            step.error('Build failed');
+            buildResult.errors.slice(0, 5).forEach(err => {
+              console.log(`     ${colors.muted}${err}${colors.reset}`);
             });
-            this.conversationHistory.push({
-              role: 'user',
-              content: `Build failed with these errors:\n${buildResult.errors.join('\n')}\n\nFix these errors.`,
-            });
-            continue;
+
+            if (maxIterations > 0) {
+              // Feed errors back for auto-fix
+              this.conversationHistory.push({
+                role: 'assistant',
+                content: responseContent,
+              });
+              this.conversationHistory.push({
+                role: 'user',
+                content: `Build failed with these errors:\n${buildResult.errors.join('\n')}\n\nFix these errors.`,
+              });
+              continue;
+            }
           }
         }
         break;

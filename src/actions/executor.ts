@@ -1,43 +1,9 @@
 /**
- * Action Executor - Execute parsed actions with live progress display
+ * Action Executor - Execute parsed actions with Claude Code-style display
  */
 
 import type { Action, ActionResult, ActionHandlers } from './types';
-import { plan } from '../ui/colors';
-
-/**
- * Actions that appear in the plan (impactful actions only)
- */
-const PLAN_ACTIONS = ['edit', 'create', 'exec', 'schedule', 'notify', 'skill'];
-
-/**
- * Get a human-readable label for a plan action
- */
-function getActionLabel(action: Action): string {
-  switch (action.type) {
-    case 'edit':
-      return `Edit ${action.path}`;
-    case 'create':
-      return `Create ${action.path}`;
-    case 'exec':
-      return action.command.slice(0, 50) + (action.command.length > 50 ? '...' : '');
-    case 'schedule':
-      return `Schedule ${action.name}`;
-    case 'notify':
-      return `Notify ${action.service}`;
-    case 'skill':
-      return `Skill ${action.name}`;
-    default:
-      return '';
-  }
-}
-
-/**
- * Generate unique ID for an action
- */
-function getActionId(action: Action, index: number): string {
-  return `${action.type}-${index}-${Date.now()}`;
-}
+import { step } from '../ui/colors';
 
 /**
  * Execute a list of actions and return results
@@ -52,38 +18,11 @@ export async function executeActions(
 
   const results: ActionResult[] = [];
 
-  // Execute each action
-  for (let i = 0; i < actions.length; i++) {
-    const action = actions[i];
-    const id = getActionId(action, i);
-    const showInPlan = PLAN_ACTIONS.includes(action.type);
-
-    // Only add impactful actions to the plan
-    if (showInPlan) {
-      plan.addStep(id, getActionLabel(action));
-      plan.markRunning(id);
-    }
-
+  for (const action of actions) {
     const result = await executeAction(action, handlers);
-
     if (result) {
-      if (showInPlan) {
-        if (result.success) {
-          plan.markDone(id);
-        } else {
-          plan.markError(id);
-        }
-      }
       results.push(result);
-    } else if (showInPlan) {
-      plan.markDone(id);
     }
-  }
-
-  // Hide the plan after completion
-  if (plan.isComplete()) {
-    await new Promise(resolve => setTimeout(resolve, 200));
-    plan.hide();
   }
 
   return results;
@@ -120,7 +59,16 @@ async function executeGrep(
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
   if (!handlers.onGrep) return null;
+
+  // Display action in Claude Code style
+  step.grep(action.pattern, action.filePattern);
+
   const grepResults = await handlers.onGrep(action.pattern, action.filePattern);
+  const lines = grepResults ? grepResults.split('\n').filter(l => l.trim()) : [];
+
+  // Display result
+  step.grepResult(lines.length, lines.length > 0 ? lines.slice(0, 5).join('\n') : undefined);
+
   return {
     action: `GREP ${action.pattern}`,
     success: true,
@@ -133,12 +81,19 @@ async function executeRead(
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
   if (!handlers.onRead) return null;
+
+  // Display action in Claude Code style
+  step.read(action.path);
+
   const fileContent = await handlers.onRead(action.path);
 
   if (fileContent) {
+    const lineCount = fileContent.split('\n').length;
+    step.readResult(lineCount);
     const preview = fileContent.length > 1000 ? fileContent.slice(0, 1000) + '...' : fileContent;
     return { action: `READ ${action.path}`, success: true, result: preview };
   } else {
+    step.error('File not found');
     return { action: `READ ${action.path}`, success: false, result: 'File not found', error: 'File not found' };
   }
 }
@@ -148,7 +103,24 @@ async function executeEdit(
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
   if (!handlers.onEdit) return null;
+
+  // Display action in Claude Code style
+  step.update(action.path);
+
   const success = await handlers.onEdit(action.path, action.search, action.replace);
+
+  // Calculate diff info
+  const searchLines = action.search.split('\n');
+  const replaceLines = action.replace.split('\n');
+
+  if (success) {
+    // Show diff with removed/added lines
+    step.updateResult(true, searchLines.length, replaceLines.length);
+    step.diff(searchLines, replaceLines);
+  } else {
+    step.updateResult(false, 0, 0);
+  }
+
   return {
     action: `EDIT ${action.path}`,
     success,
@@ -162,7 +134,15 @@ async function executeCreate(
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
   if (!handlers.onCreate) return null;
+
+  // Display action in Claude Code style
+  step.write(action.path);
+
   const success = await handlers.onCreate(action.path, action.content);
+  const lineCount = action.content.split('\n').length;
+
+  step.writeResult(success, lineCount);
+
   return {
     action: `CREATE ${action.path}`,
     success,
@@ -176,8 +156,20 @@ async function executeExec(
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
   if (!handlers.onExec) return null;
+
+  // Display action in Claude Code style
+  step.bash(action.command);
+
   const output = await handlers.onExec(action.command);
-  const isError = output?.startsWith('Error:');
+  const isError = output?.startsWith('Error:') || output?.includes('Command blocked');
+
+  // Display result
+  if (isError) {
+    step.bashResult(action.command, output || '', 1);
+  } else {
+    step.bashResult(action.command, output || '', 0);
+  }
+
   return {
     action: `EXEC ${action.command}`,
     success: !isError,
@@ -191,8 +183,15 @@ async function executeSchedule(
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
   if (!handlers.onSchedule) return null;
+
+  // Display action in Claude Code style
+  step.schedule(action.name, action.cron);
+
   await handlers.onSchedule(action.cron, action.command, action.name, action.notify);
   const notifyInfo = action.notify && action.notify !== 'none' ? ` (notify: ${action.notify})` : '';
+
+  step.success(`Scheduled: ${action.cron}${notifyInfo}`);
+
   return {
     action: `SCHEDULE ${action.name}`,
     success: true,
@@ -205,7 +204,14 @@ async function executeNotify(
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
   if (!handlers.onNotify) return null;
+
+  // Display action in Claude Code style
+  step.tool('Notify', action.service);
+
   await handlers.onNotify(action.service, action.message);
+
+  step.success('Sent');
+
   return {
     action: `NOTIFY ${action.service}`,
     success: true,
@@ -218,14 +224,21 @@ async function executeSkill(
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
   if (!handlers.onSkill) return null;
+
+  // Display action in Claude Code style
+  step.skill(action.name);
+
   try {
     const context = await handlers.onSkill(action.name);
+    const lineCount = context.split('\n').length;
+    step.success(`Loaded context (${lineCount} lines)`);
     return {
       action: `SKILL ${action.name}`,
       success: true,
       result: context,
     };
   } catch (error) {
+    step.error(`Skill "${action.name}" not found`);
     return {
       action: `SKILL ${action.name}`,
       success: false,
@@ -234,3 +247,4 @@ async function executeSkill(
     };
   }
 }
+

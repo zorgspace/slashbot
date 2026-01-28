@@ -14,18 +14,28 @@ let currentBot: Slashbot | null = null;
 // Prevent accidental exit - require double Ctrl+C
 process.on('SIGINT', () => {
   const now = Date.now();
+
+  // Check if currently thinking/processing
+  const wasThinking = currentBot?.isThinking() ?? false;
+
+  if (wasThinking) {
+    // Abort current operation and show prompt immediately
+    currentBot?.abortCurrentOperation();
+    // Clear the line and show prompt
+    process.stdout.write('\r\x1b[K'); // Clear current line
+    process.stdout.write(inputClose() + inputPrompt());
+    lastCtrlC = 0; // Reset so next Ctrl+C shows warning instead of exiting
+    return;
+  }
+
+  // Not thinking - handle double Ctrl+C to exit
   if (now - lastCtrlC < 500) {
     console.log(c.violet('\n\nSee you soon!'));
     process.exit(0);
   }
   lastCtrlC = now;
 
-  // Abort current operation
-  if (currentBot) {
-    currentBot.abortCurrentOperation();
-  }
-
-  console.log('\n' + c.warning('Ctrl+C - task stopped (press again to exit)'));
+  console.log('\n' + c.warning('Ctrl+C - press again to exit'));
 });
 
 // Prevent SIGTERM from killing the app immediately
@@ -112,6 +122,10 @@ class Slashbot {
     }
   }
 
+  isThinking(): boolean {
+    return this.grokClient?.isThinking() ?? false;
+  }
+
   private async initializeGrok(): Promise<void> {
     const apiKey = this.configManager.getApiKey();
     if (apiKey) {
@@ -150,11 +164,7 @@ class Slashbot {
         // Wire up action handlers
         this.grokClient.setActionHandlers({
           onSchedule: async (cron, command, name, notify) => {
-            const taskId = await this.scheduler.addTask(name, cron, command, notify);
-            if (taskId) {
-              const notifyInfo = notify && notify !== 'none' ? ` (notify via ${notify})` : '';
-              console.log(c.success(`Task scheduled: ${name}${notifyInfo}`));
-            }
+            await this.scheduler.addTask(name, cron, command, notify);
           },
 
           onFile: async (path, content) => {
@@ -233,7 +243,6 @@ class Slashbot {
               const { exec } = await import('child_process');
               const { promisify } = await import('util');
               const execAsync = promisify(exec);
-              console.log(c.muted(`$ ${command}`));
               const { stdout, stderr } = await execAsync(command, {
                 cwd: workDir,
                 timeout: 30000,
@@ -402,7 +411,7 @@ class Slashbot {
       input: process.stdin,
       output: process.stdout,
       terminal: true,
-      history: this.history.slice(-100), // Load last 100 commands
+      history: this.history.slice(-100).reverse(), // Load last 100 commands (reversed for readline)
       historySize: 100,
       removeHistoryDuplicates: true,
       completer: completer, // Tab autocomplete for /commands
@@ -450,7 +459,7 @@ class Slashbot {
         input: process.stdin,
         output: process.stdout,
         terminal: true,
-        history: this.history.slice(-100),
+        history: this.history.slice(-100).reverse(),
         historySize: 100,
         removeHistoryDuplicates: true,
         completer: completer,

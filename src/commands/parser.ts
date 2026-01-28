@@ -2,7 +2,8 @@
  * Slash Command Parser for Slashbot
  */
 
-import { c } from '../ui/colors';
+import { c, colors, ThinkingAnimation } from '../ui/colors';
+import { skills } from '../skills';
 
 export interface ParsedCommand {
   isCommand: boolean;
@@ -268,10 +269,10 @@ commands.set('auth', {
   },
 });
 
-// /init - Initialize project context file
+// /init - Initialize project context file using Grok AI analysis
 commands.set('init', {
   name: 'init',
-  description: 'Create project context file (GROK.md)',
+  description: 'Create project context file (GROK.md) using AI analysis',
   usage: '/init',
   execute: async (args, context) => {
     const workDir = context.codeEditor?.getWorkDir() || process.cwd();
@@ -289,135 +290,128 @@ commands.set('init', {
       }
     }
 
+    // Check if Grok client is available
+    if (!context.grokClient) {
+      console.log(c.error('Grok API not configured. Set GROK_API_KEY or XAI_API_KEY environment variable.'));
+      return true;
+    }
+
     const contextFile = path.join(workDir, 'GROK.md');
 
-    console.log(c.muted('Analyzing project...'));
-
-    // Gather project information
-    let projectName = path.basename(workDir);
-    let projectDescription = '';
-    let techStack: string[] = [];
-    let buildCommands: string[] = [];
-    let testCommands: string[] = [];
-
-    // Try to read package.json
-    const packageJsonPath = path.join(workDir, 'package.json');
-    const packageJsonFile = Bun.file(packageJsonPath);
-    if (await packageJsonFile.exists()) {
-      try {
-        const pkg = await packageJsonFile.json();
-        projectName = pkg.name || projectName;
-        projectDescription = pkg.description || '';
-
-        // Detect tech stack from dependencies
-        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-        if (deps.typescript || deps['@types/node']) techStack.push('TypeScript');
-        if (deps.react || deps['react-dom']) techStack.push('React');
-        if (deps.vue) techStack.push('Vue');
-        if (deps.express) techStack.push('Express');
-        if (deps.fastify) techStack.push('Fastify');
-        if (deps.next) techStack.push('Next.js');
-        if (deps.bun || deps['bun-types']) techStack.push('Bun');
-        if (deps.jest) techStack.push('Jest');
-        if (deps.vitest) techStack.push('Vitest');
-        if (deps.tailwindcss) techStack.push('Tailwind CSS');
-        if (deps.prisma || deps['@prisma/client']) techStack.push('Prisma');
-
-        // Extract scripts
-        if (pkg.scripts) {
-          if (pkg.scripts.build) buildCommands.push(`bun run build`);
-          if (pkg.scripts.dev) buildCommands.push(`bun run dev`);
-          if (pkg.scripts.test) testCommands.push(`bun run test`);
-          if (pkg.scripts.lint) testCommands.push(`bun run lint`);
-        }
-      } catch {
-        // Ignore JSON parse errors
-      }
+    // Gather comprehensive context using the init skill
+    console.log(c.muted('Gathering codebase context...'));
+    const initSkill = skills.get('init');
+    if (!initSkill) {
+      console.log(c.error('Init skill not found'));
+      return true;
     }
 
-    // Try to read pyproject.toml or requirements.txt for Python
-    const pyprojectPath = path.join(workDir, 'pyproject.toml');
-    const requirementsPath = path.join(workDir, 'requirements.txt');
-    if (await Bun.file(pyprojectPath).exists() || await Bun.file(requirementsPath).exists()) {
-      techStack.push('Python');
-    }
+    const codebaseContext = await initSkill.execute();
 
-    // Try to read Cargo.toml for Rust
-    const cargoPath = path.join(workDir, 'Cargo.toml');
-    if (await Bun.file(cargoPath).exists()) {
-      techStack.push('Rust');
-      buildCommands.push('cargo build');
-      testCommands.push('cargo test');
-    }
+    // Create prompt for Grok to generate GROK.md
+    const generatePrompt = `Based on the codebase analysis below, generate a comprehensive GROK.md file.
 
-    // Try to read go.mod for Go
-    const goModPath = path.join(workDir, 'go.mod');
-    if (await Bun.file(goModPath).exists()) {
-      techStack.push('Go');
-      buildCommands.push('go build');
-      testCommands.push('go test ./...');
-    }
+The GROK.md file should include:
+1. **Project name and description** - extracted from package.json or inferred
+2. **Tech Stack** - all technologies, frameworks, and tools detected
+3. **Project Structure** - key directories and their purposes
+4. **Commands** - build, dev, test, lint commands with explanations
+5. **Architecture** - how the project is organized, key patterns used
+6. **Code Conventions** - styling rules, patterns observed (from ESLint/Prettier/Biome configs)
+7. **Key Files** - important entry points and their roles
+8. **Development Notes** - useful info for AI assistants working on this codebase
 
-    // Get directory structure
-    const files = await context.codeEditor?.listFiles() || [];
-    const dirs = new Set<string>();
-    for (const file of files.slice(0, 100)) {
-      const dir = path.dirname(file);
-      if (dir !== '.' && dir !== '') {
-        const topDir = dir.split('/')[0];
-        dirs.add(topDir);
-      }
-    }
+Format it as clean markdown. Be concise but comprehensive.
+DO NOT include any XML tags or action syntax in your response.
+Output ONLY the markdown content for GROK.md.
 
-    // Generate SLASHBOT.md content
-    let content = `# ${projectName}\n\n`;
+${codebaseContext}`;
 
-    if (projectDescription) {
-      content += `${projectDescription}\n\n`;
-    }
+    console.log(c.muted('Asking Grok to analyze and generate GROK.md...'));
 
-    content += `## Tech Stack\n\n`;
-    if (techStack.length > 0) {
-      content += techStack.map(t => `- ${t}`).join('\n') + '\n\n';
-    } else {
-      content += `- (to be completed)\n\n`;
-    }
+    // Call Grok API to generate the content
+    const thinking = new ThinkingAnimation();
+    thinking.start('Generating GROK.md...', workDir);
 
-    content += `## Structure\n\n`;
-    content += `\`\`\`\n`;
-    content += `${projectName}/\n`;
-    for (const dir of Array.from(dirs).sort().slice(0, 15)) {
-      content += `├── ${dir}/\n`;
-    }
-    content += `\`\`\`\n\n`;
-
-    content += `## Commands\n\n`;
-    if (buildCommands.length > 0 || testCommands.length > 0) {
-      if (buildCommands.length > 0) {
-        content += `### Build\n\n`;
-        content += buildCommands.map(cmd => `\`\`\`bash\n${cmd}\n\`\`\``).join('\n\n') + '\n\n';
-      }
-      if (testCommands.length > 0) {
-        content += `### Test\n\n`;
-        content += testCommands.map(cmd => `\`\`\`bash\n${cmd}\n\`\`\``).join('\n\n') + '\n\n';
-      }
-    } else {
-      content += `(to be completed)\n\n`;
-    }
-
-    content += `## Conventions\n\n`;
-    content += `- (add code conventions here)\n\n`;
-
-    content += `## Notes\n\n`;
-    content += `- (add important notes for AI context)\n`;
-
-    // Write the file
     try {
-      await Bun.write(contextFile, content);
+      const apiKey = context.configManager?.getApiKey() || process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+      if (!apiKey) {
+        thinking.stop();
+        console.log(c.error('Grok API key not configured. Use /login or set GROK_API_KEY environment variable.'));
+        return true;
+      }
+      const baseUrl = 'https://api.x.ai/v1';
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'grok-3-mini-fast',
+          messages: [
+            { role: 'system', content: 'You are an expert at documenting codebases. Generate clean, useful documentation in markdown format. No XML tags, no action syntax, just markdown.' },
+            { role: 'user', content: generatePrompt }
+          ],
+          max_tokens: 4096,
+          temperature: 0.3,
+          stream: true,
+        }),
+      });
+
+      if (!response.ok) {
+        thinking.stop();
+        const errorText = await response.text();
+        console.log(c.error(`Grok API Error: ${response.status} - ${errorText}`));
+        return true;
+      }
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let generatedContent = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) {
+              generatedContent += content;
+            }
+          } catch {
+            // Skip invalid JSON
+          }
+        }
+      }
+
+      thinking.stop();
+
+      if (!generatedContent.trim()) {
+        console.log(c.error('Grok returned empty response'));
+        return true;
+      }
+
+      // Write the AI-generated content
+      await Bun.write(contextFile, generatedContent.trim());
       console.log(c.success(`File created: GROK.md`));
-      console.log(c.muted('Edit this file to add more context'));
+      console.log(c.muted('Generated by Grok AI based on codebase analysis'));
       console.log(c.muted('Compatible with CLAUDE.md and SLASHBOT.md'));
+
     } catch (error) {
+      thinking.stop();
       console.log(c.error(`Error: ${error}`));
     }
 
@@ -946,6 +940,20 @@ export async function executeCommand(
 
   return handler.execute(parsed.args, context);
 }
+
+commands.set('ls', {
+  name: 'ls',
+  description: 'List directory contents (alias for files)',
+  usage: 'ls [pattern]',
+  execute: async (args, context) => {
+    const filesCmd = commands.get('files');
+    if (filesCmd && context.codeEditor) {
+      return filesCmd.execute(args, context);
+    }
+    console.log(c.error('Files command not available'));
+    return true;
+  },
+});
 
 // Get all command names for autocomplete
 export function getCommandNames(): string[] {

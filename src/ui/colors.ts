@@ -15,10 +15,10 @@ export const colors = {
   violetDark: `${ESC}38;5;93m`,     // Dark violet
 
   // Semantic colors
-  success: `${ESC}38;5;82m`,        // Green
-  green: `${ESC}38;5;82m`,          // Green
-  error: `${ESC}38;5;196m`,         // Red
-  red: `${ESC}38;5;196m`,           // Red
+  success: `${ESC}38;5;34m`,        // Darker green
+  green: `${ESC}38;5;34m`,          // Darker green
+  error: `${ESC}38;5;124m`,         // Darker red
+  red: `${ESC}38;5;124m`,           // Darker red
   warning: `${ESC}38;5;214m`,       // Orange
   info: `${ESC}38;5;39m`,           // Cyan
   muted: `${ESC}38;5;244m`,         // Gray
@@ -27,6 +27,10 @@ export const colors = {
   // Background colors
   bgViolet: `${ESC}48;5;135m`,
   bgVioletDark: `${ESC}48;5;53m`,
+  bgGreen: `${ESC}48;5;22m`,      // Dark green background for added lines
+  bgRed: `${ESC}48;5;52m`,        // Dark red background for removed lines
+  bgGreenLight: `${ESC}48;5;28m`, // Lighter green for highlights
+  bgRedLight: `${ESC}48;5;88m`,   // Lighter red for highlights
 
   // Styles
   bold: `${ESC}1m`,
@@ -265,63 +269,165 @@ export class ThinkingAnimation {
 
 // Claude Code-style output formatting
 export const step = {
-  // User prompt (yellow >)
-  prompt: (message: string) => {
-    console.log(`${colors.warning}>${colors.reset} ${colors.white}${message}${colors.reset}`);
-  },
-  // Assistant message (white bullet)
+  // Assistant message/thought (white bullet)
   message: (text: string) => {
-    console.log(`${colors.white}●${colors.reset} ${text}`);
+    console.log(`\n${colors.white}●${colors.reset} ${text}`);
   },
-  // Tool call with result underneath (white bullet + tree)
+
+  // Tool call: ● ToolName(args)
   tool: (toolName: string, args?: string) => {
     const argsStr = args ? `(${args})` : '';
-    console.log(`${colors.white}●${colors.reset} ${colors.bold}${toolName}${colors.reset}${colors.muted}${argsStr}${colors.reset}`);
+    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}${toolName}${colors.reset}${argsStr}`);
   },
-  // Tool result (tree branch └)
-  result: (text: string) => {
-    console.log(`  ${colors.muted}└${colors.reset} ${colors.muted}${text}${colors.reset}`);
-  },
-  // Search actions (gray dot)
-  search: (label: string, detail?: string) => {
-    const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    console.log(`${colors.muted}●${colors.reset} ${label}${detailStr}`);
-  },
-  // Edit actions (red dot)
-  edit: (label: string, detail?: string) => {
-    const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    console.log(`${colors.error}●${colors.reset} ${label}${detailStr}`);
-  },
-  // Exec/action (green dot)
-  action: (label: string, detail?: string) => {
-    const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    console.log(`${colors.success}●${colors.reset} ${label}${detailStr}`);
-  },
-  // Success (green bullet)
-  success: (label: string, detail?: string) => {
-    const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    console.log(`${colors.success}●${colors.reset} ${label}${detailStr}`);
-  },
-  // Error (red X)
-  error: (label: string, detail?: string) => {
-    const detailStr = detail ? ` ${colors.muted}${detail}${colors.reset}` : '';
-    console.log(`${colors.error}✗${colors.reset} ${label}${detailStr}`);
-  },
-  // Info (muted, indented)
-  info: (label: string) => {
-    console.log(`  ${colors.muted}└${colors.reset} ${colors.muted}${label}${colors.reset}`);
-  },
-  // Show diff with red/green lines
-  diff: (removed: string, added: string) => {
-    const removedLines = removed.split('\n').slice(0, 3);
-    const addedLines = added.split('\n').slice(0, 3);
-    removedLines.forEach(line => {
-      if (line.trim()) console.log(`  ${colors.error}- ${line.slice(0, 60)}${colors.reset}`);
-    });
-    addedLines.forEach(line => {
-      if (line.trim()) console.log(`  ${colors.success}+ ${line.slice(0, 60)}${colors.reset}`);
+
+  // Tool result: ⎿  Result text (indented, supports multiline)
+  result: (text: string, isError = false) => {
+    const lines = text.split('\n');
+    const color = isError ? colors.error : colors.muted;
+    lines.forEach((line, i) => {
+      const prefix = i === 0 ? '⎿ ' : '  ';
+      console.log(`  ${color}${prefix}${line}${colors.reset}`);
     });
   },
+
+  // Read action: ● Read(file_path) - green bullet
+  read: (filePath: string) => {
+    console.log(`\n${colors.success}●${colors.reset} ${colors.bold}Read${colors.reset}(${filePath})`);
+  },
+
+  // Read result: ⎿  Read N lines - grey/muted
+  readResult: (lineCount: number) => {
+    console.log(`  ${colors.muted}⎿  Read ${lineCount} lines${colors.reset}`);
+  },
+
+  // Grep action: ● Grep(pattern, file)
+  grep: (pattern: string, filePattern?: string) => {
+    const args = filePattern ? `"${pattern}", "${filePattern}"` : `"${pattern}"`;
+    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Grep${colors.reset}(${args})`);
+  },
+
+  // Grep result: ⎿  Found N matches
+  grepResult: (matches: number, preview?: string) => {
+    if (matches === 0) {
+      console.log(`  ${colors.muted}⎿  No matches found${colors.reset}`);
+    } else {
+      console.log(`  ${colors.muted}⎿  Found ${matches} match${matches > 1 ? 'es' : ''}${colors.reset}`);
+      if (preview) {
+        preview.split('\n').slice(0, 5).forEach(line => {
+          console.log(`     ${colors.muted}${line}${colors.reset}`);
+        });
+      }
+    }
+  },
+
+  // Bash/Exec action: ● Bash(command)
+  bash: (command: string) => {
+    // Truncate long commands
+    const displayCmd = command.length > 60 ? command.slice(0, 57) + '...' : command;
+    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Bash${colors.reset}(${displayCmd})`);
+  },
+
+  // Bash result: ⎿  $ command \n output
+  bashResult: (command: string, output: string, exitCode = 0) => {
+    if (exitCode !== 0) {
+      console.log(`  ${colors.error}⎿  Error: Exit code ${exitCode}${colors.reset}`);
+      console.log(`     ${colors.muted}$ ${command}${colors.reset}`);
+    } else {
+      console.log(`  ${colors.muted}⎿  $ ${command}${colors.reset}`);
+    }
+    if (output) {
+      output.split('\n').slice(0, 10).forEach(line => {
+        console.log(`     ${colors.muted}${line}${colors.reset}`);
+      });
+    }
+  },
+
+  // Edit/Update action: ● Update(file_path)
+  update: (filePath: string) => {
+    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Update${colors.reset}(${filePath})`);
+  },
+
+  // Edit result with diff display
+  updateResult: (success: boolean, linesRemoved: number, linesAdded: number, context?: { before?: string[]; after?: string[]; lineStart?: number }) => {
+    if (!success) {
+      console.log(`  ${colors.error}⎿  Failed - pattern not found${colors.reset}`);
+      return;
+    }
+
+    if (linesRemoved > 0 && linesAdded === 0) {
+      console.log(`  ${colors.muted}⎿  Removed ${linesRemoved} line${linesRemoved > 1 ? 's' : ''}${colors.reset}`);
+    } else if (linesAdded > 0 && linesRemoved === 0) {
+      console.log(`  ${colors.muted}⎿  Added ${linesAdded} line${linesAdded > 1 ? 's' : ''}${colors.reset}`);
+    } else {
+      console.log(`  ${colors.muted}⎿  Updated${colors.reset}`);
+    }
+
+    // Show context with line numbers if provided
+    if (context) {
+      const startLine = context.lineStart || 1;
+      context.before?.forEach((line, i) => {
+        const lineNum = String(startLine + i).padStart(4, ' ');
+        console.log(`      ${colors.muted}${lineNum}${colors.reset}   ${line}`);
+      });
+      context.after?.forEach((line, i) => {
+        const lineNum = String(startLine + (context.before?.length || 0) + i).padStart(4, ' ');
+        console.log(`      ${colors.muted}${lineNum}${colors.reset} ${colors.success}- ${line}${colors.reset}`);
+      });
+    }
+  },
+
+  // Create action: ● Write(file_path)
+  write: (filePath: string) => {
+    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Write${colors.reset}(${filePath})`);
+  },
+
+  // Create result
+  writeResult: (success: boolean, lineCount?: number) => {
+    if (success) {
+      const info = lineCount ? ` (${lineCount} lines)` : '';
+      console.log(`  ${colors.muted}⎿  Created${info}${colors.reset}`);
+    } else {
+      console.log(`  ${colors.error}⎿  Failed to create file${colors.reset}`);
+    }
+  },
+
+  // Schedule action
+  schedule: (name: string, cron: string) => {
+    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Schedule${colors.reset}(${name}, "${cron}")`);
+  },
+
+  // Skill action
+  skill: (name: string) => {
+    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Skill${colors.reset}(${name})`);
+  },
+
+  // Success result (green checkmark style)
+  success: (message: string) => {
+    console.log(`  ${colors.success}⎿  ${message}${colors.reset}`);
+  },
+
+  // Error result - red bullet and text
+  error: (message: string) => {
+    console.log(`  ${colors.error}⎿  Error: ${message}${colors.reset}`);
+  },
+
+  // Diff display with removed/added lines (Claude Code style)
+  diff: (removed: string[], added: string[], filePath?: string, lineStart = 1) => {
+    removed.forEach((line, i) => {
+      const lineNum = String(lineStart + i).padStart(4, ' ');
+      console.log(`      ${colors.muted}${lineNum}${colors.reset} ${colors.error}- ${line}${colors.reset}`);
+    });
+    added.forEach((line, i) => {
+      const lineNum = String(lineStart + removed.length + i).padStart(4, ' ');
+      console.log(`      ${colors.muted}${lineNum}${colors.reset} ${colors.success}+ ${line}${colors.reset}`);
+    });
+  },
+
+  // Thinking/status message
+  thinking: (text: string) => {
+    console.log(`\n${colors.white}●${colors.reset} ${colors.muted}${text}${colors.reset}`);
+  },
+
   end: () => {}
 };
 
@@ -348,110 +454,196 @@ export function buildStatus(success: boolean, errors?: string[]): string {
   return output;
 }
 
-interface PlanStep {
-  id: string;
-  label: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-}
-
 /**
- * Simple plan display - prints once at start, updates inline
- * White text, colored dots only
+ * File Viewer - Claude Code style file display with line numbers and diff highlighting
  */
-export class PlanProgress {
-  private steps: PlanStep[] = [];
-  private printed: boolean = false;
-
-  /**
-   * Get status icon for a step
-   */
-  private getIcon(status: PlanStep['status']): string {
-    switch (status) {
-      case 'running': return `${colors.warning}◐${colors.reset}`;
-      case 'done': return `${colors.success}✓${colors.reset}`;
-      case 'error': return `${colors.error}✗${colors.reset}`;
-      default: return `${colors.muted}○${colors.reset}`;
-    }
-  }
-
-  /**
-   * Add a new step to the plan
-   */
-  addStep(id: string, label: string): void {
-    if (this.steps.find(s => s.id === id)) return;
-    this.steps.push({ id, label, status: 'pending' });
-  }
-
-  /**
-   * Mark a step as running and print the plan if not yet printed
-   */
-  markRunning(id: string): void {
-    const step = this.steps.find(s => s.id === id);
-    if (step) step.status = 'running';
-
-    // Print plan on first running step
-    if (!this.printed && this.steps.length > 0) {
-      this.print();
-      this.printed = true;
-    }
-  }
-
-  /**
-   * Mark a step as completed
-   */
-  markDone(id: string): void {
-    const step = this.steps.find(s => s.id === id);
-    if (step) {
-      step.status = 'done';
-      // Print completion inline
-      console.log(`  ${this.getIcon('done')} ${colors.muted}${step.label}${colors.reset}`);
-    }
-  }
-
-  /**
-   * Mark a step as error
-   */
-  markError(id: string): void {
-    const step = this.steps.find(s => s.id === id);
-    if (step) {
-      step.status = 'error';
-      console.log(`  ${this.getIcon('error')} ${colors.white}${step.label}${colors.reset}`);
-    }
-  }
-
-  /**
-   * Print the initial plan
-   */
-  private print(): void {
-    console.log(`${colors.white}┌─ Plan${colors.reset}`);
-    for (const step of this.steps) {
-      const icon = this.getIcon(step.status);
-      console.log(`${colors.white}│${colors.reset} ${icon} ${colors.white}${step.label}${colors.reset}`);
-    }
-    console.log(`${colors.white}└─${colors.reset}`);
-  }
-
-  /**
-   * Hide/reset the plan
-   */
-  hide(): void {
-    this.steps = [];
-    this.printed = false;
-  }
-
-  /**
-   * Check if all steps are complete
-   */
-  isComplete(): boolean {
-    return this.steps.length > 0 &&
-           this.steps.every(s => s.status === 'done' || s.status === 'error');
-  }
-
-  /**
-   * Show the plan (no-op, for compatibility)
-   */
-  show(): void {}
+export interface DiffLine {
+  lineNumber: number;
+  content: string;
+  type: 'unchanged' | 'added' | 'removed' | 'context';
 }
 
-// Global plan instance
-export const plan = new PlanProgress();
+export class FileViewer {
+  private maxLineWidth: number;
+
+  constructor() {
+    this.maxLineWidth = Math.min(process.stdout.columns || 80, 100) - 10;
+  }
+
+  /**
+   * Format a line number with padding
+   */
+  private formatLineNumber(num: number, maxNum: number): string {
+    const padding = String(maxNum).length;
+    return String(num).padStart(padding, ' ');
+  }
+
+  /**
+   * Display file content with line numbers
+   */
+  displayFile(filePath: string, content: string, startLine = 1, endLine?: number): void {
+    const lines = content.split('\n');
+    const maxLine = endLine || lines.length;
+    const displayLines = lines.slice(startLine - 1, endLine);
+
+    // Header
+    console.log(`${colors.muted}╭─ ${filePath}${colors.reset}`);
+
+    displayLines.forEach((line, i) => {
+      const lineNum = startLine + i;
+      const numStr = this.formatLineNumber(lineNum, maxLine);
+      const truncatedLine = line.length > this.maxLineWidth
+        ? line.slice(0, this.maxLineWidth - 3) + '...'
+        : line;
+      console.log(`${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset} ${colors.white}${truncatedLine}${colors.reset}`);
+    });
+
+    console.log(`${colors.muted}╰─${colors.reset}`);
+  }
+
+  /**
+   * Display a diff between old and new content with colored backgrounds
+   */
+  displayDiff(filePath: string, oldContent: string, newContent: string): void {
+    const oldLines = oldContent.split('\n');
+    const newLines = newContent.split('\n');
+    const diffLines = this.computeDiff(oldLines, newLines);
+
+    if (diffLines.length === 0) {
+      console.log(`${colors.muted}No changes${colors.reset}`);
+      return;
+    }
+
+    const maxLineNum = Math.max(...diffLines.map(d => d.lineNumber));
+
+    // Header
+    console.log(`${colors.muted}╭─ ${filePath}${colors.reset}`);
+
+    for (const diff of diffLines) {
+      const numStr = this.formatLineNumber(diff.lineNumber, maxLineNum);
+      const truncatedContent = diff.content.length > this.maxLineWidth
+        ? diff.content.slice(0, this.maxLineWidth - 3) + '...'
+        : diff.content;
+
+      // Pad the line to fill the width for background color
+      const paddedContent = truncatedContent.padEnd(this.maxLineWidth, ' ');
+
+      switch (diff.type) {
+        case 'removed':
+          console.log(`${colors.muted}│${colors.reset} ${colors.error}${numStr}${colors.reset} ${colors.bgRed}${colors.white}- ${paddedContent}${colors.reset}`);
+          break;
+        case 'added':
+          console.log(`${colors.muted}│${colors.reset} ${colors.success}${numStr}${colors.reset} ${colors.bgGreen}${colors.white}+ ${paddedContent}${colors.reset}`);
+          break;
+        case 'context':
+          console.log(`${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset}   ${colors.muted}${truncatedContent}${colors.reset}`);
+          break;
+        default:
+          console.log(`${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset}   ${colors.white}${truncatedContent}${colors.reset}`);
+      }
+    }
+
+    console.log(`${colors.muted}╰─${colors.reset}`);
+  }
+
+  /**
+   * Simple diff computation - find removed and added lines
+   */
+  private computeDiff(oldLines: string[], newLines: string[]): DiffLine[] {
+    const result: DiffLine[] = [];
+    const oldSet = new Set(oldLines);
+    const newSet = new Set(newLines);
+
+    let oldIdx = 0;
+    let newIdx = 0;
+    let lineNum = 1;
+
+    // Find the first difference
+    while (oldIdx < oldLines.length && newIdx < newLines.length && oldLines[oldIdx] === newLines[newIdx]) {
+      oldIdx++;
+      newIdx++;
+      lineNum++;
+    }
+
+    // Add context before (up to 3 lines)
+    const contextStart = Math.max(0, oldIdx - 3);
+    for (let i = contextStart; i < oldIdx; i++) {
+      result.push({
+        lineNumber: i + 1,
+        content: oldLines[i],
+        type: 'context'
+      });
+    }
+
+    // Find removed lines
+    const removedStart = oldIdx;
+    while (oldIdx < oldLines.length && !newSet.has(oldLines[oldIdx])) {
+      result.push({
+        lineNumber: oldIdx + 1,
+        content: oldLines[oldIdx],
+        type: 'removed'
+      });
+      oldIdx++;
+    }
+
+    // Find added lines
+    while (newIdx < newLines.length && !oldSet.has(newLines[newIdx])) {
+      result.push({
+        lineNumber: newIdx + 1,
+        content: newLines[newIdx],
+        type: 'added'
+      });
+      newIdx++;
+    }
+
+    // Add context after (up to 3 lines)
+    const contextEnd = Math.min(newLines.length, newIdx + 3);
+    for (let i = newIdx; i < contextEnd; i++) {
+      result.push({
+        lineNumber: i + 1,
+        content: newLines[i],
+        type: 'context'
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Display inline edit preview (old -> new)
+   */
+  displayInlineEdit(filePath: string, oldText: string, newText: string, context?: string): void {
+    console.log(`${colors.muted}╭─ Edit: ${filePath}${colors.reset}`);
+
+    // Show context if provided
+    if (context) {
+      const contextLines = context.split('\n').slice(0, 2);
+      contextLines.forEach(line => {
+        const truncated = line.slice(0, this.maxLineWidth);
+        console.log(`${colors.muted}│   ${truncated}${colors.reset}`);
+      });
+    }
+
+    // Show removed lines
+    const oldLines = oldText.split('\n');
+    oldLines.forEach(line => {
+      const truncated = line.slice(0, this.maxLineWidth);
+      const padded = truncated.padEnd(this.maxLineWidth, ' ');
+      console.log(`${colors.muted}│${colors.reset} ${colors.bgRed}${colors.white}- ${padded}${colors.reset}`);
+    });
+
+    // Show added lines
+    const newLines = newText.split('\n');
+    newLines.forEach(line => {
+      const truncated = line.slice(0, this.maxLineWidth);
+      const padded = truncated.padEnd(this.maxLineWidth, ' ');
+      console.log(`${colors.muted}│${colors.reset} ${colors.bgGreen}${colors.white}+ ${padded}${colors.reset}`);
+    });
+
+    console.log(`${colors.muted}╰─${colors.reset}`);
+  }
+}
+
+// Global file viewer instance
+export const fileViewer = new FileViewer();
+
