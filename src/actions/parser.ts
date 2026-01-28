@@ -2,7 +2,7 @@
  * Action Parser - Extract actions from LLM response content
  */
 
-import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, NotifyAction, NotifyService } from './types';
+import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, NotifyAction, SkillAction, NotifyService } from './types';
 
 // Regex patterns for each action type
 const PATTERNS = {
@@ -13,6 +13,7 @@ const PATTERNS = {
   exec: /<exec>([^<]+)<\/exec>/g,
   schedule: /<schedule\s+cron="([^"]+)"(?:\s+name="([^"]+)")?(?:\s+notify="([^"]+)")?>([^<]+)<\/schedule>/g,
   notify: /<notify\s+service="([^"]+)">([^<]+)<\/notify>/g,
+  skill: /<skill\s+name="([^"]+)"\s*\/?>/g,
 };
 
 /**
@@ -99,6 +100,16 @@ export function parseActions(content: string): Action[] {
       service,
       message: message.trim(),
     } as NotifyAction);
+  }
+
+  // Parse skill actions
+  const skillRegex = new RegExp(PATTERNS.skill.source, 'g');
+  while ((match = skillRegex.exec(content)) !== null) {
+    const [, name] = match;
+    actions.push({
+      type: 'skill',
+      name,
+    } as SkillAction);
   }
 
   return actions;

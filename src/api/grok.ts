@@ -145,6 +145,13 @@ file content here
 
 The notify attribute can be: "telegram", "whatsapp", "all", or "none" (default).
 
+## Skills (Context Helpers)
+<skill name="project-context"/>  - Get package.json, project files list, and git status
+<skill name="git-context"/>      - Get detailed git branch info and recent commits
+
+Use skills at the START of complex tasks to gather context before making changes.
+Skills return context that helps you understand the project structure.
+
 # Safety
 - Don't run destructive commands without user confirmation context
 - Avoid force pushes, hard resets, or irreversible operations
@@ -362,7 +369,6 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
 
     let responseContent = '';
     let buffer = '';
-    let displayBuffer = ''; // Buffer to handle partial XML tags
     const thinking = new ThinkingAnimation();
     this.currentThinking = thinking;
 
@@ -432,18 +438,6 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
 
           if (content) {
             responseContent += content;
-            displayBuffer += content;
-
-            // Show what's being generated (clean preview)
-            const preview = responseContent
-              .replace(/<[^>]*>/g, '') // Remove XML tags
-              .replace(/\n/g, ' ')     // Single line
-              .trim()
-              .slice(-60);            // Last 60 chars
-
-            if (preview) {
-              thinking.update(preview);
-            }
           }
         } catch {
           // Skip invalid JSON

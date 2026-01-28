@@ -63,6 +63,7 @@ import { createConfigManager, ConfigManager } from './config/config';
 import { createCodeEditor, CodeEditor } from './code/editor';
 import { createCommandPermissions, CommandPermissions } from './security/permissions';
 import { addImage, imageBuffer } from './code/imageBuffer';
+import { skills } from './skills';
 
 
 
@@ -241,6 +242,14 @@ class Slashbot {
             } catch (error: any) {
               return `Error: ${error.message || error}`;
             }
+          },
+
+          onSkill: async (name) => {
+            const skill = skills.get(name);
+            if (!skill) {
+              throw new Error(`Skill "${name}" not found`);
+            }
+            return await skill.execute();
           },
 
           onBuildCheck: async () => {

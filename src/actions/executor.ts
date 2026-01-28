@@ -8,7 +8,7 @@ import { plan } from '../ui/colors';
 /**
  * Actions that appear in the plan (impactful actions only)
  */
-const PLAN_ACTIONS = ['edit', 'create', 'exec', 'schedule', 'notify'];
+const PLAN_ACTIONS = ['edit', 'create', 'exec', 'schedule', 'notify', 'skill'];
 
 /**
  * Get a human-readable label for a plan action
@@ -25,6 +25,8 @@ function getActionLabel(action: Action): string {
       return `Schedule ${action.name}`;
     case 'notify':
       return `Notify ${action.service}`;
+    case 'skill':
+      return `Skill ${action.name}`;
     default:
       return '';
   }
@@ -106,6 +108,8 @@ async function executeAction(
       return executeSchedule(action, handlers);
     case 'notify':
       return executeNotify(action, handlers);
+    case 'skill':
+      return executeSkill(action, handlers);
     default:
       return null;
   }
@@ -207,4 +211,26 @@ async function executeNotify(
     success: true,
     result: 'Sent',
   };
+}
+
+async function executeSkill(
+  action: Extract<Action, { type: 'skill' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onSkill) return null;
+  try {
+    const context = await handlers.onSkill(action.name);
+    return {
+      action: `SKILL ${action.name}`,
+      success: true,
+      result: context,
+    };
+  } catch (error) {
+    return {
+      action: `SKILL ${action.name}`,
+      success: false,
+      result: 'Skill not found',
+      error: `Skill "${action.name}" not found`,
+    };
+  }
 }

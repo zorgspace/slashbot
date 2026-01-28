@@ -11,6 +11,7 @@ const ACTION_TAG_PATTERNS = [
   /<exec>[\s\S]*?<\/exec>/g,
   /<schedule[^>]*>[\s\S]*?<\/schedule>/g,
   /<notify[^>]*>[\s\S]*?<\/notify>/g,
+  /<skill[^>]*\s*\/?>/g,
 ];
 
 /**

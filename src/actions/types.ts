@@ -2,7 +2,7 @@
  * Action System Type Definitions
  */
 
-export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'notify';
+export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'notify' | 'skill';
 
 export interface GrepAction {
   type: 'grep';
@@ -43,6 +43,11 @@ export interface ScheduleAction {
   notify?: NotifyService;
 }
 
+export interface SkillAction {
+  type: 'skill';
+  name: string;
+}
+
 export interface NotifyAction {
   type: 'notify';
   service: string;
@@ -56,7 +61,8 @@ export type Action =
   | CreateAction
   | ExecAction
   | ScheduleAction
-  | NotifyAction;
+  | NotifyAction
+  | SkillAction;
 
 export interface ActionResult {
   action: string;
@@ -73,6 +79,7 @@ export interface ActionHandlers {
   onExec?: (command: string) => Promise<string>;
   onSchedule?: (cron: string, command: string, name: string, notify?: NotifyService) => Promise<void>;
   onNotify?: (service: string, message: string) => Promise<void>;
+  onSkill?: (name: string) => Promise<string>;
   onFile?: (path: string, content: string) => Promise<boolean>;
   onBuildCheck?: () => Promise<{ success: boolean; errors: string[] }>;
 }
