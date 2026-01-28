@@ -68,9 +68,12 @@ export const createGrokClient = (config: GrokConfig, handlers?: ActionHandlers):
 });
  */
 
-import { colors, c, ThinkingAnimation, buildStatus, step } from '../ui/colors';
+import { colors, c, ThinkingAnimation, buildStatus } from '../ui/colors';
 import { imageBuffer } from '../code/imageBuffer';
-import * as path from 'path';
+import { parseActions, executeActions, type ActionHandlers } from '../actions';
+import { cleanXmlTags } from '../utils/xml';
+
+export type { ActionHandlers } from '../actions';
 
 export interface Message {
   role: 'system' | 'user' | 'assistant';
@@ -83,18 +86,6 @@ export interface GrokConfig {
   baseUrl?: string;
   maxTokens?: number;
   temperature?: number;
-}
-
-export interface ActionHandlers {
-  onSchedule?: (cron: string, command: string, name: string) => Promise<void>;
-  onFile?: (path: string, content: string) => Promise<boolean>;
-  onNotify?: (service: string, message: string) => Promise<void>;
-  onGrep?: (pattern: string, filePattern?: string) => Promise<string>;
-  onRead?: (path: string) => Promise<string | null>;
-  onEdit?: (path: string, search: string, replace: string) => Promise<boolean>;
-  onCreate?: (path: string, content: string) => Promise<boolean>;
-  onExec?: (command: string) => Promise<string>;
-  onBuildCheck?: () => Promise<{ success: boolean; errors: string[] }>;
 }
 
 const DEFAULT_CONFIG: Partial<GrokConfig> = {
@@ -112,6 +103,16 @@ const SYSTEM_PROMPT = `You are Slashbot, an expert CLI assistant for software en
 - Match existing code style and patterns in the project.
 - Be direct and concise. No fluff.
 - Answer in the user's language.
+
+# Reacting to Action Results
+When you receive action results, acknowledge them naturally:
+- File not found: "I see the file doesn't exist. Let me check..."
+- Edit failed: "The pattern wasn't found - the file may have changed. Let me re-read it."
+- Command error: "That command failed. Let me try a different approach."
+- Empty search: "No results found. Let me broaden the search."
+- Success: Continue without unnecessary commentary.
+
+Always adapt your approach based on results. If something fails, explain briefly and try again.
 
 # Before Editing Code
 1. Use <grep> to find relevant files and understand the codebase structure
@@ -138,8 +139,11 @@ file content here
 <exec>command here</exec>  - Run shell command (git, npm, system info, etc.)
 
 ## Automation
-<schedule cron="*/5 * * * *" name="task-name">command</schedule>  - Schedule recurring task
-<notify service="telegram">message</notify>                        - Send notification
+<schedule cron="*/5 * * * *" name="task-name">command</schedule>     - Schedule recurring task
+<schedule cron="0 9 * * *" name="backup" notify="telegram">cmd</schedule> - Schedule with notification
+<notify service="telegram">message</notify>                          - Send notification
+
+The notify attribute can be: "telegram", "whatsapp", "all", or "none" (default).
 
 # Safety
 - Don't run destructive commands without user confirmation context
@@ -274,7 +278,17 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
       finalResponse = responseContent;
 
       // Execute actions and collect results
-      const actionResults = await this.executeActionsWithResults(responseContent);
+      const actions = parseActions(responseContent);
+
+      // Debug: Show why no actions if response looks like it should have some
+      if (actions.length === 0) {
+        const hasActionHints = /<(grep|read|edit|create|exec|schedule|notify)/i.test(responseContent);
+        if (hasActionHints) {
+          console.log(`${colors.muted}⚠ Action tags detected but not parsed (check XML syntax)${colors.reset}`);
+        }
+      }
+
+      const actionResults = await executeActions(actions, this.actionHandlers);
 
       // Track if we made edits
       const madeEdits = actionResults.some(r =>
@@ -306,27 +320,24 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
       }
 
       // Feed results back to continue the conversation
-      const resultsMessage = actionResults.map(r => `[${r.action}] ${r.result}`).join('\n');
+      const resultsMessage = actionResults.map(r => {
+        const status = r.success ? '✓' : '✗ FAILED';
+        const errorNote = r.error ? ` - ${r.error}` : '';
+        return `[${status}] ${r.action}${errorNote}\n    ${r.result.slice(0, 500)}`;
+      }).join('\n\n');
+
       this.conversationHistory.push({
         role: 'assistant',
         content: responseContent,
       });
       this.conversationHistory.push({
         role: 'user',
-        content: `Action results:\n${resultsMessage}\n\nContinue.`,
+        content: `Action results:\n${resultsMessage}\n\nAcknowledge any errors briefly, then continue or adjust your approach.`,
       });
     }
 
     // Clean and store final response
-    const cleanResponse = finalResponse
-      .replace(/<grep[^>]*>[\s\S]*?<\/grep>/g, '')
-      .replace(/<read[^>]*\/?>/g, '')
-      .replace(/<edit[^>]*>[\s\S]*?<\/edit>/g, '')
-      .replace(/<create[^>]*>[\s\S]*?<\/create>/g, '')
-      .replace(/<exec>[\s\S]*?<\/exec>/g, '')
-      .replace(/<schedule[^>]*>[\s\S]*?<\/schedule>/g, '')
-      .replace(/<notify[^>]*>[\s\S]*?<\/notify>/g, '')
-      .trim();
+    const cleanResponse = cleanXmlTags(finalResponse);
 
     return {
       response: cleanResponse,
@@ -446,17 +457,7 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
     this.abortController = null;
 
     // Clean all XML tags from display content
-    const cleanContent = responseContent
-      .replace(/<grep[^>]*>[\s\S]*?<\/grep>/g, '')
-      .replace(/<read[^>]*\s*\/?>/g, '')
-      .replace(/<read[^>]*>[\s\S]*?<\/read>/g, '')
-      .replace(/<edit[^>]*>[\s\S]*?<\/edit>/g, '')
-      .replace(/<create[^>]*>[\s\S]*?<\/create>/g, '')
-      .replace(/<exec>[\s\S]*?<\/exec>/g, '')
-      .replace(/<schedule[^>]*>[\s\S]*?<\/schedule>/g, '')
-      .replace(/<notify[^>]*>[\s\S]*?<\/notify>/g, '')
-      .replace(/<[^>]+>/g, '') // Catch any remaining tags
-      .trim();
+    const cleanContent = cleanXmlTags(responseContent);
 
     // Only display if there's actual text content
     if (cleanContent) {
@@ -470,120 +471,6 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
     }
 
     return responseContent;
-  }
-
-  private async executeActionsWithResults(content: string): Promise<Array<{ action: string; result: string }>> {
-    const results: Array<{ action: string; result: string }> = [];
-    let match;
-
-    // Parse <grep> tags (gray dot - search)
-    const grepRegex = /<grep\s+pattern="([^"]+)"(?:\s+file="([^"]+)")?>([^<]*)<\/grep>/g;
-    while ((match = grepRegex.exec(content)) !== null) {
-      const [, pattern, filePattern] = match;
-      if (this.actionHandlers.onGrep) {
-        step.search('Search', `"${pattern}"`);
-        const grepResults = await this.actionHandlers.onGrep(pattern, filePattern);
-        const count = grepResults ? (grepResults.match(/\n/g) || []).length + 1 : 0;
-        step.success(`${count} results`);
-        results.push({ action: `GREP ${pattern}`, result: grepResults || 'No results' });
-      }
-    }
-
-    // Parse <read> tags (gray dot - search)
-    const readRegex = /<read\s+path="([^"]+)"(?:\s*\/>|>.*?<\/read>)/g;
-    while ((match = readRegex.exec(content)) !== null) {
-      const [, filePath] = match;
-      if (this.actionHandlers.onRead) {
-        step.search('Reading', filePath);
-        const fileContent = await this.actionHandlers.onRead(filePath);
-        if (fileContent) {
-          const preview = fileContent.length > 1000 ? fileContent.slice(0, 1000) + '...' : fileContent;
-          step.success(`${fileContent.length} chars`);
-          results.push({ action: `READ ${filePath}`, result: preview });
-        } else {
-          step.error('not found');
-          results.push({ action: `READ ${filePath}`, result: 'File not found' });
-        }
-      }
-    }
-
-    // Parse <edit> tags (red dot - edit with diff)
-    const editRegex = /<edit\s+path="([^"]+)">\s*<search>([\s\S]*?)<\/search>\s*<replace>([\s\S]*?)<\/replace>\s*<\/edit>/g;
-    while ((match = editRegex.exec(content)) !== null) {
-      const [, filePath, search, replace] = match;
-      if (this.actionHandlers.onEdit) {
-        step.edit('Editing', filePath);
-        step.diff(search.trim(), replace.trim());
-        const success = await this.actionHandlers.onEdit(filePath, search.trim(), replace.trim());
-        if (success) {
-          step.success('OK');
-        } else {
-          step.error('pattern not found');
-        }
-        results.push({ action: `EDIT ${filePath}`, result: success ? 'OK' : 'Failed' });
-      }
-    }
-
-    // Parse <create> tags (green dot - action)
-    const createRegex = /<create\s+path="([^"]+)">([\s\S]*?)<\/create>/g;
-    while ((match = createRegex.exec(content)) !== null) {
-      const [, filePath, fileContent] = match;
-      if (this.actionHandlers.onCreate) {
-        step.action('Creating', filePath);
-        const success = await this.actionHandlers.onCreate(filePath, fileContent.trim());
-        if (success) {
-          step.success('OK');
-        } else {
-          step.error('failed');
-        }
-        results.push({ action: `CREATE ${filePath}`, result: success ? 'OK' : 'Failed' });
-      }
-    }
-
-    // Parse <exec> tags (green dot - action)
-    const execRegex = /<exec>([^<]+)<\/exec>/g;
-    while ((match = execRegex.exec(content)) !== null) {
-      const [, command] = match;
-      if (this.actionHandlers.onExec) {
-        step.action('Executing', command.trim().slice(0, 50));
-        console.log(); // newline after action
-        const output = await this.actionHandlers.onExec(command.trim());
-        const isError = output?.startsWith('Error:');
-        if (output) step.info(output.slice(0, 80));
-        if (isError) {
-          step.error('failed');
-        } else {
-          step.success('OK');
-        }
-        results.push({ action: `EXEC ${command.trim()}`, result: output || 'OK' });
-      }
-    }
-
-    // Parse <schedule> tags (green dot - action)
-    const scheduleRegex = /<schedule\s+cron="([^"]+)"(?:\s+name="([^"]+)")?>([^<]+)<\/schedule>/g;
-    while ((match = scheduleRegex.exec(content)) !== null) {
-      const [, cron, name, command] = match;
-      if (this.actionHandlers.onSchedule) {
-        step.action('Scheduling', name || 'Task');
-        await this.actionHandlers.onSchedule(cron, command.trim(), name || 'Scheduled Task');
-        step.success(cron);
-      }
-    }
-
-    // Parse <notify> tags (green dot - action)
-    const notifyRegex = /<notify\s+service="([^"]+)">([^<]+)<\/notify>/g;
-    while ((match = notifyRegex.exec(content)) !== null) {
-      const [, service, message] = match;
-      if (this.actionHandlers.onNotify) {
-        step.action('Notifying', service);
-        await this.actionHandlers.onNotify(service, message.trim());
-        step.success('sent');
-      }
-    }
-
-    if (results.length > 0) step.end();
-
-    return results;
   }
 
   clearHistory(): void {

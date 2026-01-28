@@ -1,40 +1,42 @@
 /**
  * Task Scheduler for Slashbot
- * Creates real cron jobs with shell scripts
- * Persisted in ~/.config/slashbot/tasks/
+ * Embedded cron system - runs only when Slashbot is active
+ * Output shown directly in terminal
  */
 
 import { c, colors } from '../ui/colors';
 import * as path from 'path';
 import * as os from 'os';
+import { parseCron, matchesCron, getNextRunTime, describeCron, isValidCron, type ParsedCron } from './cron';
+import type { Notifier } from '../notify/notifier';
 
 const TASKS_DIR = path.join(os.homedir(), '.config', 'slashbot', 'tasks');
 const TASKS_INDEX = path.join(TASKS_DIR, 'index.json');
 
 // Dangerous patterns to block
 const DANGEROUS_PATTERNS = [
-  /rm\s+(-[rfRF]+\s+)*[\/~]\s*$/,          // rm -rf / or rm -rf ~
-  /rm\s+(-[rfRF]+\s+)*\/\*/,               // rm -rf /*
-  /rm\s+(-[rfRF]+\s+)*\//,                 // rm -rf /
-  />\s*\/dev\/sd[a-z]/,                    // Write to disk devices
-  /dd\s+.*of=\/dev\/sd[a-z]/,              // dd to disk
-  /mkfs/,                                   // Format filesystem
-  /:(){ :|:& };:/,                          // Fork bomb
-  /chmod\s+(-R\s+)?777\s+\//,              // chmod 777 /
-  /chown\s+.*\s+\//,                       // chown /
-  /curl.*\|\s*(ba)?sh/,                    // curl | bash
-  /wget.*\|\s*(ba)?sh/,                    // wget | bash
-  />\s*\/etc\//,                           // Overwrite /etc
-  /rm\s+.*\/etc/,                          // Delete /etc
-  /rm\s+.*\/boot/,                         // Delete /boot
-  /rm\s+.*\/usr/,                          // Delete /usr
-  /rm\s+.*\/var/,                          // Delete /var
-  /rm\s+.*\/home(?!\/[^\/]+\/)/,           // Delete /home but not subdirs
-  /shutdown/,                               // Shutdown
-  /reboot/,                                 // Reboot
-  /init\s+0/,                              // Halt
-  /halt/,                                   // Halt
-  /poweroff/,                              // Poweroff
+  /rm\s+(-[rfRF]+\s+)*[\/~]\s*$/,
+  /rm\s+(-[rfRF]+\s+)*\/\*/,
+  /rm\s+(-[rfRF]+\s+)*\//,
+  />\s*\/dev\/sd[a-z]/,
+  /dd\s+.*of=\/dev\/sd[a-z]/,
+  /mkfs/,
+  /:(){ :|:& };:/,
+  /chmod\s+(-R\s+)?777\s+\//,
+  /chown\s+.*\s+\//,
+  /curl.*\|\s*(ba)?sh/,
+  /wget.*\|\s*(ba)?sh/,
+  />\s*\/etc\//,
+  /rm\s+.*\/etc/,
+  /rm\s+.*\/boot/,
+  /rm\s+.*\/usr/,
+  /rm\s+.*\/var/,
+  /rm\s+.*\/home(?!\/[^\/]+\/)/,
+  /shutdown/,
+  /reboot/,
+  /init\s+0/,
+  /halt/,
+  /poweroff/,
 ];
 
 // Suspicious patterns (warning only)
@@ -49,15 +51,20 @@ const SUSPICIOUS_PATTERNS = [
   /`.*`/,
 ];
 
+export type NotifyService = 'telegram' | 'whatsapp' | 'all' | 'none';
+
 export interface ScheduledTask {
   id: string;
   name: string;
   cron: string;
-  script: string;
-  scriptPath: string;
+  command: string;
   enabled: boolean;
   createdAt: string;
   lastRun?: string;
+  lastOutput?: string;
+  lastSuccess?: boolean;
+  runCount: number;
+  notify?: NotifyService;  // Send notification on completion
 }
 
 export interface SecurityCheck {
@@ -67,8 +74,26 @@ export interface SecurityCheck {
   blockedReason?: string;
 }
 
+interface ActiveTask {
+  task: ScheduledTask;
+  parsedCron: ParsedCron;
+  nextRun: Date | null;
+}
+
 export class TaskScheduler {
   private tasks: Map<string, ScheduledTask> = new Map();
+  private activeTasks: Map<string, ActiveTask> = new Map();
+  private tickInterval: ReturnType<typeof setInterval> | null = null;
+  private running = false;
+  private lastCheck: Date = new Date();
+  private notifier: Notifier | null = null;
+
+  /**
+   * Set the notifier for sending task notifications
+   */
+  setNotifier(notifier: Notifier): void {
+    this.notifier = notifier;
+  }
 
   async init(): Promise<void> {
     await this.ensureTasksDir();
@@ -86,7 +111,13 @@ export class TaskScheduler {
       if (await file.exists()) {
         const data = await file.json();
         for (const task of data.tasks || []) {
-          this.tasks.set(task.id, task);
+          // Backward compatibility: old tasks have `script`, new ones have `command`
+          this.tasks.set(task.id, {
+            ...task,
+            command: task.command || task.script || '',
+            runCount: task.runCount || 0,
+            notify: task.notify || 'none',
+          });
         }
       }
     } catch {
@@ -108,7 +139,6 @@ export class TaskScheduler {
       warnings: [],
     };
 
-    // Check for blocked patterns
     for (const pattern of DANGEROUS_PATTERNS) {
       if (pattern.test(command)) {
         result.safe = false;
@@ -118,135 +148,78 @@ export class TaskScheduler {
       }
     }
 
-    // Check for suspicious patterns
     for (const pattern of SUSPICIOUS_PATTERNS) {
       if (pattern.test(command)) {
         result.safe = false;
-        result.warnings.push(`Pattern suspect: ${pattern.toString()}`);
+        result.warnings.push(`Suspicious pattern: ${pattern.toString()}`);
       }
     }
 
     return result;
   }
 
-  async addTask(name: string, cron: string, script: string): Promise<string | null> {
-    // Validate the script
-    const security = this.validateCommand(script);
+  async addTask(name: string, cron: string, command: string, notify?: NotifyService): Promise<string | null> {
+    // Validate cron expression
+    if (!isValidCron(cron)) {
+      console.log(c.error(`Invalid cron expression: ${cron}`));
+      return null;
+    }
+
+    // Validate the command
+    const security = this.validateCommand(command);
 
     if (security.blocked) {
       console.log(c.error(`[SECURITY] Command blocked!`));
-      console.log(c.error(security.blockedReason || 'Commande dangereuse'));
+      console.log(c.error(security.blockedReason || 'Dangerous command'));
       return null;
     }
 
     if (security.warnings.length > 0) {
-      console.log(c.warning(`[SECURITY] Avertissements:`));
+      console.log(c.warning(`[SECURITY] Warnings:`));
       security.warnings.forEach(w => console.log(c.warning(`  - ${w}`)));
     }
 
     const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const scriptPath = path.join(TASKS_DIR, `${id}.sh`);
 
-    // Create shell script
-    const scriptContent = `#!/bin/bash
-# Slashbot Task: ${name}
-# Cron: ${cron}
-# Created: ${new Date().toISOString()}
-#
-# Edit this file to modify the task
-# Run manually: bash ${scriptPath}
+    const task: ScheduledTask = {
+      id,
+      name,
+      cron,
+      command,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      runCount: 0,
+      notify: notify || 'none',
+    };
 
-set -e  # Exit on error
+    this.tasks.set(id, task);
+    await this.saveTasks();
 
-# --- Task Script ---
-${script}
-`;
-
-    try {
-      await Bun.write(scriptPath, scriptContent);
-
-      // Make executable
-      const { chmod } = await import('fs/promises');
-      await chmod(scriptPath, 0o755);
-
-      const task: ScheduledTask = {
-        id,
-        name,
-        cron,
-        script,
-        scriptPath,
-        enabled: true,
-        createdAt: new Date().toISOString(),
-      };
-
-      this.tasks.set(id, task);
-      await this.saveTasks();
-
-      // Add to system crontab
-      await this.addToCrontab(task);
-
-      return id;
-    } catch (error) {
-      console.log(c.error(`Task creation error: ${error}`));
-      return null;
+    // Register in active tasks if scheduler is running
+    if (this.running) {
+      this.registerTask(task);
     }
+
+    return id;
   }
 
-  private async addToCrontab(task: ScheduledTask): Promise<boolean> {
-    try {
-      const { exec } = await import('child_process');
-      const { promisify } = await import('util');
-      const execAsync = promisify(exec);
+  private registerTask(task: ScheduledTask): void {
+    if (!task.enabled) return;
 
-      // Get current crontab
-      let currentCrontab = '';
-      try {
-        const { stdout } = await execAsync('crontab -l 2>/dev/null');
-        currentCrontab = stdout;
-      } catch {
-        // No crontab yet
-      }
+    const parsed = parseCron(task.cron);
+    if (!parsed) return;
 
-      // Remove old entry for this task if exists
-      const lines = currentCrontab.split('\n').filter(line =>
-        !line.includes(`# slashbot:${task.id}`)
-      );
+    const nextRun = getNextRunTime(task.cron);
 
-      // Add new entry
-      const cronLine = `${task.cron} ${task.scriptPath} >> ~/.config/slashbot/tasks/logs/${task.id}.log 2>&1 # slashbot:${task.id}`;
-      lines.push(cronLine);
-
-      // Create logs dir
-      const { mkdir } = await import('fs/promises');
-      await mkdir(path.join(TASKS_DIR, 'logs'), { recursive: true });
-
-      // Write new crontab
-      const newCrontab = lines.filter(l => l.trim()).join('\n') + '\n';
-      await execAsync(`echo "${newCrontab.replace(/"/g, '\\"')}" | crontab -`);
-
-      return true;
-    } catch (error) {
-      console.log(c.warning(`Crontab unavailable, task saved locally only`));
-      return false;
-    }
+    this.activeTasks.set(task.id, {
+      task,
+      parsedCron: parsed,
+      nextRun,
+    });
   }
 
-  private async removeFromCrontab(taskId: string): Promise<void> {
-    try {
-      const { exec } = await import('child_process');
-      const { promisify } = await import('util');
-      const execAsync = promisify(exec);
-
-      const { stdout } = await execAsync('crontab -l 2>/dev/null');
-      const lines = stdout.split('\n').filter(line =>
-        !line.includes(`# slashbot:${taskId}`)
-      );
-
-      const newCrontab = lines.filter(l => l.trim()).join('\n') + '\n';
-      await execAsync(`echo "${newCrontab.replace(/"/g, '\\"')}" | crontab -`);
-    } catch {
-      // Ignore crontab errors
-    }
+  private unregisterTask(taskId: string): void {
+    this.activeTasks.delete(taskId);
   }
 
   async removeTask(idOrIndex: string | number): Promise<boolean> {
@@ -261,39 +234,19 @@ ${script}
 
     if (!task) return false;
 
-    // Remove from crontab
-    await this.removeFromCrontab(task.id);
-
-    // Remove script file
-    try {
-      const { unlink } = await import('fs/promises');
-      await unlink(task.scriptPath);
-    } catch {
-      // File might not exist
-    }
-
+    this.unregisterTask(task.id);
     this.tasks.delete(task.id);
     await this.saveTasks();
 
     return true;
   }
 
-  async editTask(idOrIndex: string | number): Promise<string | null> {
-    let task: ScheduledTask | undefined;
-
-    if (typeof idOrIndex === 'number') {
-      const tasks = Array.from(this.tasks.values());
-      task = tasks[idOrIndex];
-    } else {
-      task = this.tasks.get(idOrIndex);
+  async updateTaskCron(idOrIndex: string | number, newCron: string): Promise<boolean> {
+    if (!isValidCron(newCron)) {
+      console.log(c.error(`Invalid cron expression: ${newCron}`));
+      return false;
     }
 
-    if (!task) return null;
-
-    return task.scriptPath;
-  }
-
-  async updateTaskCron(idOrIndex: string | number, newCron: string): Promise<boolean> {
     let task: ScheduledTask | undefined;
 
     if (typeof idOrIndex === 'number') {
@@ -308,9 +261,11 @@ ${script}
     task.cron = newCron;
     await this.saveTasks();
 
-    // Update crontab
-    await this.removeFromCrontab(task.id);
-    await this.addToCrontab(task);
+    // Re-register task
+    if (this.running) {
+      this.unregisterTask(task.id);
+      this.registerTask(task);
+    }
 
     return true;
   }
@@ -331,24 +286,16 @@ ${script}
     await this.saveTasks();
 
     if (task.enabled) {
-      await this.addToCrontab(task);
+      this.registerTask(task);
     } else {
-      await this.removeFromCrontab(task.id);
+      this.unregisterTask(task.id);
     }
 
     return task.enabled;
   }
 
   async clearTasks(): Promise<void> {
-    for (const task of this.tasks.values()) {
-      await this.removeFromCrontab(task.id);
-      try {
-        const { unlink } = await import('fs/promises');
-        await unlink(task.scriptPath);
-      } catch {
-        // Ignore
-      }
-    }
+    this.activeTasks.clear();
     this.tasks.clear();
     await this.saveTasks();
   }
@@ -357,61 +304,252 @@ ${script}
     id: string;
     name: string;
     cron: string;
-    scriptPath: string;
+    command: string;
     enabled: boolean;
     next: string;
     last: string;
+    runs: number;
   }> {
-    return Array.from(this.tasks.values()).map(task => ({
-      id: task.id,
-      name: task.name,
-      cron: task.cron,
-      scriptPath: task.scriptPath,
-      enabled: task.enabled,
-      next: this.getNextRun(task.cron),
-      last: task.lastRun || 'Jamais',
-    }));
+    return Array.from(this.tasks.values()).map(task => {
+      const nextRun = task.enabled ? getNextRunTime(task.cron) : null;
+      return {
+        id: task.id,
+        name: task.name,
+        cron: task.cron,
+        command: task.command,
+        enabled: task.enabled,
+        next: nextRun ? this.formatDate(nextRun) : 'Disabled',
+        last: task.lastRun ? this.formatDate(new Date(task.lastRun)) : 'Never',
+        runs: task.runCount,
+      };
+    });
   }
 
-  private getNextRun(cron: string): string {
-    // Simple next run calculation
-    const parts = cron.split(' ');
-    if (parts.length !== 5) return 'Invalid cron';
-
-    const [minute, hour] = parts;
+  private formatDate(date: Date): string {
     const now = new Date();
-    const next = new Date();
+    const diff = date.getTime() - now.getTime();
 
-    if (hour !== '*') {
-      next.setHours(parseInt(hour));
-    }
-    if (minute !== '*') {
-      next.setMinutes(parseInt(minute));
-    }
-    next.setSeconds(0);
-
-    if (next <= now) {
-      next.setDate(next.getDate() + 1);
+    if (diff < 0) {
+      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     }
 
-    return next.toLocaleString('fr-FR');
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(minutes / 60);
+
+    if (minutes < 1) return 'Now';
+    if (minutes < 60) return `in ${minutes}m`;
+    if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
 
   getTasksDir(): string {
     return TASKS_DIR;
   }
 
-  // For legacy compatibility
+  /**
+   * Start the scheduler - checks every second for tasks to run
+   */
   start(): void {
-    // Tasks are managed by system cron now
+    if (this.running) return;
+
+    this.running = true;
+    this.lastCheck = new Date();
+
+    // Register all enabled tasks
+    for (const task of this.tasks.values()) {
+      if (task.enabled) {
+        this.registerTask(task);
+      }
+    }
+
+    // Tick every second to check for due tasks
+    this.tickInterval = setInterval(() => this.tick(), 1000);
+
+    const taskCount = this.activeTasks.size;
+    if (taskCount > 0) {
+      console.log(c.muted(`[CRON] ${taskCount} task${taskCount > 1 ? 's' : ''} scheduled`));
+    }
   }
 
+  /**
+   * Stop the scheduler
+   */
   stop(): void {
-    // Nothing to stop
+    this.running = false;
+
+    if (this.tickInterval) {
+      clearInterval(this.tickInterval);
+      this.tickInterval = null;
+    }
+
+    this.activeTasks.clear();
+  }
+
+  /**
+   * Check and run due tasks
+   */
+  private async tick(): Promise<void> {
+    const now = new Date();
+    now.setSeconds(0);
+    now.setMilliseconds(0);
+
+    // Only check once per minute
+    const lastMinute = new Date(this.lastCheck);
+    lastMinute.setSeconds(0);
+    lastMinute.setMilliseconds(0);
+
+    if (now.getTime() === lastMinute.getTime()) {
+      return;
+    }
+
+    this.lastCheck = now;
+
+    // Check each active task
+    for (const [id, active] of this.activeTasks) {
+      if (matchesCron(active.parsedCron, now)) {
+        await this.executeTask(active.task);
+
+        // Update next run time
+        active.nextRun = getNextRunTime(active.task.cron);
+      }
+    }
+  }
+
+  /**
+   * Execute a task and display output in terminal
+   */
+  private async executeTask(task: ScheduledTask): Promise<void> {
+    const startTime = Date.now();
+
+    // Display task start
+    console.log('');
+    console.log(`${colors.violet}┌─ CRON ${colors.reset}${c.bold(task.name)}`);
+    console.log(`${colors.muted}│ ${describeCron(task.cron)}${colors.reset}`);
+    console.log(`${colors.muted}│ $ ${task.command}${colors.reset}`);
+
+    let success = false;
+    let output = '';
+
+    try {
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+
+      const { stdout, stderr } = await execAsync(task.command, {
+        timeout: 60000, // 1 minute timeout
+        cwd: process.cwd(),
+        env: { ...process.env },
+      });
+
+      output = (stdout || stderr || '').trim();
+      const duration = Date.now() - startTime;
+
+      // Update task state
+      task.lastRun = new Date().toISOString();
+      task.lastOutput = output.slice(0, 1000);
+      task.lastSuccess = true;
+      task.runCount++;
+      success = true;
+
+      // Display output
+      if (output) {
+        const lines = output.split('\n').slice(0, 10);
+        lines.forEach(line => {
+          console.log(`${colors.muted}│${colors.reset} ${line}`);
+        });
+        if (output.split('\n').length > 10) {
+          console.log(`${colors.muted}│ ... (${output.split('\n').length - 10} more lines)${colors.reset}`);
+        }
+      }
+
+      console.log(`${colors.violet}└─${colors.reset} ${c.success('✓')} ${colors.muted}${duration}ms${colors.reset}`);
+      console.log('');
+
+    } catch (error: any) {
+      const duration = Date.now() - startTime;
+      const errorMsg = error.stderr || error.message || String(error);
+      output = errorMsg;
+
+      // Update task state
+      task.lastRun = new Date().toISOString();
+      task.lastOutput = errorMsg.slice(0, 1000);
+      task.lastSuccess = false;
+      task.runCount++;
+
+      // Display error
+      const lines = errorMsg.trim().split('\n').slice(0, 5);
+      lines.forEach((line: string) => {
+        console.log(`${colors.muted}│${colors.reset} ${c.error(line)}`);
+      });
+
+      console.log(`${colors.violet}└─${colors.reset} ${c.error('✗')} ${colors.muted}${duration}ms${colors.reset}`);
+      console.log('');
+    }
+
+    // Save updated task state
+    await this.saveTasks();
+
+    // Send notification if configured
+    if (task.notify && task.notify !== 'none' && this.notifier) {
+      const statusEmoji = success ? '✅' : '❌';
+      const statusText = success ? 'completed' : 'failed';
+      const message = `${statusEmoji} Task "${task.name}" ${statusText}\n\n` +
+        `Command: ${task.command}\n` +
+        `Output: ${output.slice(0, 200)}${output.length > 200 ? '...' : ''}`;
+
+      try {
+        if (task.notify === 'telegram') {
+          await this.notifier.sendTelegram(message);
+        } else if (task.notify === 'whatsapp') {
+          await this.notifier.sendWhatsApp(message);
+        } else if (task.notify === 'all') {
+          await this.notifier.sendAll(message);
+        }
+      } catch {
+        console.log(c.warning('Failed to send notification'));
+      }
+    }
+  }
+
+  /**
+   * Run a task immediately (manual trigger)
+   */
+  async runTask(idOrIndex: string | number): Promise<boolean> {
+    let task: ScheduledTask | undefined;
+
+    if (typeof idOrIndex === 'number') {
+      const tasks = Array.from(this.tasks.values());
+      task = tasks[idOrIndex];
+    } else {
+      task = this.tasks.get(idOrIndex);
+    }
+
+    if (!task) return false;
+
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
+   * Get status summary
+   */
+  getStatus(): { running: boolean; taskCount: number; activeCount: number } {
+    return {
+      running: this.running,
+      taskCount: this.tasks.size,
+      activeCount: this.activeTasks.size,
+    };
   }
 }
 
 export function createScheduler(): TaskScheduler {
-  const scheduler = new TaskScheduler();
-  return scheduler;
+  return new TaskScheduler();
 }
+
+export { describeCron, isValidCron } from './cron';

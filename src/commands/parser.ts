@@ -495,27 +495,43 @@ commands.set('files', {
 commands.set('task', {
   name: 'task',
   description: 'Manage scheduled tasks',
-  usage: '/task [list|edit|remove|toggle|logs|clear] [id]',
+  usage: '/task [list|run|remove|toggle|cron|clear] [id]',
   execute: async (args, context) => {
     const subcommand = args[0] || 'list';
     const tasks = context.scheduler?.listTasks() || [];
+    const status = context.scheduler?.getStatus() || {};
 
     switch (subcommand) {
       case 'list':
         if (tasks.length === 0) {
           console.log(c.muted('\nNo scheduled tasks'));
           console.log(c.muted('Ask Slashbot to create a task in natural language.\n'));
-          console.log(c.muted(`Scripts: ${context.scheduler?.getTasksDir()}\n`));
         } else {
-          console.log(`\n${c.violet('Scheduled tasks:')}\n`);
+          console.log(`\n${c.violet('Scheduled tasks:')} ${status.running ? c.success('(running)') : c.warning('(stopped)')}\n`);
           tasks.forEach((task: any, i: number) => {
-            const status = task.enabled ? c.success('●') : c.muted('○');
-            console.log(`  ${status} ${c.violet(`[${i + 1}]`)} ${task.name}`);
-            console.log(`      ${c.muted(`Cron:   ${task.cron}`)}`);
-            console.log(`      ${c.muted(`Script: ${task.scriptPath}`)}`);
-            console.log(`      ${c.muted(`Next:   ${task.next}`)}`);
+            const statusIcon = task.enabled ? c.success('●') : c.muted('○');
+            console.log(`  ${statusIcon} ${c.violet(`[${i + 1}]`)} ${task.name}`);
+            console.log(`      ${c.muted('Cron:')}    ${task.cron}`);
+            console.log(`      ${c.muted('Command:')} ${task.command.slice(0, 50)}${task.command.length > 50 ? '...' : ''}`);
+            console.log(`      ${c.muted('Next:')}    ${task.next}  ${c.muted(`(${task.runs} runs)`)}`);
           });
-          console.log(`\n${c.muted('Commands: /task edit|remove|toggle|logs <id>')}\n`);
+          console.log(`\n${c.muted('Commands: /task run|remove|toggle|cron <id>')}\n`);
+        }
+        break;
+
+      case 'run':
+        const runId = parseInt(args[1]) - 1;
+        if (isNaN(runId) || runId < 0 || runId >= tasks.length) {
+          console.log(c.error('Invalid ID. Usage: /task run <id>'));
+          return true;
+        }
+
+        const taskToRun = tasks[runId];
+        console.log(c.muted(`Running: ${taskToRun.name}...`));
+        if (await context.scheduler?.runTask(runId)) {
+          // Output is shown by the scheduler
+        } else {
+          console.log(c.error('Run error'));
         }
         break;
 
@@ -536,32 +552,6 @@ commands.set('task', {
         }
         break;
 
-      case 'edit':
-        const editId = parseInt(args[1]) - 1;
-        if (isNaN(editId) || editId < 0 || editId >= tasks.length) {
-          console.log(c.error('Invalid ID. Usage: /task edit <id>'));
-          return true;
-        }
-
-        const scriptPath = await context.scheduler?.editTask(editId);
-        if (scriptPath) {
-          console.log(`\n${c.violet('Edit script:')}`);
-          console.log(`  ${c.muted('nano')} ${scriptPath}`);
-          console.log(`  ${c.muted('vim')}  ${scriptPath}`);
-          console.log(`  ${c.muted('code')} ${scriptPath}\n`);
-
-          // Try to open with default editor
-          const editor = process.env.EDITOR || 'nano';
-          console.log(c.muted(`Opening with ${editor}...`));
-          try {
-            const { spawn } = await import('child_process');
-            spawn(editor, [scriptPath], { stdio: 'inherit' });
-          } catch {
-            console.log(c.warning(`Could not open editor`));
-          }
-        }
-        break;
-
       case 'toggle':
         const toggleId = parseInt(args[1]) - 1;
         if (isNaN(toggleId) || toggleId < 0 || toggleId >= tasks.length) {
@@ -574,31 +564,6 @@ commands.set('task', {
         console.log(enabled
           ? c.success(`Enabled: ${taskToggled.name}`)
           : c.warning(`Disabled: ${taskToggled.name}`));
-        break;
-
-      case 'logs':
-        const logsId = parseInt(args[1]) - 1;
-        if (isNaN(logsId) || logsId < 0 || logsId >= tasks.length) {
-          console.log(c.error('Invalid ID. Usage: /task logs <id>'));
-          return true;
-        }
-
-        const task = tasks[logsId];
-        const logPath = task.scriptPath.replace('.sh', '.log').replace('/tasks/', '/tasks/logs/');
-        console.log(`\n${c.violet(`Logs: ${task.name}`)}\n`);
-        try {
-          const logFile = Bun.file(logPath);
-          if (await logFile.exists()) {
-            const content = await logFile.text();
-            const lines = content.split('\n').slice(-20);
-            console.log(lines.join('\n'));
-          } else {
-            console.log(c.muted('No logs (task has not been executed yet)'));
-          }
-        } catch {
-          console.log(c.muted('Logs not available'));
-        }
-        console.log();
         break;
 
       case 'cron':
@@ -627,12 +592,15 @@ commands.set('task', {
         console.log(c.success(`${tasks.length} task(s) removed`));
         break;
 
-      case 'dir':
-        console.log(context.scheduler?.getTasksDir());
+      case 'status':
+        console.log(`\n${c.violet('Scheduler status:')}\n`);
+        console.log(`  ${c.muted('Running:')}  ${status.running ? c.success('Yes') : c.warning('No')}`);
+        console.log(`  ${c.muted('Tasks:')}    ${status.taskCount}`);
+        console.log(`  ${c.muted('Active:')}   ${status.activeCount}\n`);
         break;
 
       default:
-        console.log(c.muted('Commands: list, edit, remove, toggle, logs, cron, clear, dir'));
+        console.log(c.muted('Commands: list, run, remove, toggle, cron, clear, status'));
     }
 
     return true;

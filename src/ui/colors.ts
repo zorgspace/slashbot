@@ -347,3 +347,111 @@ export function buildStatus(success: boolean, errors?: string[]): string {
   }
   return output;
 }
+
+interface PlanStep {
+  id: string;
+  label: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+}
+
+/**
+ * Simple plan display - prints once at start, updates inline
+ * White text, colored dots only
+ */
+export class PlanProgress {
+  private steps: PlanStep[] = [];
+  private printed: boolean = false;
+
+  /**
+   * Get status icon for a step
+   */
+  private getIcon(status: PlanStep['status']): string {
+    switch (status) {
+      case 'running': return `${colors.warning}◐${colors.reset}`;
+      case 'done': return `${colors.success}✓${colors.reset}`;
+      case 'error': return `${colors.error}✗${colors.reset}`;
+      default: return `${colors.muted}○${colors.reset}`;
+    }
+  }
+
+  /**
+   * Add a new step to the plan
+   */
+  addStep(id: string, label: string): void {
+    if (this.steps.find(s => s.id === id)) return;
+    this.steps.push({ id, label, status: 'pending' });
+  }
+
+  /**
+   * Mark a step as running and print the plan if not yet printed
+   */
+  markRunning(id: string): void {
+    const step = this.steps.find(s => s.id === id);
+    if (step) step.status = 'running';
+
+    // Print plan on first running step
+    if (!this.printed && this.steps.length > 0) {
+      this.print();
+      this.printed = true;
+    }
+  }
+
+  /**
+   * Mark a step as completed
+   */
+  markDone(id: string): void {
+    const step = this.steps.find(s => s.id === id);
+    if (step) {
+      step.status = 'done';
+      // Print completion inline
+      console.log(`  ${this.getIcon('done')} ${colors.muted}${step.label}${colors.reset}`);
+    }
+  }
+
+  /**
+   * Mark a step as error
+   */
+  markError(id: string): void {
+    const step = this.steps.find(s => s.id === id);
+    if (step) {
+      step.status = 'error';
+      console.log(`  ${this.getIcon('error')} ${colors.white}${step.label}${colors.reset}`);
+    }
+  }
+
+  /**
+   * Print the initial plan
+   */
+  private print(): void {
+    console.log(`${colors.white}┌─ Plan${colors.reset}`);
+    for (const step of this.steps) {
+      const icon = this.getIcon(step.status);
+      console.log(`${colors.white}│${colors.reset} ${icon} ${colors.white}${step.label}${colors.reset}`);
+    }
+    console.log(`${colors.white}└─${colors.reset}`);
+  }
+
+  /**
+   * Hide/reset the plan
+   */
+  hide(): void {
+    this.steps = [];
+    this.printed = false;
+  }
+
+  /**
+   * Check if all steps are complete
+   */
+  isComplete(): boolean {
+    return this.steps.length > 0 &&
+           this.steps.every(s => s.status === 'done' || s.status === 'error');
+  }
+
+  /**
+   * Show the plan (no-op, for compatibility)
+   */
+  show(): void {}
+}
+
+// Global plan instance
+export const plan = new PlanProgress();

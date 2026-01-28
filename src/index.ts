@@ -11,6 +11,7 @@ import { banner, inputPrompt, inputClose, responseStart, c, errorBlock, colors }
 let lastCtrlC = 0;
 let currentBot: Slashbot | null = null;
 
+// Prevent accidental exit - require double Ctrl+C
 process.on('SIGINT', () => {
   const now = Date.now();
   if (now - lastCtrlC < 500) {
@@ -25,6 +26,23 @@ process.on('SIGINT', () => {
   }
 
   console.log('\n' + c.warning('Ctrl+C - task stopped (press again to exit)'));
+});
+
+// Prevent SIGTERM from killing the app immediately
+process.on('SIGTERM', () => {
+  console.log(c.warning('\nReceived SIGTERM - use /exit or Ctrl+C twice to quit'));
+});
+
+// Prevent uncaught exceptions from crashing
+process.on('uncaughtException', (err) => {
+  console.log(c.error(`\nError: ${err.message}`));
+  // Don't exit - keep running
+});
+
+// Prevent unhandled promise rejections from crashing
+process.on('unhandledRejection', (reason) => {
+  console.log(c.error(`\nError: ${reason}`));
+  // Don't exit - keep running
 });
 
 const VERSION = process.env.SLASHBOT_VERSION || "dev";
@@ -130,10 +148,11 @@ class Slashbot {
 
         // Wire up action handlers
         this.grokClient.setActionHandlers({
-          onSchedule: async (cron, command, name) => {
-            const taskId = await this.scheduler.addTask(name, cron, command);
+          onSchedule: async (cron, command, name, notify) => {
+            const taskId = await this.scheduler.addTask(name, cron, command, notify);
             if (taskId) {
-              console.log(c.success(`Task scheduled: ${name}`));
+              const notifyInfo = notify && notify !== 'none' ? ` (notify via ${notify})` : '';
+              console.log(c.success(`Task scheduled: ${name}${notifyInfo}`));
             }
           },
 
@@ -341,6 +360,7 @@ class Slashbot {
 
     // Initialize scheduler (load persisted tasks)
     await this.scheduler.init();
+    this.scheduler.setNotifier(this.notifier);
 
     // Initialize code editor
     await this.codeEditor.init();
@@ -403,9 +423,32 @@ class Slashbot {
       });
     };
 
-    // Handle readline close
-    this.rl.on('close', async () => {
-      await this.stop();
+    // Handle readline close (Ctrl+D) - recreate interface instead of exiting
+    this.rl.on('close', () => {
+      if (!this.running) return;
+
+      console.log(c.warning('\nCtrl+D pressed - use /exit or Ctrl+C twice to quit'));
+
+      // Recreate readline interface
+      this.rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+        terminal: true,
+        history: this.history.slice(-100),
+        historySize: 100,
+        removeHistoryDuplicates: true,
+        completer: completer,
+      });
+
+      // Re-attach close handler
+      this.rl.on('close', () => {
+        if (this.running) {
+          console.log(c.warning('\nUse /exit or Ctrl+C twice to quit'));
+        }
+      });
+
+      // Resume asking questions
+      askQuestion();
     });
 
     // Start the REPL
