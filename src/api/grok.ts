@@ -69,7 +69,7 @@ export const createGrokClient = (config: GrokConfig, handlers?: ActionHandlers):
  */
 
 import { colors, c, ThinkingAnimation, buildStatus, step } from '../ui/colors';
-import { getImage } from '../code/imageBuffer';
+import { imageBuffer } from '../code/imageBuffer';
 import * as path from 'path';
 
 export interface Message {
@@ -246,9 +246,17 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
   }
 
   async chat(userMessage: string): Promise<{ response: string; thinking: string }> {
+    // Add user message with recent images as vision context
+    const recentImages = imageBuffer.slice(-3);
+    const userContent: Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string } }> = [
+      { type: 'text', text: userMessage },
+    ];
+    recentImages.forEach((imgUrl: string) => {
+      userContent.push({ type: 'image_url', image_url: { url: imgUrl } });
+    });
     this.conversationHistory.push({
       role: 'user',
-      content: userMessage,
+      content: userContent,
     });
 
     // Compress context if enabled
@@ -327,8 +335,14 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
   }
 
   private async streamResponse(): Promise<string> {
+    const hasVision = this.conversationHistory.some((msg: Message) =>
+      Array.isArray(msg.content) &&
+      (msg.content as any[]).some((part: any) => part.type === 'image_url')
+    );
+    const modelToUse = hasVision ? 'grok-vision-beta' : this.config.model;
+
     const requestBody = {
-      model: this.config.model,
+      model: modelToUse,
       messages: this.conversationHistory,
       max_tokens: this.config.maxTokens,
       temperature: this.config.temperature,
@@ -534,8 +548,13 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
         step.action('Executing', command.trim().slice(0, 50));
         console.log(); // newline after action
         const output = await this.actionHandlers.onExec(command.trim());
+        const isError = output?.startsWith('Error:');
         if (output) step.info(output.slice(0, 80));
-        step.success('OK');
+        if (isError) {
+          step.error('failed');
+        } else {
+          step.success('OK');
+        }
         results.push({ action: `EXEC ${command.trim()}`, result: output || 'OK' });
       }
     }

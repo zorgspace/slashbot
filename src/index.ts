@@ -44,6 +44,7 @@ import { createScheduler, TaskScheduler } from './scheduler/scheduler';
 import { createConfigManager, ConfigManager } from './config/config';
 import { createCodeEditor, CodeEditor } from './code/editor';
 import { createCommandPermissions, CommandPermissions } from './security/permissions';
+import { addImage, imageBuffer } from './code/imageBuffer';
 
 
 
@@ -266,6 +267,14 @@ class Slashbot {
     if (trimmed === '?') {
       const parsed = await parseInput('/help');
       await executeCommand(parsed, this.getContext());
+      return;
+    }
+
+    // Handle pasted images directly into buffer
+    const imageMatch = trimmed.match(/^data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+$/i);
+    if (imageMatch) {
+      addImage(trimmed);
+      console.log(`${c.success('🖼️  Image pasted to buffer #')}${imageBuffer.length}`);
       return;
     }
 

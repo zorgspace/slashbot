@@ -45,15 +45,22 @@ async function copyToClipboard(text: string) {
 
 async function displayImage(n: number) {
   const imgPath = getImage(n);
-  if (imgPath) {
-    try {
-      const image = await terminalImage.file(imgPath);
-      console.log(image);
-    } catch (e) {
-      console.log(c.error('Display failed'));
-    }
-  } else {
+  if (!imgPath) {
     console.log(c.error('Image not found'));
+    return;
+  }
+  try {
+    let image;
+    if (imgPath.startsWith('data:image/')) {
+      const base64Data = imgPath.split(',')[1];
+      const buffer = Buffer.from(base64Data, 'base64');
+      image = await terminalImage.buffer(buffer);
+    } else {
+      image = await terminalImage.file(imgPath);
+    }
+    console.log(image);
+  } catch (e) {
+    console.log(c.error('Display failed'));
   }
 }
 
