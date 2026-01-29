@@ -8,6 +8,13 @@ import * as readline from 'readline';
 
 import { banner, inputPrompt, inputClose, responseStart, c, errorBlock, colors } from './ui/colors';
 
+if (process.argv[2] === 'update-check') {
+  const updater = await import('./updater') as any;
+  const checkForUpdate = updater.checkForUpdate as (notifier?: any) => Promise<void>;
+  await checkForUpdate();
+  process.exit(0);
+}
+
 let lastCtrlC = 0;
 let currentBot: Slashbot | null = null;
 
@@ -31,16 +38,21 @@ process.on('SIGINT', () => {
   // Not thinking - handle double Ctrl+C to exit
   if (now - lastCtrlC < 500) {
     console.log(c.violet('\n\nSee you soon!'));
+    // Stop the bot (and scheduler) before exiting
+    currentBot?.stop();
     process.exit(0);
   }
   lastCtrlC = now;
-
-  console.log('\n' + c.warning('Ctrl+C - press again to exit'));
 });
 
 // Prevent SIGTERM from killing the app immediately
 process.on('SIGTERM', () => {
   console.log(c.warning('\nReceived SIGTERM - use /exit or Ctrl+C twice to quit'));
+});
+
+// Clean up on exit
+process.on('exit', () => {
+  currentBot?.stop();
 });
 
 // Prevent uncaught exceptions from crashing
@@ -62,7 +74,7 @@ if (process.argv.some(arg => arg === '--version' || arg === '-v')) {
   process.exit(0);
 }
 
-console.clear();
+
 
 import { createGrokClient, GrokClient } from './api/grok';
 import { parseInput, executeCommand, CommandContext, completer } from './commands/parser';
@@ -73,7 +85,6 @@ import { createConfigManager, ConfigManager } from './config/config';
 import { createCodeEditor, CodeEditor } from './code/editor';
 import { createCommandPermissions, CommandPermissions } from './security/permissions';
 import { addImage, imageBuffer } from './code/imageBuffer';
-import { skills } from './skills';
 
 
 
@@ -253,14 +264,6 @@ class Slashbot {
             }
           },
 
-          onSkill: async (name) => {
-            const skill = skills.get(name);
-            if (!skill) {
-              throw new Error(`Skill "${name}" not found`);
-            }
-            return await skill.execute();
-          },
-
           onBuildCheck: async () => {
             // Try to run TypeScript check or build
             try {
@@ -419,7 +422,7 @@ class Slashbot {
 
     // Set scheduler callback to redraw prompt after task execution
     this.scheduler.setOnTaskComplete(() => {
-      if (this.rl) {
+      if (this.running && this.rl) {
         process.stdout.write(inputPrompt());
       }
     });
@@ -451,6 +454,9 @@ class Slashbot {
     // Handle readline close (Ctrl+D) - recreate interface instead of exiting
     this.rl.on('close', () => {
       if (!this.running) return;
+
+      // Clear the rl reference first to prevent scheduler callback from using closed interface
+      this.rl = null;
 
       console.log(c.warning('\nCtrl+D pressed - use /exit or Ctrl+C twice to quit'));
 

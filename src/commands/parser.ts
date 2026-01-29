@@ -3,7 +3,174 @@
  */
 
 import { c, colors, errorBlock, ThinkingAnimation } from '../ui/colors';
-import { skills } from '../skills';
+
+// Gather comprehensive codebase context for /init command
+async function gatherCodebaseContext(): Promise<string> {
+  let context = '# Codebase Analysis\n\n';
+
+  // 1. Project basics
+  try {
+    const pkg = await Bun.file('package.json').json();
+    context += `## Project: ${pkg.name || 'Unknown'}\n`;
+    if (pkg.description) context += `${pkg.description}\n`;
+    context += `Version: ${pkg.version || 'N/A'}\n\n`;
+  } catch {
+    context += '## Project Analysis\n\n';
+  }
+
+  // 2. Code Styling Detection
+  context += '## Code Styling & Formatting\n\n';
+
+  // ESLint
+  const eslintConfigs = ['.eslintrc', '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.json', '.eslintrc.yml', 'eslint.config.js', 'eslint.config.mjs'];
+  for (const config of eslintConfigs) {
+    try {
+      const content = await Bun.file(config).text();
+      context += `### ESLint (${config})\n\`\`\`\n${content.substring(0, 800)}\n\`\`\`\n\n`;
+      break;
+    } catch {}
+  }
+
+  // Prettier
+  const prettierConfigs = ['.prettierrc', '.prettierrc.js', '.prettierrc.json', '.prettierrc.yml', 'prettier.config.js', 'prettier.config.mjs'];
+  for (const config of prettierConfigs) {
+    try {
+      const content = await Bun.file(config).text();
+      context += `### Prettier (${config})\n\`\`\`\n${content.substring(0, 500)}\n\`\`\`\n\n`;
+      break;
+    } catch {}
+  }
+
+  // Biome
+  try {
+    const biome = await Bun.file('biome.json').text();
+    context += `### Biome (biome.json)\n\`\`\`\n${biome.substring(0, 800)}\n\`\`\`\n\n`;
+  } catch {}
+
+  // EditorConfig
+  try {
+    const editorConfig = await Bun.file('.editorconfig').text();
+    context += `### EditorConfig\n\`\`\`\n${editorConfig}\n\`\`\`\n\n`;
+  } catch {}
+
+  // TypeScript config
+  try {
+    const tsconfig = await Bun.file('tsconfig.json').text();
+    context += `### TypeScript Config\n\`\`\`json\n${tsconfig.substring(0, 1000)}\n\`\`\`\n\n`;
+  } catch {}
+
+  // 3. Architecture Analysis
+  context += '## Architecture\n\n';
+
+  // Entry points
+  context += '### Entry Points\n';
+  const entryFiles = ['src/index.ts', 'src/main.ts', 'src/app.ts', 'index.ts', 'main.ts', 'app.ts',
+                      'src/index.js', 'src/main.js', 'pages/_app.tsx', 'app/layout.tsx'];
+  for (const entry of entryFiles) {
+    try {
+      const content = await Bun.file(entry).text();
+      const lines = content.split('\n').slice(0, 30).join('\n');
+      context += `\n**${entry}** (first 30 lines):\n\`\`\`\n${lines}\n\`\`\`\n`;
+      break;
+    } catch {}
+  }
+
+  // Directory structure
+  try {
+    const result = await Bun.$`find . -maxdepth 2 -type d | grep -v node_modules | grep -v .git | head -30`.text();
+    context += `\n### Directory Structure\n\`\`\`\n${result}\`\`\`\n\n`;
+  } catch {}
+
+  // 4. Key Configuration Files
+  context += '## Key Configurations\n\n';
+
+  // Package.json scripts
+  try {
+    const pkg = await Bun.file('package.json').json();
+    if (pkg.scripts) {
+      context += '### NPM Scripts\n```json\n' + JSON.stringify(pkg.scripts, null, 2) + '\n```\n\n';
+    }
+    // Dependencies overview
+    const deps = Object.keys(pkg.dependencies || {}).slice(0, 15);
+    const devDeps = Object.keys(pkg.devDependencies || {}).slice(0, 10);
+    if (deps.length > 0) context += `### Main Dependencies\n${deps.join(', ')}\n\n`;
+    if (devDeps.length > 0) context += `### Dev Dependencies\n${devDeps.join(', ')}\n\n`;
+  } catch {}
+
+  // Docker
+  try {
+    const dockerfile = await Bun.file('Dockerfile').text();
+    context += `### Dockerfile\n\`\`\`dockerfile\n${dockerfile.substring(0, 600)}\n\`\`\`\n\n`;
+  } catch {}
+
+  // Docker Compose
+  try {
+    const compose = await Bun.file('docker-compose.yml').text();
+    context += `### Docker Compose\n\`\`\`yaml\n${compose.substring(0, 600)}\n\`\`\`\n\n`;
+  } catch {}
+
+  // Environment example
+  try {
+    const envExample = await Bun.file('.env.example').text();
+    context += `### Environment Variables (.env.example)\n\`\`\`\n${envExample}\n\`\`\`\n\n`;
+  } catch {}
+
+  // 5. Git conventions
+  context += '## Git & Conventions\n\n';
+  try {
+    const gitignore = await Bun.file('.gitignore').text();
+    context += `### .gitignore (first 30 lines)\n\`\`\`\n${gitignore.split('\n').slice(0, 30).join('\n')}\n\`\`\`\n\n`;
+  } catch {}
+
+  // Existing context files
+  for (const ctxFile of ['CLAUDE.md', 'GROK.md', 'SLASHBOT.md', 'CONTRIBUTING.md']) {
+    try {
+      const content = await Bun.file(ctxFile).text();
+      context += `### ${ctxFile}\n\`\`\`markdown\n${content.substring(0, 1500)}\n\`\`\`\n\n`;
+    } catch {}
+  }
+
+  // 6. Key API files (full content for documentation)
+  context += '## Key API Files\n\n';
+  const apiFiles = ['src/api/grok.ts', 'src/api/index.ts', 'src/index.ts'];
+  for (const apiFile of apiFiles) {
+    try {
+      const content = await Bun.file(apiFile).text();
+      context += `### ${apiFile}\n\`\`\`typescript\n${content}\n\`\`\`\n\n`;
+    } catch {}
+  }
+
+  // 7. Code Patterns (sample source files)
+  context += '## Code Patterns (samples)\n\n';
+  try {
+    const files = await Bun.$`find src -name "*.ts" -o -name "*.tsx" 2>/dev/null | head -5`.text();
+    const fileList = files.trim().split('\n').filter(f => f && !apiFiles.includes(f));
+    for (const file of fileList.slice(0, 3)) {
+      try {
+        const content = await Bun.file(file).text();
+        const sample = content.split('\n').slice(0, 40).join('\n');
+        context += `### ${file}\n\`\`\`typescript\n${sample}\n\`\`\`\n\n`;
+      } catch {}
+    }
+  } catch {}
+
+  // 8. Documentation generation instructions
+  context += `## Documentation Task
+
+Based on the analysis above, generate/update **GROK.md** if src/api/grok.ts exists:
+- Configuration options
+- Usage examples
+- Features (streaming, vision, agentic loop, etc.)
+- Available methods
+- Environment variables
+
+Use [[create path="GROK.md"]]content[[/create]] to generate the file.
+Analyze the actual source code to extract accurate information.
+Be concise and focus on practical usage.
+`;
+
+  return context;
+}
 
 export interface ParsedCommand {
   isCommand: boolean;
@@ -17,29 +184,8 @@ export interface CommandHandler {
   description: string;
   usage: string;
   execute: (args: string[], context: CommandContext) => Promise<boolean>;
-
-export const unhingedHandler: CommandHandler = {
-  name: 'unhinged',
-  description: 'Toggle unhinged mode for chaotic, wild responses',
-  usage: '/unhinged',
-  execute: async (args: string[], context: CommandContext) => {
-    context.unhingedMode ??= false;
-    context.unhingedMode = !context.unhingedMode;
-    const status = context.unhingedMode ? '🌀 ON - Chaos unleashed!' : '😇 OFF - Sanity restored';
-    console.log(`${colors.violet}${status}\\x1b[0m`);
-    return true;
-  },
-};
-
-export const handlers: CommandHandler[] = [unhingedHandler];
-
-export async function handleSlashCommand(parsed: ParsedCommand, context: CommandContext): Promise<boolean> {
-  const handler = handlers.find((h) => h.name === parsed.command);
-  if (!handler) {
-    console.log(`Unknown command: ${parsed.command}`);
-    return false;
-  }
 }
+
 
 export function parse(input: string): ParsedCommand {
   const trimmed = input.trim();
@@ -60,16 +206,10 @@ export function parse(input: string): ParsedCommand {
     rawArgs: trimmed.slice(1),
   };
 }
-  }
-  return await handler.execute(parsed.args, context);
-}
-}
 
 export interface CommandContext {
   grokClient: any;
   scheduler: any;
-  notifier: any;
-  unhingedMode?: boolean;
   notifier: any;
   fileSystem: any;
   configManager: any;
@@ -188,7 +328,7 @@ commands.set('help', {
       { title: 'Notifications', cmds: ['notify'] },
       { title: 'Files', cmds: ['read', 'write'] },
       { title: 'API', cmds: ['usage', 'context'] },
-      { title: 'Personality', cmds: ['depressed', 'sarcasm', 'normal'] },
+      { title: 'Personality', cmds: ['depressed', 'sarcasm', 'normal', 'unhinged'] },
       { title: 'Other', cmds: ['history', 'clear', 'exit'] },
     ];
 
@@ -346,15 +486,9 @@ commands.set('init', {
 
     const contextFile = path.join(workDir, 'GROK.md');
 
-    // Gather comprehensive context using the init skill
+    // Gather comprehensive codebase context
     console.log(c.muted('Gathering codebase context...'));
-    const initSkill = skills.get('init');
-    if (!initSkill) {
-      console.log(c.error('Init skill not found'));
-      return true;
-    }
-
-    const codebaseContext = await initSkill.execute();
+    const codebaseContext = await gatherCodebaseContext();
 
     // Create prompt for Grok to generate GROK.md
     const generatePrompt = `Based on the codebase analysis below, generate a comprehensive GROK.md file.
@@ -901,8 +1035,10 @@ commands.set('exit', {
   name: 'exit',
   description: 'Quit Slashbot',
   usage: '/exit',
-  execute: async () => {
+  execute: async (_, context) => {
     console.log(c.violet('\nGoodbye!\n'));
+    // Stop the scheduler to clean up cron intervals
+    context.scheduler.stop();
     process.exit(0);
   },
 });
@@ -966,6 +1102,29 @@ commands.set('normal', {
 
     context.grokClient.setPersonality('normal');
     console.log(c.success('Back to normal mode'));
+    return true;
+  },
+});
+
+// /unhinged - Toggle unhinged mode
+commands.set('unhinged', {
+  name: 'unhinged',
+  description: 'Toggle unhinged mode (chaotic responses)',
+  usage: '/unhinged',
+  execute: async (_, context) => {
+    if (!context.grokClient) {
+      console.log(c.error('GrokClient not available'));
+      return true;
+    }
+
+    const current = context.grokClient.getPersonality();
+    if (current === 'unhinged') {
+      context.grokClient.setPersonality('normal');
+      console.log(c.success('Sanity restored. Back to boring mode.'));
+    } else {
+      context.grokClient.setPersonality('unhinged');
+      console.log(colors.violet + 'UNHINGED MODE ACTIVATED - Chaos unleashed! 🔥' + '\x1b[0m');
+    }
     return true;
   },
 });
