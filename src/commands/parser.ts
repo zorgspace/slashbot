@@ -2,7 +2,7 @@
  * Slash Command Parser for Slashbot
  */
 
-import { c, colors, ThinkingAnimation } from '../ui/colors';
+import { c, colors, errorBlock, ThinkingAnimation } from '../ui/colors';
 import { skills } from '../skills';
 
 export interface ParsedCommand {
@@ -17,11 +17,59 @@ export interface CommandHandler {
   description: string;
   usage: string;
   execute: (args: string[], context: CommandContext) => Promise<boolean>;
+
+export const unhingedHandler: CommandHandler = {
+  name: 'unhinged',
+  description: 'Toggle unhinged mode for chaotic, wild responses',
+  usage: '/unhinged',
+  execute: async (args: string[], context: CommandContext) => {
+    context.unhingedMode ??= false;
+    context.unhingedMode = !context.unhingedMode;
+    const status = context.unhingedMode ? '🌀 ON - Chaos unleashed!' : '😇 OFF - Sanity restored';
+    console.log(`${colors.violet}${status}\\x1b[0m`);
+    return true;
+  },
+};
+
+export const handlers: CommandHandler[] = [unhingedHandler];
+
+export async function handleSlashCommand(parsed: ParsedCommand, context: CommandContext): Promise<boolean> {
+  const handler = handlers.find((h) => h.name === parsed.command);
+  if (!handler) {
+    console.log(`Unknown command: ${parsed.command}`);
+    return false;
+  }
+}
+
+export function parse(input: string): ParsedCommand {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith('/')) {
+    return {
+      isCommand: false,
+      args: [],
+      rawArgs: trimmed,
+    };
+  }
+  const parts = trimmed.slice(1).trim().split(/\s+/);
+  const command = parts[0];
+  const args = parts.slice(1);
+  return {
+    isCommand: true,
+    command,
+    args,
+    rawArgs: trimmed.slice(1),
+  };
+}
+  }
+  return await handler.execute(parsed.args, context);
+}
 }
 
 export interface CommandContext {
   grokClient: any;
   scheduler: any;
+  notifier: any;
+  unhingedMode?: boolean;
   notifier: any;
   fileSystem: any;
   configManager: any;
