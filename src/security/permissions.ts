@@ -8,7 +8,7 @@ import * as os from 'os';
 import * as readline from 'readline';
 import { c } from '../ui/colors';
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'slashbot');
+const CONFIG_DIR = path.join(process.cwd(), '.slashbot');
 const PERMISSIONS_FILE = path.join(CONFIG_DIR, 'permissions.json');
 
 export interface FolderPermissions {

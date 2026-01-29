@@ -84,6 +84,7 @@ import { createConfigManager, ConfigManager } from './config/config';
 import { createCodeEditor, CodeEditor } from './code/editor';
 import { createCommandPermissions, CommandPermissions } from './security/permissions';
 import { addImage, imageBuffer } from './code/imageBuffer';
+import { createTelegramConnector, TelegramConnector } from './connectors/telegram';
 
 
 
@@ -98,11 +99,13 @@ class Slashbot {
   private configManager: ConfigManager;
   private codeEditor: CodeEditor;
   private commandPermissions: CommandPermissions;
+  private telegramConnector: TelegramConnector | null = null;
   private rl: readline.Interface | null = null;
   private running = false;
   private history: string[] = [];
   private historyIndex = -1;
   private loadedContextFile: string | null = null;
+  private currentSource: 'cli' | 'telegram' = 'cli';
 
   constructor(config: SlashbotConfig = {}) {
     this.fileSystem = createFileSystem(config.basePath);
@@ -119,6 +122,7 @@ class Slashbot {
       fileSystem: this.fileSystem,
       configManager: this.configManager,
       codeEditor: this.codeEditor,
+      telegramConnector: this.telegramConnector,
       reinitializeGrok: () => this.initializeGrok(),
     };
   }
@@ -275,6 +279,13 @@ class Slashbot {
               return { success: true, errors: [] }; // Can't check, assume ok
             }
           },
+
+          onTelegram: async (message) => {
+            if (!this.telegramConnector?.isRunning()) {
+              throw new Error('Telegram not connected');
+            }
+            await this.telegramConnector.sendMessage(message);
+          },
         });
       } catch {
         this.grokClient = null;
@@ -284,7 +295,7 @@ class Slashbot {
     }
   }
 
-  private async handleInput(input: string): Promise<void> {
+  private async handleInput(input: string, source: 'cli' | 'telegram' = 'cli'): Promise<string | void> {
     const trimmed = input.trim();
 
     if (!trimmed) return;
@@ -296,12 +307,14 @@ class Slashbot {
       return;
     }
 
-    // Handle pasted images directly into buffer
-    const imageMatch = trimmed.match(/^data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+$/i);
-    if (imageMatch) {
-      addImage(trimmed);
-      console.log(`${c.success('🖼️  Image pasted to buffer #')}${imageBuffer.length}`);
-      return;
+    // Handle pasted images directly into buffer (CLI only)
+    if (source === 'cli') {
+      const imageMatch = trimmed.match(/^data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+$/i);
+      if (imageMatch) {
+        addImage(trimmed);
+        console.log(`${c.success('🖼️  Image pasted to buffer #')}${imageBuffer.length}`);
+        return;
+      }
     }
 
     const parsed = await parseInput(trimmed);
@@ -314,6 +327,8 @@ class Slashbot {
 
     // Handle natural language - send to Grok
     if (!this.grokClient) {
+      const msg = 'Not connected to Grok. Use /login to enter your API key.';
+      if (source === 'telegram') return msg;
       console.log(c.warning('Not connected to Grok'));
       console.log(c.muted('  Use /login to enter your API key'));
       console.log(inputClose());
@@ -321,22 +336,31 @@ class Slashbot {
     }
 
     try {
+      // For Telegram, collect the response
+      if (source === 'telegram') {
+        const response = await this.grokClient.chatWithResponse(trimmed);
+        return response;
+      }
+
+      // For CLI, stream to console
       await this.grokClient.chat(trimmed);
       console.log(inputClose());
     } catch (error) {
       // Don't show error for aborted requests
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log(inputClose());
+        if (source === 'cli') console.log(inputClose());
         return;
       }
-      console.log(errorBlock(error instanceof Error ? error.message : String(error)));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (source === 'telegram') return `Error: ${errorMsg}`;
+      console.log(errorBlock(errorMsg));
       console.log(inputClose());
     }
   }
 
   private async loadHistory(): Promise<void> {
     try {
-      const historyPath = `${process.env.HOME}/.config/slashbot/history`;
+      const historyPath = `${process.cwd()}/.slashbot/history`;
       const file = Bun.file(historyPath);
       if (await file.exists()) {
         const content = await file.text();
@@ -350,7 +374,7 @@ class Slashbot {
   private async saveHistory(): Promise<void> {
     try {
       const { mkdir } = await import('fs/promises');
-      const configDir = `${process.env.HOME}/.config/slashbot`;
+      const configDir = `${process.cwd()}/.slashbot`;
       await mkdir(configDir, { recursive: true });
 
       // Keep last 500 commands
@@ -382,6 +406,23 @@ class Slashbot {
 
     // Start scheduler
     this.scheduler.start();
+
+    // Initialize Telegram connector if configured
+    const telegramConfig = this.configManager.getTelegramConfig();
+    if (telegramConfig) {
+      try {
+        this.telegramConnector = createTelegramConnector(telegramConfig);
+        this.telegramConnector.setMessageHandler(async (message, source) => {
+          console.log(c.muted(`\n[Telegram] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}`));
+          const response = await this.handleInput(message, source);
+          return response as string;
+        });
+        await this.telegramConnector.start();
+      } catch (error) {
+        console.log(c.warning(`[Telegram] Could not start: ${error}`));
+        this.telegramConnector = null;
+      }
+    }
 
     // Display banner with all info
     const tasks = this.scheduler.listTasks();
@@ -474,6 +515,7 @@ class Slashbot {
   async stop(): Promise<void> {
     this.running = false;
     this.scheduler.stop();
+    this.telegramConnector?.stop();
     await this.saveHistory();
     this.rl?.close();
   }

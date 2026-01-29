@@ -9,7 +9,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { parseCron, matchesCron, getNextRunTime, describeCron, isValidCron, type ParsedCron } from './cron';
 
-const TASKS_DIR = path.join(os.homedir(), '.config', 'slashbot', 'tasks');
+const TASKS_DIR = path.join(process.cwd(), '.slashbot', 'tasks');
 const TASKS_INDEX = path.join(TASKS_DIR, 'index.json');
 
 // Dangerous patterns to block
@@ -154,6 +154,13 @@ export class TaskScheduler {
   }
 
   async addTask(name: string, cron: string, command: string): Promise<string | null> {
+    // Check for duplicate task name
+    const existingTask = Array.from(this.tasks.values()).find(t => t.name === name);
+    if (existingTask) {
+      console.log(c.warning(`[CRON] Task "${name}" already exists, skipping`));
+      return existingTask.id;
+    }
+
     // Validate cron expression
     if (!isValidCron(cron)) {
       console.log(c.error(`Invalid cron expression: ${cron}`));
@@ -492,8 +499,10 @@ export class TaskScheduler {
       console.log('');
     }
 
-    // Save updated task state
-    await this.saveTasks();
+    // Save updated task state (only if task still exists - may have been deleted during execution)
+    if (this.tasks.has(task.id)) {
+      await this.saveTasks();
+    }
 
     // Trigger prompt redraw callback if set
     if (this.onTaskComplete) {
