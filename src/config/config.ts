@@ -9,9 +9,6 @@ import * as os from 'os';
 export interface SlashbotConfig {
   apiKey?: string;
   model?: string;
-  telegramBotToken?: string;
-  telegramChatId?: string;
-  whatsappWebhook?: string;
 }
 
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'slashbot');

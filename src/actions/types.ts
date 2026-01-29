@@ -2,7 +2,7 @@
  * Action System Type Definitions
  */
 
-export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'notify' | 'skill';
+export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'skill';
 
 export interface GrepAction {
   type: 'grep';
@@ -33,25 +33,16 @@ export interface ExecAction {
   command: string;
 }
 
-export type NotifyService = 'telegram' | 'whatsapp' | 'all' | 'none';
-
 export interface ScheduleAction {
   type: 'schedule';
   cron: string;
   name: string;
   command: string;
-  notify?: NotifyService;
 }
 
 export interface SkillAction {
   type: 'skill';
   name: string;
-}
-
-export interface NotifyAction {
-  type: 'notify';
-  service: string;
-  message: string;
 }
 
 export type Action =
@@ -61,7 +52,6 @@ export type Action =
   | CreateAction
   | ExecAction
   | ScheduleAction
-  | NotifyAction
   | SkillAction;
 
 export interface ActionResult {
@@ -71,14 +61,21 @@ export interface ActionResult {
   error?: string;
 }
 
+export type EditStatus = 'applied' | 'already_applied' | 'not_found' | 'error';
+
+export interface EditResult {
+  success: boolean;
+  status: EditStatus;
+  message: string;
+}
+
 export interface ActionHandlers {
   onGrep?: (pattern: string, filePattern?: string) => Promise<string>;
   onRead?: (path: string) => Promise<string | null>;
-  onEdit?: (path: string, search: string, replace: string) => Promise<boolean>;
+  onEdit?: (path: string, search: string, replace: string) => Promise<EditResult>;
   onCreate?: (path: string, content: string) => Promise<boolean>;
   onExec?: (command: string) => Promise<string>;
-  onSchedule?: (cron: string, command: string, name: string, notify?: NotifyService) => Promise<void>;
-  onNotify?: (service: string, message: string) => Promise<void>;
+  onSchedule?: (cron: string, command: string, name: string) => Promise<void>;
   onSkill?: (name: string) => Promise<string>;
   onFile?: (path: string, content: string) => Promise<boolean>;
   onBuildCheck?: () => Promise<{ success: boolean; errors: string[] }>;

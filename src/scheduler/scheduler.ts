@@ -8,7 +8,6 @@ import { c, colors } from '../ui/colors';
 import * as path from 'path';
 import * as os from 'os';
 import { parseCron, matchesCron, getNextRunTime, describeCron, isValidCron, type ParsedCron } from './cron';
-import type { Notifier } from '../notify/notifier';
 
 const TASKS_DIR = path.join(os.homedir(), '.config', 'slashbot', 'tasks');
 const TASKS_INDEX = path.join(TASKS_DIR, 'index.json');
@@ -51,8 +50,6 @@ const SUSPICIOUS_PATTERNS = [
   /`.*`/,
 ];
 
-export type NotifyService = 'telegram' | 'whatsapp' | 'all' | 'none';
-
 export interface ScheduledTask {
   id: string;
   name: string;
@@ -64,7 +61,6 @@ export interface ScheduledTask {
   lastOutput?: string;
   lastSuccess?: boolean;
   runCount: number;
-  notify?: NotifyService;  // Send notification on completion
 }
 
 export interface SecurityCheck {
@@ -86,15 +82,7 @@ export class TaskScheduler {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private lastCheck: Date = new Date();
-  private notifier: Notifier | null = null;
   private onTaskComplete: (() => void) | null = null;
-
-  /**
-   * Set the notifier for sending task notifications
-   */
-  setNotifier(notifier: Notifier): void {
-    this.notifier = notifier;
-  }
 
   /**
    * Set callback to run after task completes (e.g., to redraw prompt)
@@ -124,7 +112,6 @@ export class TaskScheduler {
             ...task,
             command: task.command || task.script || '',
             runCount: task.runCount || 0,
-            notify: task.notify || 'none',
           });
         }
       }
@@ -166,7 +153,7 @@ export class TaskScheduler {
     return result;
   }
 
-  async addTask(name: string, cron: string, command: string, notify?: NotifyService): Promise<string | null> {
+  async addTask(name: string, cron: string, command: string): Promise<string | null> {
     // Validate cron expression
     if (!isValidCron(cron)) {
       console.log(c.error(`Invalid cron expression: ${cron}`));
@@ -197,7 +184,6 @@ export class TaskScheduler {
       enabled: true,
       createdAt: new Date().toISOString(),
       runCount: 0,
-      notify: notify || 'none',
     };
 
     this.tasks.set(id, task);
@@ -242,8 +228,12 @@ export class TaskScheduler {
 
     if (!task) return false;
 
-    this.unregisterTask(task.id);
-    this.tasks.delete(task.id);
+    const taskId = task.id;
+    this.unregisterTask(taskId);
+    const deleted = this.tasks.delete(taskId);
+
+    if (!deleted) return false;
+
     await this.saveTasks();
 
     return true;
@@ -504,27 +494,6 @@ export class TaskScheduler {
 
     // Save updated task state
     await this.saveTasks();
-
-    // Send notification if configured
-    if (task.notify && task.notify !== 'none' && this.notifier) {
-      const statusEmoji = success ? '✅' : '❌';
-      const statusText = success ? 'completed' : 'failed';
-      const message = `${statusEmoji} Task "${task.name}" ${statusText}\n\n` +
-        `Command: ${task.command}\n` +
-        `Output: ${output.slice(0, 200)}${output.length > 200 ? '...' : ''}`;
-
-      try {
-        if (task.notify === 'telegram') {
-          await this.notifier.sendTelegram(message);
-        } else if (task.notify === 'whatsapp') {
-          await this.notifier.sendWhatsApp(message);
-        } else if (task.notify === 'all') {
-          await this.notifier.sendAll(message);
-        }
-      } catch {
-        console.log(c.warning('Failed to send notification'));
-      }
-    }
 
     // Trigger prompt redraw callback if set
     if (this.onTaskComplete) {

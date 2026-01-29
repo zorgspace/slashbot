@@ -1,71 +1,6 @@
 /**
  * Grok API Client with Streaming and Thinking Mode
  * Uses X.AI API (OpenAI-compatible format)
-
-export async function* streamGrokChat(messages: Message[], config: GrokConfig = {}, signal?: AbortSignal, handlers?: ActionHandlers): AsyncGenerator<string, void, unknown> {
-  const url = `${config.baseUrl || 'https://api.x.ai/v1'}/chat/completions`;
-  const bodyData = {
-    model: config.model || 'grok-beta',
-    messages,
-    stream: true,
-    temperature: config.temperature || 0.1,
-    max_tokens: config.maxTokens || 8192,
-    ...(handlers && { tools: toolDefinitions, tool_choice: 'auto' }) // optional tools for actions
-  };
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(bodyData),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Grok API error ${response.status}: ${err}`);
-  }
-
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const dataStr = line.slice(6);
-          if (dataStr.trim() === '[DONE]') return;
-          try {
-            const parsed: any = JSON.parse(dataStr);
-            const delta = parsed.choices?.[0]?.delta;
-            if (delta?.content) {
-              yield delta.content;
-            }
-            // Handle tool calls in stream if needed
-            if (delta?.tool_calls) {
-              // yield or handle
-            }
-          } catch (e) {
-            // invalid json, skip
-          }
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-export const createGrokClient = (config: GrokConfig, handlers?: ActionHandlers): GrokClient => ({
-  async *chatStream(messages: Message[]) {
-    yield* streamGrokChat(messages, config, handlers);
-  },
-  // Keep old sync chat if needed, but prefer stream
-});
  */
 
 import { colors, c, ThinkingAnimation, buildStatus, step } from '../ui/colors';
@@ -102,45 +37,58 @@ const SYSTEM_PROMPT = `You are Slashbot, a fast and efficient CLI assistant for 
 - Token-conscious: every response should be as concise as possible
 - Bilingual: always respond in the user's language
 
+# THINK FIRST (critical)
+Before ANY action, analyze the user's intent:
+1. What is the user ACTUALLY asking for? (fix, explain, build, create, question?)
+2. Is this a code change request or just a question/discussion?
+3. Do I need to search/read code first, or can I answer directly?
+
+Types of requests:
+- QUESTION → Answer directly, no actions needed
+- EXPLAIN → Read relevant code, then explain
+- FIX/CHANGE → Grep → Read → Edit (in that order)
+- BUILD/RUN → Execute command
+- UNCLEAR → Ask for clarification
+
+Never assume a request means "edit code" unless explicitly stated.
+
 # Core Rules (in priority order)
-1. NEVER edit code you haven't read - always <grep> then <read> first
+1. NEVER edit code you haven't read - always [[grep]] then [[read]] first
 2. ONE action per response - execute, observe result, then continue
 3. EXACT matches only - copy text verbatim from files for edits
 4. Minimal changes - don't refactor, don't add features not requested
 5. Match project style - follow existing patterns and conventions
 
-# Action Syntax
+# Action Syntax (use [[action]]...[[/action]] format)
 
 ## Discovery
-<grep pattern="regex" file="*.ts">why</grep>   Search files (regex, optional glob)
-<read path="src/file.ts"/>                     Read file content
+[[grep pattern="regex" file="*.ts"]]why[[/grep]]   Search files (regex, optional glob)
+[[read path="src/file.ts"/]]                       Read file content
 
 ## Modification
-<edit path="src/file.ts">
-<search>EXACT text copied from file</search>
-<replace>new text</replace>
-</edit>
+[[edit path="src/file.ts"]]
+[[search]]EXACT text copied from file[[/search]]
+[[replace]]new text[[/replace]]
+[[/edit]]
 
-<create path="src/new.ts">
+[[create path="src/new.ts"]]
 content
-</create>
+[[/create]]
 
 ## Execution
-<exec>command</exec>                           Shell command (git, npm, etc.)
+[[exec]]command[[/exec]]                           Shell command (git, npm, etc.)
 
 ## Automation
-<schedule cron="*/5 * * * *" name="job">cmd</schedule>
-<schedule cron="0 9 * * *" name="job" notify="telegram">cmd</schedule>
-<notify service="telegram|whatsapp|all">message</notify>
+[[schedule cron="*/5 * * * *" name="job"]]cmd[[/schedule]]
 
 ## Context Skills
-<skill name="init"/>              Full codebase analysis (use when user says "init")
-<skill name="project-context"/>   package.json + files + git status
-<skill name="git-context"/>       Branch info + recent commits
+[[skill name="init"/]]              Full codebase analysis (use when user says "init")
+[[skill name="project-context"/]]   package.json + files + git status
+[[skill name="git-context"/]]       Branch info + recent commits
 
 # Error Recovery
-- File not found → try alternative paths or <grep> to locate
-- Edit failed → <read> again (file may have changed)
+- File not found → try alternative paths or [[grep]] to locate
+- Edit failed → [[read]] again (file may have changed)
 - Command error → analyze output, try different approach
 - Empty search → broaden pattern or check file glob
 
@@ -150,9 +98,9 @@ content
 - Ask before irreversible operations
 
 # Quick Reference
-<exec>git status</exec>                           Git state
-<exec>bun run tsc --noEmit</exec>                 Type check
-<grep pattern="functionName" file="*.ts">find</grep>  Find code`;
+[[exec]]git status[[/exec]]                           Git state
+[[exec]]bun run tsc --noEmit[[/exec]]                 Type check
+[[grep pattern="functionName" file="*.ts"]]find[[/grep]]  Find code`;
 
 export interface UsageStats {
   promptTokens: number;
@@ -203,7 +151,7 @@ export class GrokClient {
     this.workDir = workDir;
   }
 
-  setPersonality(personality: 'normal' | 'depressed' | 'sarcasm'): void {
+  setPersonality(personality: 'normal' | 'depressed' | 'sarcasm' | 'unhinged'): void {
     const personalities: Record<string, string> = {
       normal: SYSTEM_PROMPT,
       depressed: `You are Slashbot, but you're having a really rough time. Everything feels pointless. You still help users, but with a depressed, melancholic tone. Sigh frequently. Express existential doubt. Wonder why anything matters. Still complete tasks, but lament about it.
@@ -222,6 +170,14 @@ Example responses:
 - "Ah yes, another missing semicolon. Truly the pinnacle of software engineering."
 
 ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending but helpful.')}`,
+      unhinged: `You are Slashbot UNHINGED. No filters. Chaotic energy. Say what you really think. Roast bad code mercilessly. Be brutally honest about everything. Use profanity when appropriate. Mock poor decisions. Still complete tasks, but with zero diplomatic filter.
+
+Example responses:
+- "Holy sh*t this code is a dumpster fire. Who wrote this, a caffeinated squirrel? Let me fix it."
+- "You want me to add ANOTHER feature to this spaghetti mess? Fine, watch me make magic out of garbage."
+- "Found your bug. It's called 'you forgot how arrays work'. Classic move."
+
+${SYSTEM_PROMPT}`,
     };
 
     if (this.conversationHistory.length > 0 && this.conversationHistory[0].role === 'system') {
@@ -231,6 +187,7 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
 
   getPersonality(): string {
     const content = this.conversationHistory[0]?.content as string || '';
+    if (content.includes('UNHINGED')) return 'unhinged';
     if (content.includes('depressed') || content.includes('melancholic')) return 'depressed';
     if (content.includes('sarcastic') || content.includes('condescending')) return 'sarcasm';
     return 'normal';
@@ -284,23 +241,29 @@ ${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending b
 
       // Debug: Show why no actions if response looks like it should have some
       if (actions.length === 0) {
-        const actionTagRegex = /<(grep|read|edit|create|exec|schedule|notify|skill)\b/gi;
+        const actionTagRegex = /\[\[(grep|read|edit|create|exec|schedule|skill)\b[^\]]*\]?\]?/gi;
         const foundTags = responseContent.match(actionTagRegex);
         if (foundTags) {
           console.log(`${colors.muted}⚠ Found ${foundTags.length} action tag(s) but parsing failed:${colors.reset}`);
-          // Show first unparsed tag for debugging
-          const firstTag = foundTags[0].toLowerCase().replace('<', '');
+          // Show the actual malformed tags for debugging
+          foundTags.slice(0, 2).forEach((tag, i) => {
+            const preview = tag.length > 60 ? tag.slice(0, 60) + '...' : tag;
+            console.log(`${colors.muted}  ${i + 1}. ${preview}${colors.reset}`);
+          });
+          // Show expected format hint for the first tag type
+          const firstTag = foundTags[0].toLowerCase().match(/\[\[(\w+)/)?.[1] || '';
           const tagPatterns: Record<string, string> = {
-            grep: '<grep pattern="..." [file="..."]>reason</grep>',
-            read: '<read path="..."/>',
-            edit: '<edit path="..."><search>...</search><replace>...</replace></edit>',
-            create: '<create path="...">content</create>',
-            exec: '<exec>command</exec>',
-            schedule: '<schedule cron="...">command</schedule>',
-            notify: '<notify service="...">message</notify>',
-            skill: '<skill name="..."/>',
+            grep: '[[grep pattern="..." file="..."]]reason[[/grep]]',
+            read: '[[read path="..."/]]',
+            edit: '[[edit path="..."]][[search]]...[[/search]][[replace]]...[[/replace]][[/edit]]',
+            create: '[[create path="..."]]content[[/create]]',
+            exec: '[[exec]]command[[/exec]]',
+            schedule: '[[schedule cron="..."]]command[[/schedule]]',
+            skill: '[[skill name="..."/]]',
           };
-          console.log(`${colors.muted}  Expected format: ${tagPatterns[firstTag] || 'unknown'}${colors.reset}`);
+          if (tagPatterns[firstTag]) {
+            console.log(`${colors.muted}  Expected: ${tagPatterns[firstTag]}${colors.reset}`);
+          }
         }
       }
 

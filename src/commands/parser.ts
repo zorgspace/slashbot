@@ -210,7 +210,6 @@ export function parse(input: string): ParsedCommand {
 export interface CommandContext {
   grokClient: any;
   scheduler: any;
-  notifier: any;
   fileSystem: any;
   configManager: any;
   codeEditor: any;
@@ -325,7 +324,6 @@ commands.set('help', {
       { title: 'Session', cmds: ['login', 'logout', 'config'] },
       { title: 'Code', cmds: ['auth', 'init', 'grep', 'files'] },
       { title: 'Tasks', cmds: ['task', 'tasks'] },
-      { title: 'Notifications', cmds: ['notify'] },
       { title: 'Files', cmds: ['read', 'write'] },
       { title: 'API', cmds: ['usage', 'context'] },
       { title: 'Personality', cmds: ['depressed', 'sarcasm', 'normal', 'unhinged'] },
@@ -416,10 +414,6 @@ commands.set('config', {
     console.log(`  ${c.muted('Status:')}     ${isAuth ? c.success('Connected') : c.warning('Not connected')}`);
     console.log(`  ${c.muted('Model:')}      grok-4-1-fast-reasoning`);
     console.log(`  ${c.muted('Config:')}     ${configDir}`);
-
-    const notifyStatus = context.notifier?.getStatus() || {};
-    console.log(`\n  ${c.muted('Telegram:')}   ${notifyStatus.telegram ? c.success('Configured') : c.muted('Not configured')}`);
-    console.log(`  ${c.muted('WhatsApp:')}   ${notifyStatus.whatsapp ? c.success('Configured') : c.muted('Not configured')}`);
 
     const tasks = context.scheduler?.listTasks() || [];
     console.log(`\n  ${c.muted('Tasks:')}      ${tasks.length} scheduled`);
@@ -790,63 +784,6 @@ commands.set('tasks', {
   usage: '/tasks',
   execute: async (args, context) => {
     return commands.get('task')!.execute(args, context);
-  },
-});
-
-// /notify - Configure notifications
-commands.set('notify', {
-  name: 'notify',
-  description: 'Configure notifications',
-  usage: '/notify telegram <token> <chat_id> | /notify whatsapp <webhook_url> | /notify test',
-  execute: async (args, context) => {
-    const service = args[0];
-
-    if (!service) {
-      const status = context.notifier?.getStatus() || {};
-      console.log(`\n${c.violet('Notifications configuration:')}\n`);
-      console.log(`  ${c.violet('Telegram:')} ${status.telegram ? c.success('Configured') : c.muted('Not configured')}`);
-      console.log(`  ${c.violet('WhatsApp:')} ${status.whatsapp ? c.success('Configured') : c.muted('Not configured')}`);
-      console.log(`\n${c.muted('Usage:')}`);
-      console.log(`  ${c.muted('/notify telegram <bot_token> <chat_id>')}`);
-      console.log(`  ${c.muted('/notify whatsapp <webhook_url>')}`);
-      console.log(`  ${c.muted('/notify test')}\n`);
-      return true;
-    }
-
-    if (service === 'telegram') {
-      const token = args[1];
-      const chatId = args[2];
-
-      if (!token || !chatId) {
-        console.log(c.error('Missing parameters'));
-        console.log(c.muted('Usage: /notify telegram <bot_token> <chat_id>'));
-        return true;
-      }
-
-      context.notifier?.configureTelegram(token, chatId);
-      console.log(c.success('Telegram configured!'));
-
-    } else if (service === 'whatsapp') {
-      const webhookUrl = args[1];
-
-      if (!webhookUrl) {
-        console.log(c.error('Missing parameter'));
-        console.log(c.muted('Usage: /notify whatsapp <webhook_url>'));
-        return true;
-      }
-
-      context.notifier?.configureWhatsApp(webhookUrl);
-      console.log(c.success('WhatsApp configured!'));
-
-    } else if (service === 'test') {
-      console.log(c.muted('Sending test message...'));
-      await context.notifier?.notify('Test from Slashbot!', 'all');
-
-    } else {
-      console.log(c.error(`Unknown service: ${service}`));
-    }
-
-    return true;
   },
 });
 

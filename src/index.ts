@@ -79,7 +79,6 @@ if (process.argv.some(arg => arg === '--version' || arg === '-v')) {
 import { createGrokClient, GrokClient } from './api/grok';
 import { parseInput, executeCommand, CommandContext, completer } from './commands/parser';
 import { createFileSystem, SecureFileSystem } from './fs/filesystem';
-import { createNotifier, Notifier } from './notify/notifier';
 import { createScheduler, TaskScheduler } from './scheduler/scheduler';
 import { createConfigManager, ConfigManager } from './config/config';
 import { createCodeEditor, CodeEditor } from './code/editor';
@@ -95,7 +94,6 @@ interface SlashbotConfig {
 class Slashbot {
   private grokClient: GrokClient | null = null;
   private fileSystem: SecureFileSystem;
-  private notifier: Notifier;
   private scheduler: TaskScheduler;
   private configManager: ConfigManager;
   private codeEditor: CodeEditor;
@@ -108,7 +106,6 @@ class Slashbot {
 
   constructor(config: SlashbotConfig = {}) {
     this.fileSystem = createFileSystem(config.basePath);
-    this.notifier = createNotifier();
     this.scheduler = createScheduler();
     this.configManager = createConfigManager();
     this.codeEditor = createCodeEditor(config.basePath);
@@ -119,7 +116,6 @@ class Slashbot {
     return {
       grokClient: this.grokClient,
       scheduler: this.scheduler,
-      notifier: this.notifier,
       fileSystem: this.fileSystem,
       configManager: this.configManager,
       codeEditor: this.codeEditor,
@@ -174,22 +170,12 @@ class Slashbot {
 
         // Wire up action handlers
         this.grokClient.setActionHandlers({
-          onSchedule: async (cron, command, name, notify) => {
-            await this.scheduler.addTask(name, cron, command, notify);
+          onSchedule: async (cron, command, name) => {
+            await this.scheduler.addTask(name, cron, command);
           },
 
           onFile: async (path, content) => {
             return await this.fileSystem.writeFile(path, content);
-          },
-
-          onNotify: async (service, message) => {
-            if (service === 'telegram') {
-              await this.notifier.sendTelegram(message);
-            } else if (service === 'whatsapp') {
-              await this.notifier.sendWhatsApp(message);
-            } else {
-              await this.notifier.notify(message, 'all');
-            }
           },
 
           // Code editing handlers
@@ -381,7 +367,6 @@ class Slashbot {
 
     // Initialize scheduler (load persisted tasks)
     await this.scheduler.init();
-    this.scheduler.setNotifier(this.notifier);
 
     // Initialize code editor
     await this.codeEditor.init();

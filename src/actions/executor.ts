@@ -45,8 +45,6 @@ async function executeAction(
       return executeExec(action, handlers);
     case 'schedule':
       return executeSchedule(action, handlers);
-    case 'notify':
-      return executeNotify(action, handlers);
     case 'skill':
       return executeSkill(action, handlers);
     default:
@@ -107,25 +105,28 @@ async function executeEdit(
   // Display action in Claude Code style
   step.update(action.path);
 
-  const success = await handlers.onEdit(action.path, action.search, action.replace);
+  const result = await handlers.onEdit(action.path, action.search, action.replace);
 
   // Calculate diff info
   const searchLines = action.search.split('\n');
   const replaceLines = action.replace.split('\n');
 
-  if (success) {
+  if (result.status === 'applied') {
     // Show diff with removed/added lines
     step.updateResult(true, searchLines.length, replaceLines.length);
     step.diff(searchLines, replaceLines);
+  } else if (result.status === 'already_applied') {
+    // Edit was already applied - skip display, just note it
+    step.success('Already applied (skipped)');
   } else {
     step.updateResult(false, 0, 0);
   }
 
   return {
     action: `EDIT ${action.path}`,
-    success,
-    result: success ? 'OK' : 'Failed',
-    error: success ? undefined : 'Pattern not found',
+    success: result.success,
+    result: result.status === 'already_applied' ? 'Skipped (already applied)' : (result.success ? 'OK' : 'Failed'),
+    error: result.success ? undefined : result.message,
   };
 }
 
@@ -187,35 +188,14 @@ async function executeSchedule(
   // Display action in Claude Code style
   step.schedule(action.name, action.cron);
 
-  await handlers.onSchedule(action.cron, action.command, action.name, action.notify);
-  const notifyInfo = action.notify && action.notify !== 'none' ? ` (notify: ${action.notify})` : '';
+  await handlers.onSchedule(action.cron, action.command, action.name);
 
-  step.success(`Scheduled: ${action.cron}${notifyInfo}`);
+  step.success(`Scheduled: ${action.cron}`);
 
   return {
     action: `SCHEDULE ${action.name}`,
     success: true,
-    result: `Scheduled: ${action.cron}${notifyInfo}`,
-  };
-}
-
-async function executeNotify(
-  action: Extract<Action, { type: 'notify' }>,
-  handlers: ActionHandlers
-): Promise<ActionResult | null> {
-  if (!handlers.onNotify) return null;
-
-  // Display action in Claude Code style
-  step.tool('Notify', action.service);
-
-  await handlers.onNotify(action.service, action.message);
-
-  step.success('Sent');
-
-  return {
-    action: `NOTIFY ${action.service}`,
-    success: true,
-    result: 'Sent',
+    result: `Scheduled: ${action.cron}`,
   };
 }
 
@@ -247,4 +227,3 @@ async function executeSkill(
     };
   }
 }
-

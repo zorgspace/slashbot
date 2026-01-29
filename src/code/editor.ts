@@ -5,6 +5,7 @@
 
 import { c, colors, fileViewer } from '../ui/colors';
 import * as path from 'path';
+import type { EditResult, EditStatus } from '../actions/types';
 
 const CONFIG_FILE = '.slashbot';
 
@@ -136,10 +137,10 @@ export class CodeEditor {
     }
   }
 
-  async editFile(edit: FileEdit): Promise<boolean> {
+  async editFile(edit: FileEdit): Promise<EditResult> {
     if (!await this.isAuthorized()) {
       console.log(c.error('Not authorized'));
-      return false;
+      return { success: false, status: 'error', message: 'Not authorized' };
     }
 
     try {
@@ -148,7 +149,7 @@ export class CodeEditor {
 
       if (!await file.exists()) {
         console.log(c.error(`File not found: ${edit.path}`));
-        return false;
+        return { success: false, status: 'not_found', message: `File not found: ${edit.path}` };
       }
 
       const content = await file.text();
@@ -156,19 +157,31 @@ export class CodeEditor {
       if (!content.includes(edit.search)) {
         console.log(c.error(`Pattern not found in ${edit.path}`));
         console.log(c.muted(`Searching: "${edit.search.slice(0, 50)}..."`));
-        return false;
+        return { success: false, status: 'not_found', message: `Pattern not found in ${edit.path}` };
       }
 
+      // Count occurrences for uniqueness warning
+      const occurrences = content.split(edit.search).length - 1;
+      if (occurrences > 1) {
+        console.log(c.warning(`Warning: Pattern found ${occurrences} times, only first will be replaced`));
+      }
+
+      // Idempotency check - is this edit already applied?
       const newContent = content.replace(edit.search, edit.replace);
+      if (newContent === content) {
+        console.log(c.muted(`Edit already applied: ${edit.path}`));
+        return { success: true, status: 'already_applied', message: 'Edit already applied (no change needed)' };
+      }
+
       await Bun.write(fullPath, newContent);
 
       // Display the diff with Claude Code style viewer
       fileViewer.displayInlineEdit(edit.path, edit.search, edit.replace);
       console.log(c.success(`Modified: ${edit.path}`));
-      return true;
+      return { success: true, status: 'applied', message: `Modified: ${edit.path}` };
     } catch (error) {
       console.log(c.error(`Edit error: ${error}`));
-      return false;
+      return { success: false, status: 'error', message: `Edit error: ${error}` };
     }
   }
 
