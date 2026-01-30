@@ -2,7 +2,7 @@
 
 [![stars](https://img.shields.io/github/stars/user/slashbot?style=social)](https://github.com/user/slashbot) [![bun](https://img.shields.io/badge/Bun-1.0.0-brightgreen?logo=bun)](https://bun.sh) [![typescript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://typescriptlang.org)
 
-**Slashbot** is a lightweight, blazing-fast CLI coding companion powered by the [Grok API](https://x.ai). Alternative to Claude Code—perfect for AI-assisted development, automation, and terminal magic. **v1.0.4**
+**Slashbot** is a lightweight, blazing-fast CLI coding companion powered by the [Grok API](https://x.ai). Alternative to Claude Code—perfect for AI-assisted development, automation, and terminal magic. **v1.0.5**
 
 ## ✨ Key Features
 | Feature | Description |

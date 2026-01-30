@@ -16,7 +16,7 @@ export async function getCurrentVersion(): Promise<string> {
     const pkg = JSON.parse(pkgText);
     return pkg.version as string;
   } catch {
-    return '1.0.4'; // fallback
+    return '1.0.5'; // fallback
   }
 }
 

@@ -3,7 +3,7 @@
 ## Project Name and Description
 
 **Project Name:** Slashbot  
-**Description:** Slashbot is a lightweight CLI assistant powered by the Grok API from X.AI. It serves as an alternative to tools like Claude Code, providing features for code editing, file management, and AI-driven interactions in the terminal. Version: 1.0.4.
+**Description:** Slashbot is a lightweight CLI assistant powered by the Grok API from X.AI. It serves as an alternative to tools like Claude Code, providing features for code editing, file management, and AI-driven interactions in the terminal. Version: 1.0.5.
 
 ## Tech Stack
 
