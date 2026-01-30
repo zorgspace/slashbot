@@ -668,11 +668,6 @@ export class GrokClient {
 
       const data = await response.json();
 
-      // Debug output structure
-      if (Array.isArray(data.output) && data.output.length > 0) {
-        console.log(`${colors.muted}Output[0]: ${JSON.stringify(data.output[0]).slice(0, 200)}${colors.reset}`);
-      }
-
       // Extract response content from output array
       let content = '';
       if (Array.isArray(data.output)) {
