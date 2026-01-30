@@ -1,0 +1,161 @@
+/**
+ * Discord Connector for Slashbot
+ */
+
+import { Client, GatewayIntentBits, Message as DiscordMessage } from 'discord.js';
+import { c } from '../ui/colors';
+import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
+import { getTranscriptionService } from '../services/transcription';
+
+export interface DiscordConfig {
+  botToken: string;
+  channelId: string; // Authorized channel ID
+}
+
+export class DiscordConnector implements Connector {
+  readonly source = 'discord' as const;
+  readonly config = PLATFORM_CONFIGS.discord;
+
+  private client: Client;
+  private channelId: string;
+  private messageHandler: MessageHandler | null = null;
+  private running = false;
+
+  constructor(config: DiscordConfig) {
+    this.client = new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
+      ],
+    });
+    this.channelId = config.channelId;
+    this.setupHandlers(config.botToken);
+  }
+
+  private setupHandlers(token: string): void {
+    this.client.once('ready', () => {
+      console.log(c.success(`[Discord] Connected as ${this.client.user?.tag}`));
+    });
+
+    this.client.on('messageCreate', async (message: DiscordMessage) => {
+      // Ignore bot messages
+      if (message.author.bot) return;
+
+      // Only respond in authorized channel
+      if (message.channelId !== this.channelId) return;
+
+      if (!this.messageHandler) {
+        await message.reply('Bot not fully initialized');
+        return;
+      }
+
+      try {
+        // Show typing indicator if channel supports it
+        if ('sendTyping' in message.channel) {
+          await message.channel.sendTyping();
+        }
+
+        let textContent = message.content;
+
+        // Check for voice message attachments (Discord voice messages are ogg files)
+        const voiceAttachment = message.attachments.find(att =>
+          att.contentType?.startsWith('audio/') ||
+          att.name?.endsWith('.ogg') ||
+          att.name?.endsWith('.mp3') ||
+          att.name?.endsWith('.wav')
+        );
+
+        if (voiceAttachment) {
+          const transcriptionService = getTranscriptionService();
+          if (!transcriptionService) {
+            await message.reply('Voice transcription not configured. Set OPENAI_API_KEY.');
+            return;
+          }
+
+          console.log(c.muted('[Discord] Transcribing voice message...'));
+          const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
+
+          if (!result || !result.text) {
+            await message.reply('Could not transcribe voice message');
+            return;
+          }
+
+          console.log(c.muted(`[Discord] Voice: "${result.text.slice(0, 50)}..."`));
+          textContent = result.text;
+        }
+
+        if (!textContent) return;
+
+        // Process message
+        const response = await this.messageHandler(textContent, 'discord');
+
+        if (response) {
+          await this.sendMessageToChannel(message.channelId, response);
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        await message.reply(`Error: ${errorMsg}`).catch(() => {});
+      }
+    });
+
+    this.client.on('error', (err) => {
+      console.log(c.error(`[Discord] Error: ${err.message}`));
+    });
+
+    // Store token for start()
+    (this.client as any)._token = token;
+  }
+
+  setMessageHandler(handler: MessageHandler): void {
+    this.messageHandler = handler;
+  }
+
+  async start(): Promise<void> {
+    if (this.running) return;
+
+    try {
+      await this.client.login((this.client as any)._token);
+      this.running = true;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.log(c.error(`[Discord] Failed to start: ${errorMsg}`));
+      throw error;
+    }
+  }
+
+  stop(): void {
+    if (!this.running) return;
+    this.client.destroy();
+    this.running = false;
+  }
+
+  async sendMessage(text: string): Promise<void> {
+    await this.sendMessageToChannel(this.channelId, text);
+  }
+
+  private async sendMessageToChannel(channelId: string, text: string): Promise<void> {
+    if (!this.running) {
+      throw new Error('Discord bot not running');
+    }
+
+    const channel = await this.client.channels.fetch(channelId);
+    if (!channel?.isTextBased()) {
+      throw new Error('Invalid channel');
+    }
+
+    const chunks = splitMessage(text, this.config.maxMessageLength);
+    for (const chunk of chunks) {
+      await (channel as any).send(chunk);
+    }
+  }
+
+  isRunning(): boolean {
+    return this.running;
+  }
+}
+
+export function createDiscordConnector(config: DiscordConfig): DiscordConnector {
+  return new DiscordConnector(config);
+}
