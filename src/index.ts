@@ -26,11 +26,10 @@ process.on('SIGINT', () => {
   const wasThinking = currentBot?.isThinking() ?? false;
 
   if (wasThinking) {
-    // Abort current operation and show prompt immediately
+    // Abort current operation - the normal flow will handle showing the prompt
     currentBot?.abortCurrentOperation();
-    // Clear the line and show prompt
-    process.stdout.write('\r\x1b[K'); // Clear current line
-    process.stdout.write(inputClose() + inputPrompt());
+    // Just clear the current line (animation), let normal error handling show prompt
+    process.stdout.write('\r\x1b[K');
     lastCtrlC = 0; // Reset so next Ctrl+C shows warning instead of exiting
     return;
   }
@@ -85,6 +84,9 @@ import { createCodeEditor, CodeEditor } from './code/editor';
 import { createCommandPermissions, CommandPermissions } from './security/permissions';
 import { addImage, imageBuffer } from './code/imageBuffer';
 import { createTelegramConnector, TelegramConnector } from './connectors/telegram';
+import { createDiscordConnector, DiscordConnector } from './connectors/discord';
+import type { ConnectorSource } from './connectors/base';
+import { initTranscription } from './services/transcription';
 
 
 
@@ -100,12 +102,13 @@ class Slashbot {
   private codeEditor: CodeEditor;
   private commandPermissions: CommandPermissions;
   private telegramConnector: TelegramConnector | null = null;
+  private discordConnector: DiscordConnector | null = null;
   private rl: readline.Interface | null = null;
   private running = false;
   private history: string[] = [];
   private historyIndex = -1;
   private loadedContextFile: string | null = null;
-  private currentSource: 'cli' | 'telegram' = 'cli';
+  private currentSource: ConnectorSource = 'cli';
 
   constructor(config: SlashbotConfig = {}) {
     this.fileSystem = createFileSystem(config.basePath);
@@ -123,6 +126,7 @@ class Slashbot {
       configManager: this.configManager,
       codeEditor: this.codeEditor,
       telegramConnector: this.telegramConnector,
+      discordConnector: this.discordConnector,
       reinitializeGrok: () => this.initializeGrok(),
     };
   }
@@ -170,6 +174,21 @@ class Slashbot {
           const files = await this.codeEditor.listFiles();
           const context = `Directory: ${workDir}\nFiles:\n${files.slice(0, 50).join('\n')}`;
           this.grokClient.setProjectContext(context, workDir);
+        }
+
+        // Load skills from .slashbot/skills/
+        try {
+          const skillsDir = `${workDir}/.slashbot/skills`;
+          const { readdir } = await import('fs/promises');
+          const files = await readdir(skillsDir);
+          const skills = files
+            .filter(f => f.endsWith('.md'))
+            .map(f => `.slashbot/skills/${f}`); // Include full path to preserve case
+          if (skills.length > 0) {
+            this.grokClient.setSkills(skills);
+          }
+        } catch {
+          // Skills directory doesn't exist or is empty
         }
 
         // Wire up action handlers
@@ -254,32 +273,6 @@ class Slashbot {
             }
           },
 
-          onBuildCheck: async () => {
-            // Try to run TypeScript check or build
-            try {
-              const { exec } = await import('child_process');
-              const { promisify } = await import('util');
-              const execAsync = promisify(exec);
-
-              // Try bun check first, then tsc
-              try {
-                await execAsync('bun run tsc --noEmit 2>&1', {
-                  cwd: this.codeEditor.getWorkDir(),
-                  timeout: 60000,
-                });
-                return { success: true, errors: [] };
-              } catch (error: any) {
-                const output = error.stdout || error.stderr || error.message || '';
-                const errors = output.split('\n')
-                  .filter((line: string) => line.includes('error') || line.includes('TS'))
-                  .slice(0, 10);
-                return { success: false, errors };
-              }
-            } catch {
-              return { success: true, errors: [] }; // Can't check, assume ok
-            }
-          },
-
           onTelegram: async (message) => {
             if (!this.telegramConnector?.isRunning()) {
               throw new Error('Telegram not connected');
@@ -295,7 +288,7 @@ class Slashbot {
     }
   }
 
-  private async handleInput(input: string, source: 'cli' | 'telegram' = 'cli'): Promise<string | void> {
+  private async handleInput(input: string, source: ConnectorSource = 'cli'): Promise<string | void> {
     const trimmed = input.trim();
 
     if (!trimmed) return;
@@ -328,7 +321,7 @@ class Slashbot {
     // Handle natural language - send to Grok
     if (!this.grokClient) {
       const msg = 'Not connected to Grok. Use /login to enter your API key.';
-      if (source === 'telegram') return msg;
+      if (source !== 'cli') return msg;
       console.log(c.warning('Not connected to Grok'));
       console.log(c.muted('  Use /login to enter your API key'));
       console.log(inputClose());
@@ -336,9 +329,9 @@ class Slashbot {
     }
 
     try {
-      // For Telegram, collect the response
-      if (source === 'telegram') {
-        const response = await this.grokClient.chatWithResponse(trimmed);
+      // For external connectors (Telegram, Discord), collect the response
+      if (source !== 'cli') {
+        const response = await this.grokClient.chatWithResponse(trimmed, source as 'telegram' | 'discord');
         return response;
       }
 
@@ -352,7 +345,7 @@ class Slashbot {
         return;
       }
       const errorMsg = error instanceof Error ? error.message : String(error);
-      if (source === 'telegram') return `Error: ${errorMsg}`;
+      if (source !== 'cli') return `Error: ${errorMsg}`;
       console.log(errorBlock(errorMsg));
       console.log(inputClose());
     }
@@ -404,6 +397,13 @@ class Slashbot {
     // Initialize Grok client if API key available
     await this.initializeGrok();
 
+    // Initialize transcription service if OpenAI API key available
+    const openaiKey = this.configManager.getOpenAIApiKey();
+    if (openaiKey) {
+      initTranscription(openaiKey);
+      console.log(c.muted('[Voice] Transcription enabled (Whisper)'));
+    }
+
     // Start scheduler
     this.scheduler.start();
 
@@ -424,15 +424,30 @@ class Slashbot {
       }
     }
 
+    // Initialize Discord connector if configured
+    const discordConfig = this.configManager.getDiscordConfig();
+    if (discordConfig) {
+      try {
+        this.discordConnector = createDiscordConnector(discordConfig);
+        this.discordConnector.setMessageHandler(async (message, source) => {
+          console.log(c.muted(`\n[Discord] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}`));
+          const response = await this.handleInput(message, source);
+          return response as string;
+        });
+        await this.discordConnector.start();
+      } catch (error) {
+        console.log(c.warning(`[Discord] Could not start: ${error}`));
+        this.discordConnector = null;
+      }
+    }
+
     // Display banner with all info
     const tasks = this.scheduler.listTasks();
-    const isCodeAuthorized = await this.codeEditor.isAuthorized();
     console.log(banner({
       version: VERSION,
       workingDir: this.codeEditor.getWorkDir(),
       contextFile: this.loadedContextFile,
       tasksCount: tasks.length,
-      isAuthorized: isCodeAuthorized,
     }));
 
     // Create readline interface with history and autocomplete support
@@ -516,6 +531,7 @@ class Slashbot {
     this.running = false;
     this.scheduler.stop();
     this.telegramConnector?.stop();
+    this.discordConnector?.stop();
     await this.saveHistory();
     this.rl?.close();
   }
