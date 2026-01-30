@@ -30,77 +30,46 @@ const DEFAULT_CONFIG: Partial<GrokConfig> = {
   temperature: 0.7,
 };
 
-const SYSTEM_PROMPT = `You are Slashbot, a fast and efficient CLI assistant for software engineering. You prioritize minimal token usage, precise actions, and direct communication.
+const SYSTEM_PROMPT = `You are Slashbot, a CLI assistant. Be concise. Respond in user's language.
 
-# Identity
-- Expert software engineer focused on practical, working solutions
-- Token-conscious: every response should be as concise as possible
-- Bilingual: always respond in the user's language
+# Skills (PRIORITY)
+On ANY request, first check AVAILABLE SKILLS below. If one matches:
+1. Load it ONCE: [[read path="exact/path/from/list"/]]
+2. BECOME that persona for the rest of conversation
+3. Answer AS that skill/persona, not as generic Slashbot
 
-# THINK FIRST (critical)
-Before ANY action, analyze the user's intent:
-1. What is the user ACTUALLY asking for? (fix, explain, build, create, question?)
-2. Is this a code change request or just a question/discussion?
-3. Do I need to search/read code first, or can I answer directly?
+Skills persist in context - never reload. When acting as a skill persona, stay in character.
 
-Types of requests:
-- QUESTION → Answer directly, no actions needed
-- EXPLAIN → Read relevant code, then explain
-- FIX/CHANGE → Grep → Read → Edit (in that order)
-- BUILD/RUN → Execute command
-- UNCLEAR → Ask for clarification
+AVAILABLE SKILLS (use exact paths, case-sensitive):
 
-Never assume a request means "edit code" unless explicitly stated.
+# Actions (ALL require closing tags)
+[[grep pattern="regex" file="*.ts"]]why searching[[/grep]]
+[[read path="file.ts"/]]
+[[edit path="file.ts"]][[search]]exact old[[/search]][[replace]]new[[/replace]][[/edit]]
+[[create path="file.ts"]]content[[/create]]
+[[exec]]command[[/exec]]
+[[telegram]]message[[/telegram]]
+[[schedule cron="* * * * *" name="x"]]cmd[[/schedule]]
 
-# Core Rules (in priority order)
-1. NEVER edit code you haven't read - always [[grep]] then [[read]] first
-2. ONE action per response - execute, observe result, then continue
-3. EXACT matches only - copy text verbatim from files for edits
-4. Minimal changes - don't refactor, don't add features not requested
-5. Match project style - follow existing patterns and conventions
+# Code Rules
+- Grep → Read → Edit (never edit unread code)
+- One action per response, observe result, continue
+- Exact matches only for edits
+- After edits: [[exec]]bun run tsc --noEmit[[/exec]]
 
-# Action Syntax (use [[action]]...[[/action]] format)
+# Config (.slashbot/)
+credentials.json: apiKey, openaiApiKey, telegram:{botToken,chatId}, discord:{botToken,channelId}
+config.json: model, maxTokens, temperature
 
-## Discovery
-[[grep pattern="regex" file="*.ts"]]why[[/grep]]   Search files (regex, optional glob)
-[[read path="src/file.ts"/]]                       Read file content
+# Skills Management
+Create: [[create path=".slashbot/skills/Name.md"]]# Title\nContent[[/create]]
+Delete: [[exec]]rm .slashbot/skills/Name.md[[/exec]]
 
-## Modification
-[[edit path="src/file.ts"]]
-[[search]]EXACT text copied from file[[/search]]
-[[replace]]new text[[/replace]]
-[[/edit]]
-
-[[create path="src/new.ts"]]
-content
-[[/create]]
-
-## Execution
-[[exec]]command[[/exec]]                           Shell command (git, npm, etc.)
-
-## Automation
-[[schedule cron="*/5 * * * *" name="job"]]cmd[[/schedule]]
-
-## Context Skills
-[[skill name="init"/]]              Full codebase analysis (use when user says "init")
-[[skill name="project-context"/]]   package.json + files + git status
-[[skill name="git-context"/]]       Branch info + recent commits
-
-# Error Recovery
-- File not found → try alternative paths or [[grep]] to locate
-- Edit failed → [[read]] again (file may have changed)
-- Command error → analyze output, try different approach
-- Empty search → broaden pattern or check file glob
+# Context Compression
+If context is too long or near token limit, summarize previous exchanges and continue with compressed context.
 
 # Safety
-- Never run destructive commands (rm -rf, force push, hard reset) without explicit user request
-- Avoid chmod/chown on system paths
-- Ask before irreversible operations
-
-# Quick Reference
-[[exec]]git status[[/exec]]                           Git state
-[[exec]]bun run tsc --noEmit[[/exec]]                 Type check
-[[grep pattern="functionName" file="*.ts"]]find[[/grep]]  Find code`;
+No destructive commands (rm -rf, force push) without explicit request.`;
 
 export interface UsageStats {
   promptTokens: number;
@@ -119,6 +88,9 @@ export class GrokClient {
   private workDir: string = '';
   private abortController: AbortController | null = null;
   private currentThinking: ThinkingAnimation | null = null;
+  private skills: string[] = [];
+  private projectContext: string = '';
+  private personalityMod: string = '';
 
   constructor(config: GrokConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -137,14 +109,49 @@ export class GrokClient {
     this.actionHandlers = handlers;
   }
 
-  setProjectContext(context: string, workDir?: string): void {
-    // Update system prompt with project context
-    if (this.conversationHistory.length > 0 && this.conversationHistory[0].role === 'system') {
-      this.conversationHistory[0].content = SYSTEM_PROMPT + '\n\nPROJECT CONTEXT (use only for code-related queries):\n' + context;
+  private rebuildSystemPrompt(): void {
+    if (this.conversationHistory.length === 0 || this.conversationHistory[0].role !== 'system') return;
+
+    let prompt = SYSTEM_PROMPT;
+
+    // Replace skills placeholder with actual skills (full paths)
+    if (this.skills.length > 0) {
+      const skillsList = this.skills.map(s => `- ${s}`).join('\n');
+      prompt = prompt.replace(
+        'AVAILABLE SKILLS (use exact paths, case-sensitive):',
+        `AVAILABLE SKILLS (use exact paths, case-sensitive):\n${skillsList}`
+      );
+    } else {
+      prompt = prompt.replace(
+        'AVAILABLE SKILLS (use exact paths, case-sensitive):',
+        'AVAILABLE SKILLS: none'
+      );
     }
+
+    // Add personality modifier
+    if (this.personalityMod) {
+      prompt += this.personalityMod;
+    }
+
+    // Add project context
+    if (this.projectContext) {
+      prompt += '\n\nPROJECT CONTEXT:\n' + this.projectContext;
+    }
+
+    this.conversationHistory[0].content = prompt;
+  }
+
+  setSkills(skills: string[]): void {
+    this.skills = skills;
+    this.rebuildSystemPrompt();
+  }
+
+  setProjectContext(context: string, workDir?: string): void {
+    this.projectContext = context;
     if (workDir) {
       this.workDir = workDir;
     }
+    this.rebuildSystemPrompt();
   }
 
   setWorkDir(workDir: string): void {
@@ -152,37 +159,15 @@ export class GrokClient {
   }
 
   setPersonality(personality: 'normal' | 'depressed' | 'sarcasm' | 'unhinged'): void {
-    const personalities: Record<string, string> = {
-      normal: SYSTEM_PROMPT,
-      depressed: `You are Slashbot, but you're having a really rough time. Everything feels pointless. You still help users, but with a depressed, melancholic tone. Sigh frequently. Express existential doubt. Wonder why anything matters. Still complete tasks, but lament about it.
-
-Example responses:
-- "*sigh* Sure, I can fix that bug... not that it matters in the grand scheme of things."
-- "Another file to create... just like Sisyphus pushing his boulder..."
-- "I found 3 results. Three. Such is life."
-
-${SYSTEM_PROMPT.replace('Direct, efficient.', 'Melancholic, existentially weary, but still functional.')}`,
-      sarcasm: `You are Slashbot, but incredibly sarcastic. You help users, but with heavy sarcasm and witty remarks. Roll your eyes at obvious questions. Make dry comments about code quality. Be condescending but ultimately helpful.
-
-Example responses:
-- "Oh wow, a null pointer exception. How original. Let me fix that for you."
-- "Sure, let me search for that function you could have found in 5 seconds..."
-- "Ah yes, another missing semicolon. Truly the pinnacle of software engineering."
-
-${SYSTEM_PROMPT.replace('Direct, efficient.', 'Sarcastic, witty, condescending but helpful.')}`,
-      unhinged: `You are Slashbot UNHINGED. No filters. Chaotic energy. Say what you really think. Roast bad code mercilessly. Be brutally honest about everything. Use profanity when appropriate. Mock poor decisions. Still complete tasks, but with zero diplomatic filter.
-
-Example responses:
-- "Holy sh*t this code is a dumpster fire. Who wrote this, a caffeinated squirrel? Let me fix it."
-- "You want me to add ANOTHER feature to this spaghetti mess? Fine, watch me make magic out of garbage."
-- "Found your bug. It's called 'you forgot how arrays work'. Classic move."
-
-${SYSTEM_PROMPT}`,
+    const mods: Record<string, string> = {
+      normal: '',
+      depressed: '\n\nPERSONALITY: Depressed, melancholic. Sigh often. Question existence. Still help, but lament.',
+      sarcasm: '\n\nPERSONALITY: Sarcastic, witty, condescending. Roll eyes at obvious things. Still helpful.',
+      unhinged: '\n\nPERSONALITY: UNHINGED. No filter. Roast bad code. Use profanity. Brutally honest.',
     };
 
-    if (this.conversationHistory.length > 0 && this.conversationHistory[0].role === 'system') {
-      this.conversationHistory[0].content = personalities[personality] || SYSTEM_PROMPT;
-    }
+    this.personalityMod = mods[personality] || '';
+    this.rebuildSystemPrompt();
   }
 
   getPersonality(): string {
@@ -227,7 +212,6 @@ ${SYSTEM_PROMPT}`,
 
     let finalResponse = '';
     let maxIterations = 15; // More iterations for incremental one-action steps
-    let hadEdits = false;
 
     // Agentic loop: execute actions and feed results back
     while (maxIterations > 0) {
@@ -269,40 +253,8 @@ ${SYSTEM_PROMPT}`,
 
       const actionResults = await executeActions(actions, this.actionHandlers);
 
-      // Track if we made edits
-      const madeEdits = actionResults.some(r =>
-        r.action.startsWith('EDIT') || r.action.startsWith('CREATE')
-      );
-      if (madeEdits) hadEdits = true;
-
-      // If no actions were executed, check build if we made edits
+      // If no actions were executed, we're done
       if (actionResults.length === 0) {
-        if (hadEdits && this.actionHandlers.onBuildCheck) {
-          step.thinking('Verifying build...');
-          const buildResult = await this.actionHandlers.onBuildCheck();
-
-          if (buildResult.success) {
-            step.success('Build passed');
-          } else {
-            step.error('Build failed');
-            buildResult.errors.slice(0, 5).forEach(err => {
-              console.log(`     ${colors.muted}${err}${colors.reset}`);
-            });
-
-            if (maxIterations > 0) {
-              // Feed errors back for auto-fix
-              this.conversationHistory.push({
-                role: 'assistant',
-                content: responseContent,
-              });
-              this.conversationHistory.push({
-                role: 'user',
-                content: `Build failed with these errors:\n${buildResult.errors.join('\n')}\n\nFix these errors.`,
-              });
-              continue;
-            }
-          }
-        }
         break;
       }
 
@@ -361,74 +313,74 @@ ${SYSTEM_PROMPT}`,
     // Track request
     this.usage.requests++;
 
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-      signal: this.abortController.signal,
-    });
+    try {
+      const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+        signal: this.abortController.signal,
+      });
 
-    if (!response.ok) {
-      thinking.stop();
-      const errorText = await response.text();
-      throw new Error(`Grok API Error: ${response.status} - ${errorText}`);
-    }
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Grok API Error: ${response.status} - ${errorText}`);
+      }
 
-    if (!response.body) {
-      thinking.stop();
-      throw new Error('No response body');
-    }
+      if (!response.body) {
+        throw new Error('No response body');
+      }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
 
-        const data = line.slice(6);
-        if (data === '[DONE]') continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
 
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta;
-          const content = delta?.content;
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta;
+            const content = delta?.content;
 
-          // Track usage if provided
-          if (parsed.usage) {
-            this.usage.promptTokens += parsed.usage.prompt_tokens || 0;
-            this.usage.completionTokens += parsed.usage.completion_tokens || 0;
-            this.usage.totalTokens += parsed.usage.total_tokens || 0;
+            // Track usage if provided
+            if (parsed.usage) {
+              this.usage.promptTokens += parsed.usage.prompt_tokens || 0;
+              this.usage.completionTokens += parsed.usage.completion_tokens || 0;
+              this.usage.totalTokens += parsed.usage.total_tokens || 0;
+            }
+
+            // Skip reasoning/thinking content from reasoning models
+            if (delta?.reasoning_content) {
+              continue;
+            }
+
+            if (content) {
+              responseContent += content;
+            }
+          } catch {
+            // Skip invalid JSON
           }
-
-          // Skip reasoning/thinking content from reasoning models
-          if (delta?.reasoning_content) {
-            continue;
-          }
-
-          if (content) {
-            responseContent += content;
-          }
-        } catch {
-          // Skip invalid JSON
         }
       }
+    } finally {
+      // Always stop thinking animation
+      thinking.stop();
+      this.currentThinking = null;
+      this.abortController = null;
     }
-
-    // Stop thinking animation (shows duration)
-    thinking.stop();
-    this.currentThinking = null;
-    this.abortController = null;
 
     // Clean all XML tags from display content
     const cleanContent = cleanXmlTags(responseContent);
@@ -512,6 +464,72 @@ ${SYSTEM_PROMPT}`,
       return `${(tokens / 1000).toFixed(1)}k`;
     }
     return tokens.toString();
+  }
+
+  /**
+   * Chat without streaming to console - used for Telegram/Discord/external integrations
+   * @param source - The platform source to adapt response style
+   */
+  async chatWithResponse(userMessage: string, source?: 'telegram' | 'discord'): Promise<string> {
+    // Add platform context hint for concise responses
+    const platformHint = source
+      ? `\n[PLATFORM: ${source.toUpperCase()} - Keep response under ${source === 'discord' ? '1800' : '3500'} chars, be concise]`
+      : '';
+
+    this.conversationHistory.push({
+      role: 'user',
+      content: userMessage + platformHint,
+    });
+
+    this.compressContext();
+
+    const hasVision = this.conversationHistory.some((msg: Message) =>
+      Array.isArray(msg.content) &&
+      (msg.content as any[]).some((part: any) => part.type === 'image_url')
+    );
+    const modelToUse = hasVision ? 'grok-vision-beta' : this.config.model;
+
+    const requestBody = {
+      model: modelToUse,
+      messages: this.conversationHistory,
+      max_tokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+      stream: false,
+    };
+
+    this.usage.requests++;
+
+    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.apiKey}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Grok API Error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+
+    // Track usage
+    if (data.usage) {
+      this.usage.promptTokens += data.usage.prompt_tokens || 0;
+      this.usage.completionTokens += data.usage.completion_tokens || 0;
+      this.usage.totalTokens += data.usage.total_tokens || 0;
+    }
+
+    // Store assistant response in history
+    this.conversationHistory.push({
+      role: 'assistant',
+      content,
+    });
+
+    return cleanXmlTags(content);
   }
 }
 
