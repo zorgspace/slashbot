@@ -9,8 +9,8 @@ import * as path from 'path';
 import * as os from 'os';
 import { parseCron, matchesCron, getNextRunTime, describeCron, isValidCron, type ParsedCron } from './cron';
 
-const TASKS_DIR = path.join(process.cwd(), '.slashbot', 'tasks');
-const TASKS_INDEX = path.join(TASKS_DIR, 'index.json');
+const SLASHBOT_DIR = path.join(process.cwd(), '.slashbot');
+const TASKS_FILE = path.join(SLASHBOT_DIR, 'tasks.json');
 
 // Dangerous patterns to block
 const DANGEROUS_PATTERNS = [
@@ -98,12 +98,12 @@ export class TaskScheduler {
 
   private async ensureTasksDir(): Promise<void> {
     const { mkdir } = await import('fs/promises');
-    await mkdir(TASKS_DIR, { recursive: true });
+    await mkdir(SLASHBOT_DIR, { recursive: true });
   }
 
   private async loadTasks(): Promise<void> {
     try {
-      const file = Bun.file(TASKS_INDEX);
+      const file = Bun.file(TASKS_FILE);
       if (await file.exists()) {
         const data = await file.json();
         for (const task of data.tasks || []) {
@@ -124,7 +124,7 @@ export class TaskScheduler {
     const data = {
       tasks: Array.from(this.tasks.values()),
     };
-    await Bun.write(TASKS_INDEX, JSON.stringify(data, null, 2));
+    await Bun.write(TASKS_FILE, JSON.stringify(data, null, 2));
   }
 
   validateCommand(command: string): SecurityCheck {
@@ -353,8 +353,8 @@ export class TaskScheduler {
     });
   }
 
-  getTasksDir(): string {
-    return TASKS_DIR;
+  getTasksFile(): string {
+    return TASKS_FILE;
   }
 
   /**

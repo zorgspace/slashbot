@@ -227,7 +227,7 @@ export class ThinkingAnimation {
     this.interval = setInterval(() => {
       this.frameIndex = (this.frameIndex + 1) % this.frames.length;
       process.stdout.write(`\r\x1b[K${colors.violetLight}${this.frames[this.frameIndex]} ${this.text}${colors.reset}`);
-    }, 80);
+    }, 150);
   }
 
   update(text: string): void {

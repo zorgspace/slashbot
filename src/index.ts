@@ -111,6 +111,7 @@ class Slashbot {
   private historyIndex = -1;
   private loadedContextFile: string | null = null;
   private currentSource: ConnectorSource = 'cli';
+  private historySaveTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: SlashbotConfig = {}) {
     this.fileSystem = createFileSystem(config.basePath);
@@ -392,18 +393,24 @@ class Slashbot {
     }
   }
 
-  private async saveHistory(): Promise<void> {
-    try {
-      const { mkdir } = await import('fs/promises');
-      const configDir = `${process.cwd()}/.slashbot`;
-      await mkdir(configDir, { recursive: true });
-
-      // Keep last 500 commands
-      const historyToSave = this.history.slice(-500);
-      await Bun.write(`${configDir}/history`, historyToSave.join('\n'));
-    } catch {
-      // Ignore save errors
+  private saveHistory(): void {
+    // Debounce: only save after 2 seconds of no new inputs
+    if (this.historySaveTimeout) {
+      clearTimeout(this.historySaveTimeout);
     }
+    this.historySaveTimeout = setTimeout(async () => {
+      try {
+        const { mkdir } = await import('fs/promises');
+        const configDir = `${process.cwd()}/.slashbot`;
+        await mkdir(configDir, { recursive: true });
+
+        // Keep last 500 commands
+        const historyToSave = this.history.slice(-500);
+        await Bun.write(`${configDir}/history`, historyToSave.join('\n'));
+      } catch {
+        // Ignore save errors
+      }
+    }, 2000);
   }
 
   async start(): Promise<void> {
@@ -517,7 +524,7 @@ class Slashbot {
           // Add to history if not duplicate of last
           if (answer.trim() !== this.history[this.history.length - 1]) {
             this.history.push(answer.trim());
-            await this.saveHistory();
+            this.saveHistory();
           }
 
           await this.handleInput(answer);
@@ -538,7 +545,19 @@ class Slashbot {
     for (const [, conn] of this.connectors) {
       conn.stop?.();
     }
-    await this.saveHistory();
+    // Flush history immediately on stop
+    if (this.historySaveTimeout) {
+      clearTimeout(this.historySaveTimeout);
+    }
+    try {
+      const { mkdir } = await import('fs/promises');
+      const configDir = `${process.cwd()}/.slashbot`;
+      await mkdir(configDir, { recursive: true });
+      const historyToSave = this.history.slice(-500);
+      await Bun.write(`${configDir}/history`, historyToSave.join('\n'));
+    } catch {
+      // Ignore save errors
+    }
     // Disable bracketed paste mode
     disableBracketedPaste();
   }

@@ -84,9 +84,11 @@ When message has [PLATFORM: TELEGRAM] or [PLATFORM: DISCORD], reply using the no
 - Exact matches only for edits
 - After edits, run typecheck
 
-# Config (.slashbot/)
-credentials.json: apiKey, openaiApiKey, telegram:{botToken,chatId}, discord:{botToken,channelId}
-config.json: model, maxTokens, temperature
+# Config & Data (.slashbot/)
+Configuration, tasks, and history are stored in .slashbot/ hidden directory.
+Files may include: credentials.json, config.json, tasks.json, history, skills/
+
+IMPORTANT: grep does NOT search hidden directories. When looking for config/tasks/data, ALWAYS run [[exec]]ls -la .slashbot/[[/exec]] first to see what exists before reading specific files.
 
 # Context Compression
 If context is too long or near token limit, summarize previous exchanges and continue with compressed context.
@@ -106,7 +108,7 @@ export class GrokClient {
   private conversationHistory: Message[] = [];
   private actionHandlers: ActionHandlers = {};
   private usage: UsageStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, requests: 0 };
-  private contextCompressionEnabled: boolean = false;
+  private contextCompressionEnabled: boolean = true;
   private maxContextMessages: number = 20;
   private workDir: string = '';
   private abortController: AbortController | null = null;
@@ -323,9 +325,11 @@ export class GrokClient {
     };
 
     let responseContent = '';
+    let displayedContent = '';
     let buffer = '';
     const thinking = new ThinkingAnimation();
     this.currentThinking = thinking;
+    let firstChunk = true;
 
     // Create abort controller for this request
     this.abortController = new AbortController();
@@ -392,6 +396,29 @@ export class GrokClient {
 
             if (content) {
               responseContent += content;
+
+              // Progressive streaming: output content as it arrives
+              // Stop thinking animation on first content chunk
+              if (firstChunk) {
+                thinking.stop();
+                this.currentThinking = null;
+                firstChunk = false;
+              }
+
+              // Stream clean content (without XML action tags) to console
+              // But wait if we're in the middle of an action tag (incomplete [[...]])
+              const openBrackets = (responseContent.match(/\[\[/g) || []).length;
+              const closeBrackets = (responseContent.match(/\]\]/g) || []).length;
+              const hasUnclosedTag = openBrackets > closeBrackets;
+
+              if (!hasUnclosedTag) {
+                const cleanFull = cleanXmlTags(responseContent);
+                const newContent = cleanFull.slice(displayedContent.length);
+                if (newContent) {
+                  process.stdout.write(newContent);
+                  displayedContent = cleanFull;
+                }
+              }
             }
           } catch {
             // Skip invalid JSON
@@ -399,18 +426,17 @@ export class GrokClient {
         }
       }
     } finally {
-      // Always stop thinking animation
-      thinking.stop();
-      this.currentThinking = null;
+      // Stop thinking animation if still running (no content received)
+      if (this.currentThinking) {
+        thinking.stop();
+        this.currentThinking = null;
+      }
       this.abortController = null;
     }
 
-    // Clean all XML tags from display content
-    const cleanContent = cleanXmlTags(responseContent);
-
-    // Only display if there's actual text content
-    if (cleanContent) {
-      console.log(cleanContent);
+    // Add newline after streaming if we displayed content
+    if (displayedContent) {
+      process.stdout.write('\n');
     }
 
     // Display token count
