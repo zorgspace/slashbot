@@ -4,8 +4,6 @@
  * A Claude Code-inspired terminal assistant using X.AI's Grok API.
  */
 
-import * as readline from 'readline';
-
 import { banner, inputPrompt, inputClose, responseStart, c, errorBlock, colors } from './ui/colors';
 
 if (process.argv[2] === 'update-check') {
@@ -41,6 +39,10 @@ process.on('SIGINT', () => {
     currentBot?.stop();
     process.exit(0);
   }
+
+  // First Ctrl+C - show warning and redraw prompt
+  console.log(c.warning('\nPress Ctrl+C again to exit'));
+  process.stdout.write(inputPrompt());
   lastCtrlC = now;
 });
 
@@ -87,6 +89,8 @@ import { createTelegramConnector, TelegramConnector } from './connectors/telegra
 import { createDiscordConnector, DiscordConnector } from './connectors/discord';
 import type { ConnectorSource } from './connectors/base';
 import { initTranscription } from './services/transcription';
+import { enableBracketedPaste, disableBracketedPaste, expandPaste } from './ui/pasteHandler';
+import { readMultilineInput } from './ui/multilineInput';
 
 
 
@@ -102,7 +106,6 @@ class Slashbot {
   private codeEditor: CodeEditor;
   private commandPermissions: CommandPermissions;
   private connectors: Map<string, { connector: any; isRunning: () => boolean; sendMessage: (msg: string) => Promise<void>; stop?: () => void }> = new Map();
-  private rl: readline.Interface | null = null;
   private running = false;
   private history: string[] = [];
   private historyIndex = -1;
@@ -312,7 +315,9 @@ class Slashbot {
   }
 
   private async handleInput(input: string, source: ConnectorSource = 'cli'): Promise<string | void> {
-    const trimmed = input.trim();
+    // Expand any paste placeholders back to original content (CLI only)
+    const expanded = source === 'cli' ? expandPaste(input) : input;
+    const trimmed = expanded.trim();
 
     if (!trimmed) return;
 
@@ -483,78 +488,44 @@ class Slashbot {
       tasksCount: tasks.length,
     }));
 
-    // Create readline interface with history and autocomplete support
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-      history: this.history.slice(-100).reverse(), // Load last 100 commands (reversed for readline)
-      historySize: 100,
-      removeHistoryDuplicates: true,
-      completer: completer, // Tab autocomplete for /commands
-    });
+    // Enable bracketed paste mode to detect pastes
+    enableBracketedPaste();
 
     // Set scheduler callback to redraw prompt after task execution
     this.scheduler.setOnTaskComplete(() => {
-      if (this.running && this.rl) {
+      if (this.running) {
         process.stdout.write(inputPrompt());
       }
     });
 
     this.running = true;
 
-    // Handle line input
-    const askQuestion = (): void => {
-      if (!this.running || !this.rl) return;
+    // Handle line input with multi-line support (Shift+Enter for new lines)
+    const askQuestion = async (): Promise<void> => {
+      while (this.running) {
+        try {
+          const answer = await readMultilineInput({
+            prompt: inputPrompt(),
+            history: this.history,
+          });
 
-      this.rl.question(inputPrompt(), async (answer) => {
-        // Skip empty input
-        if (!answer.trim()) {
-          askQuestion();
-          return;
+          // Skip empty input
+          if (!answer.trim()) {
+            continue;
+          }
+
+          // Add to history if not duplicate of last
+          if (answer.trim() !== this.history[this.history.length - 1]) {
+            this.history.push(answer.trim());
+            await this.saveHistory();
+          }
+
+          await this.handleInput(answer);
+        } catch {
+          // Input was interrupted, continue loop
         }
-
-        // Add to history if not duplicate of last
-        if (answer.trim() !== this.history[this.history.length - 1]) {
-          this.history.push(answer.trim());
-          await this.saveHistory();
-        }
-
-        await this.handleInput(answer);
-        askQuestion();
-      });
+      }
     };
-
-    // Handle readline close (Ctrl+D) - recreate interface instead of exiting
-    this.rl.on('close', () => {
-      if (!this.running) return;
-
-      // Clear the rl reference first to prevent scheduler callback from using closed interface
-      this.rl = null;
-
-      console.log(c.warning('\nCtrl+D pressed - use /exit or Ctrl+C twice to quit'));
-
-      // Recreate readline interface
-      this.rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        terminal: true,
-        history: this.history.slice(-100).reverse(),
-        historySize: 100,
-        removeHistoryDuplicates: true,
-        completer: completer,
-      });
-
-      // Re-attach close handler
-      this.rl.on('close', () => {
-        if (this.running) {
-          console.log(c.warning('\nUse /exit or Ctrl+C twice to quit'));
-        }
-      });
-
-      // Resume asking questions
-      askQuestion();
-    });
 
     // Start the REPL
     askQuestion();
@@ -568,7 +539,8 @@ class Slashbot {
       conn.stop?.();
     }
     await this.saveHistory();
-    this.rl?.close();
+    // Disable bracketed paste mode
+    disableBracketedPaste();
   }
 }
 

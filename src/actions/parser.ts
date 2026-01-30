@@ -49,15 +49,33 @@ const PATTERNS = {
 };
 
 /**
+ * Remove code blocks from content to prevent parsing actions inside them
+ * This prevents injection when AI outputs documentation/examples
+ */
+function stripCodeBlocks(content: string): string {
+  // Remove fenced code blocks (```...```)
+  let result = content.replace(/```[\s\S]*?```/g, '');
+  // Remove inline code (`...`)
+  result = result.replace(/`[^`]+`/g, '');
+  // Remove [[literal]]...[[/literal]] blocks (explicit no-execute)
+  result = result.replace(/\[\[literal\]\][\s\S]*?\[\[\/literal\]\]/gi, '');
+  return result;
+}
+
+/**
  * Parse all actions from content
+ * Actions inside code blocks are ignored to prevent injection
  */
 export function parseActions(content: string): Action[] {
   const actions: Action[] = [];
 
+  // Strip code blocks to prevent parsing actions inside them
+  const safeContent = stripCodeBlocks(content);
+
   // Parse grep actions (flexible attribute extraction)
   let match;
   const grepRegex = new RegExp(PATTERNS.grep.source, 'gi');
-  while ((match = grepRegex.exec(content)) !== null) {
+  while ((match = grepRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const pattern = extractAttr(fullTag, 'pattern');
     const filePattern = extractAttr(fullTag, 'file');
@@ -72,7 +90,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse read actions (flexible attribute extraction)
   const readRegex = new RegExp(PATTERNS.read.source, 'gi');
-  while ((match = readRegex.exec(content)) !== null) {
+  while ((match = readRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const path = extractAttr(fullTag, 'path');
     if (path) {
@@ -85,7 +103,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse edit actions
   const editRegex = new RegExp(PATTERNS.edit.source, 'gi');
-  while ((match = editRegex.exec(content)) !== null) {
+  while ((match = editRegex.exec(safeContent)) !== null) {
     const [, path, search, replace] = match;
     actions.push({
       type: 'edit',
@@ -97,7 +115,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse create actions
   const createRegex = new RegExp(PATTERNS.create.source, 'gi');
-  while ((match = createRegex.exec(content)) !== null) {
+  while ((match = createRegex.exec(safeContent)) !== null) {
     const [, path, fileContent] = match;
     actions.push({
       type: 'create',
@@ -108,7 +126,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse exec actions
   const execRegex = new RegExp(PATTERNS.exec.source, 'gi');
-  while ((match = execRegex.exec(content)) !== null) {
+  while ((match = execRegex.exec(safeContent)) !== null) {
     const [, command] = match;
     actions.push({
       type: 'exec',
@@ -118,7 +136,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse schedule actions
   const scheduleRegex = new RegExp(PATTERNS.schedule.source, 'gi');
-  while ((match = scheduleRegex.exec(content)) !== null) {
+  while ((match = scheduleRegex.exec(safeContent)) !== null) {
     const [, cron, name, command] = match;
     actions.push({
       type: 'schedule',
@@ -130,7 +148,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse skill actions
   const skillRegex = new RegExp(PATTERNS.skill.source, 'gi');
-  while ((match = skillRegex.exec(content)) !== null) {
+  while ((match = skillRegex.exec(safeContent)) !== null) {
     const [, name] = match;
     actions.push({
       type: 'skill',
@@ -140,7 +158,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse notify actions
   const notifyRegex = new RegExp(PATTERNS.notify.source, 'gi');
-  while ((match = notifyRegex.exec(content)) !== null) {
+  while ((match = notifyRegex.exec(safeContent)) !== null) {
     const [, target, message] = match;
     actions.push({
       type: 'notify',
@@ -151,7 +169,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse web search actions
   const webRegex = new RegExp(PATTERNS.web.source, 'gi');
-  while ((match = webRegex.exec(content)) !== null) {
+  while ((match = webRegex.exec(safeContent)) !== null) {
     const [, query] = match;
     actions.push({
       type: 'web',
@@ -161,7 +179,7 @@ export function parseActions(content: string): Action[] {
 
   // Parse fetch actions
   const fetchRegex = new RegExp(PATTERNS.fetch.source, 'gi');
-  while ((match = fetchRegex.exec(content)) !== null) {
+  while ((match = fetchRegex.exec(safeContent)) !== null) {
     const [, urlAttr, urlContent] = match;
     const url = urlAttr || (urlContent ? urlContent.trim() : '');
     if (url) {
