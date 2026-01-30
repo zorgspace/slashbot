@@ -47,6 +47,8 @@ async function executeAction(
       return executeSchedule(action, handlers);
     case 'skill':
       return executeSkill(action, handlers);
+    case 'telegram':
+      return executeTelegram(action, handlers);
     default:
       return null;
   }
@@ -80,18 +82,31 @@ async function executeRead(
 ): Promise<ActionResult | null> {
   if (!handlers.onRead) return null;
 
-  // Display action in Claude Code style
-  step.read(action.path);
+  // Check if this is a skill file
+  const isSkill = action.path.includes('.slashbot/skills/') && action.path.endsWith('.md');
+
+  if (isSkill) {
+    // Extract skill name from path
+    const skillName = action.path.split('/').pop()?.replace('.md', '') || action.path;
+    step.skill(skillName);
+  } else {
+    // Display action in Claude Code style
+    step.read(action.path);
+  }
 
   const fileContent = await handlers.onRead(action.path);
 
   if (fileContent) {
     const lineCount = fileContent.split('\n').length;
-    step.readResult(lineCount);
+    if (isSkill) {
+      step.success(`Loaded skill (${lineCount} lines)`);
+    } else {
+      step.readResult(lineCount);
+    }
     const preview = fileContent.length > 1000 ? fileContent.slice(0, 1000) + '...' : fileContent;
-    return { action: `READ ${action.path}`, success: true, result: preview };
+    return { action: isSkill ? `SKILL ${action.path}` : `READ ${action.path}`, success: true, result: preview };
   } else {
-    step.error('File not found');
+    step.error(isSkill ? 'Skill not found' : 'File not found');
     return { action: `READ ${action.path}`, success: false, result: 'File not found', error: 'File not found' };
   }
 }
@@ -224,6 +239,43 @@ async function executeSkill(
       success: false,
       result: 'Skill not found',
       error: `Skill "${action.name}" not found`,
+    };
+  }
+}
+
+async function executeTelegram(
+  action: Extract<Action, { type: 'telegram' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onTelegram) {
+    step.error('Telegram not configured');
+    return {
+      action: 'TELEGRAM',
+      success: false,
+      result: 'Telegram not configured',
+      error: 'Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID',
+    };
+  }
+
+  // Display action
+  step.thinking('Sending to Telegram...');
+
+  try {
+    await handlers.onTelegram(action.message);
+    step.success('Message sent to Telegram');
+    return {
+      action: 'TELEGRAM',
+      success: true,
+      result: 'Message sent',
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Telegram failed: ${errorMsg}`);
+    return {
+      action: 'TELEGRAM',
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
     };
   }
 }
