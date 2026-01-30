@@ -3,4 +3,4 @@ node_modules/
 *.log
 bun.lockb
 .env
-.slashbot/credentials.json
+.slashbot/
