@@ -2,7 +2,7 @@
  * Action System Type Definitions
  */
 
-export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'skill';
+export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'skill' | 'telegram';
 
 export interface GrepAction {
   type: 'grep';
@@ -45,6 +45,11 @@ export interface SkillAction {
   name: string;
 }
 
+export interface TelegramAction {
+  type: 'telegram';
+  message: string;
+}
+
 export type Action =
   | GrepAction
   | ReadAction
@@ -52,7 +57,8 @@ export type Action =
   | CreateAction
   | ExecAction
   | ScheduleAction
-  | SkillAction;
+  | SkillAction
+  | TelegramAction;
 
 export interface ActionResult {
   action: string;
@@ -78,5 +84,5 @@ export interface ActionHandlers {
   onSchedule?: (cron: string, command: string, name: string) => Promise<void>;
   onSkill?: (name: string) => Promise<string>;
   onFile?: (path: string, content: string) => Promise<boolean>;
-  onBuildCheck?: () => Promise<{ success: boolean; errors: string[] }>;
+  onTelegram?: (message: string) => Promise<void>;
 }

@@ -5,7 +5,7 @@
  * from XML-like patterns appearing in code examples or documentation.
  */
 
-import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, SkillAction } from './types';
+import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, SkillAction, TelegramAction } from './types';
 
 // Quote pattern: matches both single and double quotes
 const Q = `["']`;  // quote
@@ -40,6 +40,8 @@ const PATTERNS = {
   schedule: new RegExp(`\\[\\[schedule\\s+cron=${Q}(${NQR})${Q}(?:\\s+name=${Q}(${NQ})${Q})?\\s*\\]\\]([\\s\\S]+?)\\[\\[/schedule\\]\\]`, 'gi'),
   // [[skill name="..."/]] or [[skill name="..."]]
   skill: new RegExp(`\\[\\[skill\\s+name=${Q}(${NQR})${Q}\\s*/?\\]\\]`, 'gi'),
+  // [[telegram]]message[[/telegram]]
+  telegram: /\[\[telegram\s*\]\]([\s\S]+?)\[\[\/telegram\]\]/gi,
 };
 
 /**
@@ -130,6 +132,16 @@ export function parseActions(content: string): Action[] {
       type: 'skill',
       name,
     } as SkillAction);
+  }
+
+  // Parse telegram actions
+  const telegramRegex = new RegExp(PATTERNS.telegram.source, 'gi');
+  while ((match = telegramRegex.exec(content)) !== null) {
+    const [, message] = match;
+    actions.push({
+      type: 'telegram',
+      message: message.trim(),
+    } as TelegramAction);
   }
 
   return actions;
