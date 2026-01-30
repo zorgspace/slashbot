@@ -4,6 +4,7 @@
  */
 
 import { colors, c, ThinkingAnimation, buildStatus, step } from '../ui/colors';
+import { renderMarkdown } from '../ui/markdown';
 import { imageBuffer } from '../code/imageBuffer';
 import { parseActions, executeActions, type ActionHandlers } from '../actions';
 import { cleanXmlTags } from '../utils/xml';
@@ -62,12 +63,8 @@ To EXECUTE an action, write it directly. Examples below are documentation only:
 [[exec]]command[[/exec]]
 \`\`\`
 
-# MANDATORY: Real-Time Information
-For weather, news, prices, stocks, sports, or anything time-sensitive:
-→ Use [[exec]]curl ...[[/exec]] to fetch data
-→ Weather: use wttr.in (e.g., curl "wttr.in/Paris?format=3")
-→ APIs: use curl with appropriate endpoints
-→ NEVER answer time-sensitive queries from training data
+# Real-Time Information
+Web search is automatically enabled. For weather, news, prices, stocks, sports, or anything time-sensitive, the system will search the web for you.
 
 ## Communication
 \`\`\`
@@ -220,6 +217,27 @@ export class GrokClient {
   }
 
   async chat(userMessage: string): Promise<{ response: string; thinking: string }> {
+    // Check if this query needs web search for real-time info
+    if (this.needsSearch(userMessage)) {
+      try {
+        const { response, citations } = await this.searchChat(userMessage);
+
+        // Display response with markdown formatting
+        console.log(renderMarkdown(response));
+
+        // Display citations if any
+        if (citations.length > 0) {
+          console.log(`${colors.muted}Sources: ${citations.slice(0, 3).join(', ')}${citations.length > 3 ? '...' : ''}${colors.reset}`);
+        }
+
+        return { response, thinking: '' };
+      } catch (error) {
+        // Fall back to regular chat if search fails
+        const msg = error instanceof Error ? error.message : String(error);
+        console.log(`${colors.muted}Search error: ${msg}${colors.reset}`);
+      }
+    }
+
     // Add user message with recent images as vision context
     const recentImages = imageBuffer.slice(-3);
     const userContent: Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string } }> = [
@@ -580,6 +598,142 @@ export class GrokClient {
     });
 
     return cleanXmlTags(content);
+  }
+
+  /**
+   * Chat with web search enabled using the /v1/responses endpoint
+   * Uses X.AI's native web_search tool for real-time information
+   */
+  async searchChat(userMessage: string, options?: {
+    enableXSearch?: boolean;
+    allowedDomains?: string[];
+    excludedDomains?: string[];
+  }): Promise<{ response: string; citations: string[] }> {
+    const tools: Array<{ type: string; filters?: Record<string, any> }> = [
+      { type: 'web_search' }
+    ];
+
+    // Add domain filters if specified
+    if (options?.allowedDomains?.length) {
+      tools[0].filters = { allowed_domains: options.allowedDomains.slice(0, 5) };
+    } else if (options?.excludedDomains?.length) {
+      tools[0].filters = { excluded_domains: options.excludedDomains.slice(0, 5) };
+    }
+
+    // Add X search if enabled
+    if (options?.enableXSearch) {
+      tools.push({ type: 'x_search' });
+    }
+
+    // Build input array (different format than chat/completions)
+    const input = [
+      { role: 'system', content: this.conversationHistory[0]?.content || SYSTEM_PROMPT },
+      ...this.conversationHistory.slice(1).map(m => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content :
+          (m.content as any[]).find((p: any) => p.type === 'text')?.text || ''
+      })),
+      { role: 'user', content: userMessage }
+    ];
+
+    const requestBody = {
+      model: 'grok-4-1-fast-non-reasoning',
+      input,
+      tools,
+    };
+
+    this.usage.requests++;
+
+    const thinking = new ThinkingAnimation();
+    this.currentThinking = thinking;
+    thinking.start('Searching...', this.workDir);
+
+    try {
+      const response = await fetch(`${this.config.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      thinking.stop();
+      this.currentThinking = null;
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Grok Search API Error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+
+      // Debug output structure
+      if (Array.isArray(data.output) && data.output.length > 0) {
+        console.log(`${colors.muted}Output[0]: ${JSON.stringify(data.output[0]).slice(0, 200)}${colors.reset}`);
+      }
+
+      // Extract response content from output array
+      let content = '';
+      if (Array.isArray(data.output)) {
+        for (const item of data.output) {
+          if (item.type === 'message' && Array.isArray(item.content)) {
+            // Content is array of content blocks
+            for (const block of item.content) {
+              if (block.type === 'output_text' && block.text) {
+                content += block.text;
+              } else if (block.type === 'text' && block.text) {
+                content += block.text;
+              }
+            }
+          } else if (item.type === 'message' && typeof item.content === 'string') {
+            content += item.content;
+          }
+        }
+      }
+      // Fallback to output_text if available
+      if (!content && data.output_text) {
+        content = data.output_text;
+      }
+      const citations = Array.isArray(data.citations) ? data.citations : [];
+
+      // Track usage if available
+      if (data.usage) {
+        this.usage.promptTokens += data.usage.input_tokens || 0;
+        this.usage.completionTokens += data.usage.output_tokens || 0;
+        this.usage.totalTokens += (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0);
+      }
+
+      // Add to conversation history (as simple strings for compatibility)
+      this.conversationHistory.push({ role: 'user', content: userMessage });
+      this.conversationHistory.push({ role: 'assistant', content: content });
+
+      return {
+        response: content,
+        citations,
+      };
+    } catch (error) {
+      thinking.stop();
+      this.currentThinking = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Detect if a query needs real-time search
+   */
+  needsSearch(query: string): boolean {
+    const searchKeywords = [
+      'weather', 'météo', 'temperature', 'forecast',
+      'news', 'actualité', 'latest', 'recent', 'today', 'yesterday', 'tomorrow',
+      'price', 'prix', 'stock', 'crypto', 'bitcoin', 'ethereum',
+      'score', 'match', 'game', 'sport',
+      'who is', 'what is', 'when is', 'where is',
+      'current', 'now', 'live', 'happening',
+      'search', 'find', 'look up', 'cherche',
+    ];
+    const lowerQuery = query.toLowerCase();
+    return searchKeywords.some(kw => lowerQuery.includes(kw));
   }
 }
 

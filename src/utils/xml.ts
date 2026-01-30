@@ -21,7 +21,10 @@ const ACTION_TAG_PATTERNS = [
 /**
  * Remove all action tags from content
  */
-export function cleanXmlTags(content: string): string {
+export function cleanXmlTags(content: string | unknown): string {
+  if (typeof content !== 'string') {
+    return typeof content === 'undefined' || content === null ? '' : String(content);
+  }
   let result = content;
   for (const pattern of ACTION_TAG_PATTERNS) {
     result = result.replace(new RegExp(pattern.source, 'g'), '');
