@@ -11,10 +11,17 @@ export interface TelegramConfig {
   chatId: string;
 }
 
+export interface DiscordConfig {
+  botToken: string;
+  channelId: string;
+}
+
 export interface SlashbotConfig {
   apiKey?: string;
+  openaiApiKey?: string;
   model?: string;
   telegram?: TelegramConfig;
+  discord?: DiscordConfig;
 }
 
 const CONFIG_DIR = path.join(process.cwd(), '.slashbot');
@@ -24,16 +31,21 @@ const CREDENTIALS_FILE = path.join(CONFIG_DIR, 'credentials.json');
 export class ConfigManager {
   private config: SlashbotConfig = {};
   private telegram: TelegramConfig | null = null;
+  private discord: DiscordConfig | null = null;
 
   async load(): Promise<SlashbotConfig> {
     try {
-      // Load credentials (API key + telegram)
+      // Load credentials (API keys + connectors)
       const credFile = Bun.file(CREDENTIALS_FILE);
       if (await credFile.exists()) {
         const creds = await credFile.json();
         this.config.apiKey = creds.apiKey;
+        this.config.openaiApiKey = creds.openaiApiKey;
         if (creds.telegram?.botToken && creds.telegram?.chatId) {
           this.telegram = creds.telegram;
+        }
+        if (creds.discord?.botToken && creds.discord?.channelId) {
+          this.discord = creds.discord;
         }
       }
 
@@ -47,9 +59,12 @@ export class ConfigManager {
       // Config doesn't exist yet
     }
 
-    // Also check environment variables for API key
+    // Also check environment variables for API keys
     if (!this.config.apiKey) {
       this.config.apiKey = process.env.XAI_API_KEY || process.env.GROK_API_KEY;
+    }
+    if (!this.config.openaiApiKey) {
+      this.config.openaiApiKey = process.env.OPENAI_API_KEY;
     }
 
     return this.config;
@@ -127,6 +142,29 @@ export class ConfigManager {
     return this.config.apiKey;
   }
 
+  getOpenAIApiKey(): string | undefined {
+    return this.config.openaiApiKey;
+  }
+
+  async saveOpenAIApiKey(apiKey: string): Promise<void> {
+    const { mkdir } = await import('fs/promises');
+    await mkdir(CONFIG_DIR, { recursive: true });
+
+    this.config.openaiApiKey = apiKey;
+
+    // Load existing credentials and merge
+    let creds: any = {};
+    try {
+      const credFile = Bun.file(CREDENTIALS_FILE);
+      if (await credFile.exists()) {
+        creds = await credFile.json();
+      }
+    } catch {}
+
+    creds.openaiApiKey = apiKey;
+    await Bun.write(CREDENTIALS_FILE, JSON.stringify(creds, null, 2));
+  }
+
   getConfig(): SlashbotConfig {
     return { ...this.config };
   }
@@ -141,6 +179,36 @@ export class ConfigManager {
 
   getTelegramConfig(): TelegramConfig | null {
     return this.telegram;
+  }
+
+  async saveDiscordConfig(botToken: string, channelId: string): Promise<void> {
+    const { mkdir } = await import('fs/promises');
+    await mkdir(CONFIG_DIR, { recursive: true });
+
+    this.discord = { botToken, channelId };
+
+    // Preserve other credentials
+    const creds: any = { discord: this.discord };
+    if (this.config.apiKey) creds.apiKey = this.config.apiKey;
+    if (this.telegram) creds.telegram = this.telegram;
+    await Bun.write(CREDENTIALS_FILE, JSON.stringify(creds, null, 2));
+  }
+
+  async clearDiscordConfig(): Promise<void> {
+    this.discord = null;
+
+    // Rewrite credentials without discord
+    const creds: any = {};
+    if (this.config.apiKey) creds.apiKey = this.config.apiKey;
+    if (this.telegram) creds.telegram = this.telegram;
+
+    const { mkdir } = await import('fs/promises');
+    await mkdir(CONFIG_DIR, { recursive: true });
+    await Bun.write(CREDENTIALS_FILE, JSON.stringify(creds, null, 2));
+  }
+
+  getDiscordConfig(): DiscordConfig | null {
+    return this.discord;
   }
 }
 
