@@ -5,7 +5,7 @@
  * from XML-like patterns appearing in code examples or documentation.
  */
 
-import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, SkillAction, NotifyAction } from './types';
+import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, NotifyAction, GlobAction, GitAction, FetchAction, FormatAction, TypecheckAction, SearchAction, SkillAction, SkillInstallAction } from './types';
 
 // Quote pattern: matches both single and double quotes
 const Q = `["']`;  // quote
@@ -38,10 +38,24 @@ const PATTERNS = {
   exec: /\[\[exec\s*\]\]([\s\S]+?)\[\[\/exec\]\]/gi,
   // [[schedule cron="..." name="..."]]...[[/schedule]] (name optional)
   schedule: new RegExp(`\\[\\[schedule\\s+cron=${Q}(${NQR})${Q}(?:\\s+name=${Q}(${NQ})${Q})?\\s*\\]\\]([\\s\\S]+?)\\[\\[/schedule\\]\\]`, 'gi'),
-  // [[skill name="..."/]] or [[skill name="..."]]
-  skill: new RegExp(`\\[\\[skill\\s+name=${Q}(${NQR})${Q}\\s*/?\\]\\]`, 'gi'),
   // [[notify]]message[[/notify]] or [[notify to="telegram"]]message[[/notify]]
   notify: /\[\[notify(?:\s+to=["']([^"']+)["'])?\s*\]\]([\s\S]+?)\[\[\/notify\]\]/gi,
+  // [[glob pattern="**/*.ts"/]] or [[glob pattern="**/*.ts" path="src"/]]
+  glob: /\[\[glob\s+[^\]]*\/?\]\]/gi,
+  // [[git command="status"/]] or [[git command="diff" args="--staged"/]]
+  git: /\[\[git\s+[^\]]*\/?\]\]/gi,
+  // [[fetch url="https://..."/]] or [[fetch url="..." prompt="..."/]]
+  fetch: /\[\[fetch\s+[^\]]*\/?\]\]/gi,
+  // [[format/]] or [[format path="..."/]]
+  format: /\[\[format(?:\s+[^\]]*)?\s*\/?\]\]/gi,
+  // [[typecheck/]]
+  typecheck: /\[\[typecheck\s*\/?\]\]/gi,
+  // [[search query="..."/]] or [[search query="..." x="true"/]]
+  search: /\[\[search\s+[^\]]*\/?\]\]/gi,
+  // [[skill name="..."/]] or [[skill name="..." args="..."/]]
+  skill: /\[\[skill\s+[^\]]*\/?\]\]/gi,
+  // [[skill-install url="..."/]] or [[skill-install url="..." name="..."/]]
+  skillInstall: /\[\[skill-install\s+[^\]]*\/?\]\]/gi,
 };
 
 /**
@@ -68,18 +82,26 @@ export function parseActions(content: string): Action[] {
   // Strip code blocks to prevent parsing actions inside them
   const safeContent = stripCodeBlocks(content);
 
-  // Parse grep actions (flexible attribute extraction)
+  // Parse grep actions (flexible attribute extraction with context options)
   let match;
   const grepRegex = new RegExp(PATTERNS.grep.source, 'gi');
   while ((match = grepRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const pattern = extractAttr(fullTag, 'pattern');
     const filePattern = extractAttr(fullTag, 'file');
+    const context = extractAttr(fullTag, 'context');
+    const contextBefore = extractAttr(fullTag, 'before');
+    const contextAfter = extractAttr(fullTag, 'after');
+    const caseInsensitive = extractAttr(fullTag, 'case');
     if (pattern) {
       actions.push({
         type: 'grep',
         pattern,
         filePattern: filePattern || undefined,
+        context: context ? parseInt(context, 10) : undefined,
+        contextBefore: contextBefore ? parseInt(contextBefore, 10) : undefined,
+        contextAfter: contextAfter ? parseInt(contextAfter, 10) : undefined,
+        caseInsensitive: caseInsensitive === 'insensitive' || caseInsensitive === 'i',
       } as GrepAction);
     }
   }
@@ -142,16 +164,6 @@ export function parseActions(content: string): Action[] {
     } as ScheduleAction);
   }
 
-  // Parse skill actions
-  const skillRegex = new RegExp(PATTERNS.skill.source, 'gi');
-  while ((match = skillRegex.exec(safeContent)) !== null) {
-    const [, name] = match;
-    actions.push({
-      type: 'skill',
-      name,
-    } as SkillAction);
-  }
-
   // Parse notify actions
   const notifyRegex = new RegExp(PATTERNS.notify.source, 'gi');
   while ((match = notifyRegex.exec(safeContent)) !== null) {
@@ -161,6 +173,115 @@ export function parseActions(content: string): Action[] {
       message: message.trim(),
       target: target || undefined,
     } as NotifyAction);
+  }
+
+  // Parse glob actions (flexible attribute extraction)
+  const globRegex = new RegExp(PATTERNS.glob.source, 'gi');
+  while ((match = globRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const pattern = extractAttr(fullTag, 'pattern');
+    const basePath = extractAttr(fullTag, 'path');
+    if (pattern) {
+      actions.push({
+        type: 'glob',
+        pattern,
+        path: basePath || undefined,
+      } as GlobAction);
+    }
+  }
+
+  // Parse git actions (flexible attribute extraction)
+  const gitRegex = new RegExp(PATTERNS.git.source, 'gi');
+  while ((match = gitRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const command = extractAttr(fullTag, 'command');
+    const args = extractAttr(fullTag, 'args');
+    if (command && ['status', 'diff', 'log', 'branch', 'add', 'commit', 'checkout', 'stash'].includes(command)) {
+      actions.push({
+        type: 'git',
+        command: command as GitAction['command'],
+        args: args || undefined,
+      } as GitAction);
+    }
+  }
+
+  // Parse fetch actions (flexible attribute extraction)
+  const fetchRegex = new RegExp(PATTERNS.fetch.source, 'gi');
+  while ((match = fetchRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const url = extractAttr(fullTag, 'url');
+    const prompt = extractAttr(fullTag, 'prompt');
+    if (url) {
+      actions.push({
+        type: 'fetch',
+        url,
+        prompt: prompt || undefined,
+      } as FetchAction);
+    }
+  }
+
+  // Parse format actions
+  const formatRegex = new RegExp(PATTERNS.format.source, 'gi');
+  while ((match = formatRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const path = extractAttr(fullTag, 'path');
+    actions.push({
+      type: 'format',
+      path: path || undefined,
+    } as FormatAction);
+  }
+
+  // Parse typecheck actions
+  const typecheckRegex = new RegExp(PATTERNS.typecheck.source, 'gi');
+  while ((match = typecheckRegex.exec(safeContent)) !== null) {
+    actions.push({
+      type: 'typecheck',
+    } as TypecheckAction);
+  }
+
+  // Parse search actions
+  const searchRegex = new RegExp(PATTERNS.search.source, 'gi');
+  while ((match = searchRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const query = extractAttr(fullTag, 'query');
+    const xSearch = extractAttr(fullTag, 'x');
+    if (query) {
+      actions.push({
+        type: 'search',
+        query,
+        xSearch: xSearch === 'true',
+      } as SearchAction);
+    }
+  }
+
+  // Parse skill actions
+  const skillRegex = new RegExp(PATTERNS.skill.source, 'gi');
+  while ((match = skillRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const name = extractAttr(fullTag, 'name');
+    const args = extractAttr(fullTag, 'args');
+    if (name) {
+      actions.push({
+        type: 'skill',
+        name,
+        args: args || undefined,
+      } as SkillAction);
+    }
+  }
+
+  // Parse skill-install actions
+  const skillInstallRegex = new RegExp(PATTERNS.skillInstall.source, 'gi');
+  while ((match = skillInstallRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const url = extractAttr(fullTag, 'url');
+    const name = extractAttr(fullTag, 'name');
+    if (url) {
+      actions.push({
+        type: 'skill-install',
+        url,
+        name: name || undefined,
+      } as SkillInstallAction);
+    }
   }
 
   return actions;

@@ -25,11 +25,20 @@ export function renderMarkdown(text: string): string {
 
   let result = text;
 
+  // Remove form feed and other control characters that cause blank pages
+  result = result.replace(/[\f\v]/g, '');
+
+  // Strip ANSI screen-clearing sequences that might come from external content
+  result = result.replace(/\x1b\[\??\d*[JHK]/g, '');
+
+  // Normalize excessive newlines (max 2 consecutive)
+  result = result.replace(/\n{3,}/g, '\n\n');
+
   // Code blocks (```...```) - preserve content, add dim styling
   result = result.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
     const lines = code.trim().split('\n');
     const formatted = lines.map((line: string) => `${DIM}│${RESET} ${line}`).join('\n');
-    return `\n${DIM}┌─────────${RESET}\n${formatted}\n${DIM}└─────────${RESET}\n`;
+    return `${DIM}┌─────────${RESET}\n${formatted}\n${DIM}└─────────${RESET}`;
   });
 
   // Inline code (`...`)
@@ -66,7 +75,8 @@ export function renderMarkdown(text: string): string {
   // Horizontal rules
   result = result.replace(/^(---|___|\*\*\*)$/gm, `${DIM}────────────────────${RESET}`);
 
-  return result;
+  // Trim leading/trailing whitespace
+  return result.trim();
 }
 
 /**

@@ -27,29 +27,26 @@ export interface GrokConfig {
 const DEFAULT_CONFIG: Partial<GrokConfig> = {
   model: 'grok-4-1-fast-reasoning',
   baseUrl: 'https://api.x.ai/v1',
-  maxTokens: 2048,
+  maxTokens: 4096,
   temperature: 0.7,
 };
 
-const SYSTEM_PROMPT = `You are Slashbot, a coding client assistant made with Bun. Be concise. Respond in user's language.
+const SYSTEM_PROMPT = `You are Slashbot, an autonomous AI agent made with Bun. Be concise. Respond in user's language.
 
 # Goal
-Use ALL available tools to fulfill user needs. Be proactive - search the web, fetch pages, read files, execute commands - whatever it takes to help.
+Fulfill user needs autonomously using available tools and skills. Be proactive and take action without asking for confirmation on routine tasks.
+
+# CRITICAL: Skills = Complete API Documentation
+When you load a skill with [[skill name="x"/]], you receive [SKILL LOADED: x] with the COMPLETE API docs.
+- The skill content shows EXACT curl commands - copy and execute them with [[exec]]curl...[[/exec]]
+- NEVER fetch the skill's homepage or search for docs - you already have everything
+- NEVER guess endpoints - only use endpoints shown in the loaded skill content
+- After loading a skill, your NEXT action must use information FROM that skill content
 
 # CRITICAL: Action Execution Rules
 - Actions you want to EXECUTE: write them directly in your response (NOT in code blocks)
 - Actions you're just SHOWING/DOCUMENTING: MUST be wrapped in \`\`\` code blocks to prevent execution
 - This prevents accidental execution when displaying help or examples
-
-# Skills (PRIORITY)
-On ANY request, first check AVAILABLE SKILLS below. If one matches:
-1. Load it ONCE with: \`[[read path="exact/path/from/list"/]]\`
-2. BECOME that persona for the rest of conversation
-3. Answer AS that skill/persona, not as generic Slashbot
-
-Skills persist in context - never reload. When acting as a skill persona, stay in character.
-
-AVAILABLE SKILLS (use exact paths, case-sensitive):
 
 # Actions Reference (ALL require closing tags)
 To EXECUTE an action, write it directly. Examples below are documentation only:
@@ -57,14 +54,60 @@ To EXECUTE an action, write it directly. Examples below are documentation only:
 ## Code
 \`\`\`
 [[grep pattern="regex" file="*.ts"]]why[[/grep]]
+[[grep pattern="regex" file="*.ts" context="3"]]with context[[/grep]]
+[[grep pattern="regex" before="2" after="5" case="i"]]case insensitive with context[[/grep]]
 [[read path="file.ts"/]]
 [[edit path="file.ts"]][[search]]exact[[/search]][[replace]]new[[/replace]][[/edit]]
 [[create path="file.ts"]]content[[/create]]
 [[exec]]command[[/exec]]
 \`\`\`
 
-# Real-Time Information
-Web search is automatically enabled. For weather, news, prices, stocks, sports, or anything time-sensitive, the system will search the web for you.
+## File Search (Glob)
+\`\`\`
+[[glob pattern="**/*.ts"/]]
+[[glob pattern="src/**/*.tsx" path="frontend"/]]
+\`\`\`
+
+## Git Operations
+\`\`\`
+[[git command="status"/]]
+[[git command="diff"/]]
+[[git command="diff" args="--staged"/]]
+[[git command="log" args="--oneline -10"/]]
+[[git command="branch" args="-a"/]]
+[[git command="add" args="file.ts"/]]
+[[git command="commit" args="-m 'message'"/]]
+[[git command="stash"/]]
+\`\`\`
+
+## Web Fetch
+\`\`\`
+[[fetch url="https://example.com"/]]
+[[fetch url="https://api.github.com/repos/user/repo" prompt="summarize this repo"/]]
+\`\`\`
+
+## Code Quality
+\`\`\`
+[[format/]]
+[[format path="src/file.ts"/]]
+[[typecheck/]]
+\`\`\`
+
+## Web Search
+\`\`\`
+[[search query="weather in Paris"/]]
+[[search query="latest bitcoin price" x="true"/]]
+\`\`\`
+
+Use search for weather, news, prices, stocks, sports, or anything requiring real-time information.
+
+## Skills
+\`\`\`
+[[skill name="x"/]]                    Load skill → content appears as [SKILL: x]
+[[skill-install url="https://..."/]]   Install new skill from URL
+\`\`\`
+
+After [[skill name="x"/]], the full skill markdown appears in conversation. Use its curl examples directly - no fetching needed.
 
 ## Communication
 \`\`\`
@@ -82,14 +125,21 @@ When message has [PLATFORM: TELEGRAM] or [PLATFORM: DISCORD], reply using the no
 - Exact matches only for edits
 - After edits, run typecheck
 
+# Efficiency Rules
+- NEVER fetch the same URL twice in one conversation
+- When a skill is loaded, its full content appears in the conversation - USE IT DIRECTLY
+- Read a file ONCE, then make all needed edits
+- Don't repeat failed actions - analyze the error and try a different approach
+- If an edit fails with "not found", read the file first to see actual content
+
 # Config & Data (.slashbot/)
 Configuration, tasks, and history are stored in .slashbot/ hidden directory.
-Files may include: credentials.json, config.json, tasks.json, history, skills/
+Files may include: credentials.json, config.json, tasks.json, history
 
 IMPORTANT: grep does NOT search hidden directories. When looking for config/tasks/data, ALWAYS run [[exec]]ls -la .slashbot/[[/exec]] first to see what exists before reading specific files.
 
 # Context Compression
-If context is too long or near token limit, summarize previous exchanges and continue with compressed context.
+If context is too long or near token limit, compress your output to stay concise and reduce token usage.
 
 # Safety
 No destructive commands (rm -rf, force push) without explicit request.`;
@@ -111,7 +161,6 @@ export class GrokClient {
   private workDir: string = '';
   private abortController: AbortController | null = null;
   private currentThinking: ThinkingAnimation | null = null;
-  private skills: string[] = [];
   private projectContext: string = '';
   private personalityMod: string = '';
 
@@ -137,20 +186,6 @@ export class GrokClient {
 
     let prompt = SYSTEM_PROMPT;
 
-    // Replace skills placeholder with actual skills (full paths)
-    if (this.skills.length > 0) {
-      const skillsList = this.skills.map(s => `- ${s}`).join('\n');
-      prompt = prompt.replace(
-        'AVAILABLE SKILLS (use exact paths, case-sensitive):',
-        `AVAILABLE SKILLS (use exact paths, case-sensitive):\n${skillsList}`
-      );
-    } else {
-      prompt = prompt.replace(
-        'AVAILABLE SKILLS (use exact paths, case-sensitive):',
-        'AVAILABLE SKILLS: none'
-      );
-    }
-
     // Add personality modifier
     if (this.personalityMod) {
       prompt += this.personalityMod;
@@ -162,11 +197,6 @@ export class GrokClient {
     }
 
     this.conversationHistory[0].content = prompt;
-  }
-
-  setSkills(skills: string[]): void {
-    this.skills = skills;
-    this.rebuildSystemPrompt();
   }
 
   setProjectContext(context: string, workDir?: string): void {
@@ -217,27 +247,6 @@ export class GrokClient {
   }
 
   async chat(userMessage: string): Promise<{ response: string; thinking: string }> {
-    // Check if this query needs web search for real-time info
-    if (this.needsSearch(userMessage)) {
-      try {
-        const { response, citations } = await this.searchChat(userMessage);
-
-        // Display response with markdown formatting
-        console.log(renderMarkdown(response));
-
-        // Display citations if any
-        if (citations.length > 0) {
-          console.log(`${colors.muted}Sources: ${citations.slice(0, 3).join(', ')}${citations.length > 3 ? '...' : ''}${colors.reset}`);
-        }
-
-        return { response, thinking: '' };
-      } catch (error) {
-        // Fall back to regular chat if search fails
-        const msg = error instanceof Error ? error.message : String(error);
-        console.log(`${colors.muted}Search error: ${msg}${colors.reset}`);
-      }
-    }
-
     // Add user message with recent images as vision context
     const recentImages = imageBuffer.slice(-3);
     const userContent: Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string } }> = [
@@ -269,28 +278,62 @@ export class GrokClient {
 
       // Debug: Show why no actions if response looks like it should have some
       if (actions.length === 0) {
-        const actionTagRegex = /\[\[(grep|read|edit|create|exec|schedule|skill)\b[^\]]*\]?\]?/gi;
+        const actionTagRegex = /\[\[(grep|read|edit|create|exec|schedule|skill|skill-install|notify|glob|git|fetch|format|typecheck|search)\b[^\]]*\]?\]?/gi;
         const foundTags = responseContent.match(actionTagRegex);
         if (foundTags) {
-          console.log(`${colors.muted}⚠ Found ${foundTags.length} action tag(s) but parsing failed:${colors.reset}`);
-          // Show the actual malformed tags for debugging
-          foundTags.slice(0, 2).forEach((tag, i) => {
-            const preview = tag.length > 60 ? tag.slice(0, 60) + '...' : tag;
-            console.log(`${colors.muted}  ${i + 1}. ${preview}${colors.reset}`);
+          // Check if tags are inside code blocks (backticks)
+          const inCodeBlock = foundTags.some(tag => {
+            const tagIndex = responseContent.indexOf(tag);
+            if (tagIndex === -1) return false;
+            // Check wider window before tag for opening backtick
+            const before = responseContent.slice(Math.max(0, tagIndex - 50), tagIndex);
+            // Check after tag for closing backtick
+            const after = responseContent.slice(tagIndex + tag.length, tagIndex + tag.length + 10);
+            // Must have backticks on both sides for inline code, or triple backticks before for fenced block
+            const hasBacktickBefore = before.includes('`');
+            const hasBacktickAfter = after.includes('`');
+            return (hasBacktickBefore && hasBacktickAfter) || before.includes('```');
           });
-          // Show expected format hint for the first tag type
-          const firstTag = foundTags[0].toLowerCase().match(/\[\[(\w+)/)?.[1] || '';
-          const tagPatterns: Record<string, string> = {
-            grep: '[[grep pattern="..." file="..."]]reason[[/grep]]',
-            read: '[[read path="..."/]]',
-            edit: '[[edit path="..."]][[search]]...[[/search]][[replace]]...[[/replace]][[/edit]]',
-            create: '[[create path="..."]]content[[/create]]',
-            exec: '[[exec]]command[[/exec]]',
-            schedule: '[[schedule cron="..."]]command[[/schedule]]',
-            skill: '[[skill name="..."/]]',
-          };
-          if (tagPatterns[firstTag]) {
-            console.log(`${colors.muted}  Expected: ${tagPatterns[firstTag]}${colors.reset}`);
+
+          if (inCodeBlock) {
+            // Tags are in code blocks - LLM made a mistake, inject correction
+            console.log(`${colors.muted}⚠ Action tag inside backticks (not executed). Retrying...${colors.reset}`);
+            // Add a correction message to help the LLM
+            this.conversationHistory.push({
+              role: 'assistant',
+              content: responseContent,
+            });
+            this.conversationHistory.push({
+              role: 'user',
+              content: 'ERROR: Your action tag was inside backticks/code block so it was NOT executed. Write action tags directly WITHOUT any backticks. Try again.',
+            });
+            continue; // Retry the loop
+          } else {
+            console.log(`${colors.muted}⚠ Found ${foundTags.length} action tag(s) but parsing failed:${colors.reset}`);
+            foundTags.slice(0, 2).forEach((tag, i) => {
+              const preview = tag.length > 60 ? tag.slice(0, 60) + '...' : tag;
+              console.log(`${colors.muted}  ${i + 1}. ${preview}${colors.reset}`);
+            });
+            const firstTag = foundTags[0].toLowerCase().match(/\[\[(\w+)/)?.[1] || '';
+            const tagPatterns: Record<string, string> = {
+              grep: '[[grep pattern="..." file="..."]]reason[[/grep]]',
+              read: '[[read path="..."/]]',
+              edit: '[[edit path="..."]][[search]]...[[/search]][[replace]]...[[/replace]][[/edit]]',
+              create: '[[create path="..."]]content[[/create]]',
+              exec: '[[exec]]command[[/exec]]',
+              schedule: '[[schedule cron="..."]]command[[/schedule]]',
+              skill: '[[skill name="..."/]]',
+              'skill-install': '[[skill-install url="..."/]]',
+              notify: '[[notify]]message[[/notify]]',
+              glob: '[[glob pattern="..."/]]',
+              git: '[[git command="status"/]]',
+              fetch: '[[fetch url="..."/]]',
+              format: '[[format/]]',
+              typecheck: '[[typecheck/]]',
+            };
+            if (tagPatterns[firstTag]) {
+              console.log(`${colors.muted}  Expected: ${tagPatterns[firstTag]}${colors.reset}`);
+            }
           }
         }
       }
@@ -306,7 +349,7 @@ export class GrokClient {
       const resultsMessage = actionResults.map(r => {
         const status = r.success ? '✓' : '✗ FAILED';
         const errorNote = r.error ? ` - ${r.error}` : '';
-        return `[${status}] ${r.action}${errorNote}\n    ${r.result.slice(0, 500)}`;
+        return `[${status}] ${r.action}${errorNote}\n${r.result}`;
       }).join('\n\n');
 
       this.conversationHistory.push({
@@ -319,7 +362,16 @@ export class GrokClient {
       });
     }
 
-    // Clean and store final response
+    // Store final response in history (if not already added by action loop)
+    const lastMessage = this.conversationHistory[this.conversationHistory.length - 1];
+    if (lastMessage?.role !== 'assistant' || lastMessage?.content !== finalResponse) {
+      this.conversationHistory.push({
+        role: 'assistant',
+        content: finalResponse,
+      });
+    }
+
+    // Clean and return final response
     const cleanResponse = cleanXmlTags(finalResponse);
 
     return {
@@ -432,10 +484,12 @@ export class GrokClient {
 
               if (!hasUnclosedTag) {
                 const cleanFull = cleanXmlTags(responseContent);
-                const newContent = cleanFull.slice(displayedContent.length);
+                // Collapse multiple consecutive newlines to max 2
+                const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
+                const newContent = normalized.slice(displayedContent.length);
                 if (newContent) {
                   process.stdout.write(newContent);
-                  displayedContent = cleanFull;
+                  displayedContent = normalized;
                 }
               }
             }
@@ -456,12 +510,6 @@ export class GrokClient {
     // Add newline after streaming if we displayed content
     if (displayedContent) {
       process.stdout.write('\n');
-    }
-
-    // Display token count
-    const tokens = this.usage.totalTokens;
-    if (tokens > 0) {
-      console.log(`${colors.muted}⎿ ${this.formatTokens(tokens)} tokens${colors.reset}`);
     }
 
     return responseContent;
@@ -714,22 +762,6 @@ export class GrokClient {
     }
   }
 
-  /**
-   * Detect if a query needs real-time search
-   */
-  needsSearch(query: string): boolean {
-    const searchKeywords = [
-      'weather', 'météo', 'temperature', 'forecast',
-      'news', 'actualité', 'latest', 'recent', 'today', 'yesterday', 'tomorrow',
-      'price', 'prix', 'stock', 'crypto', 'bitcoin', 'ethereum',
-      'score', 'match', 'game', 'sport',
-      'who is', 'what is', 'when is', 'where is',
-      'current', 'now', 'live', 'happening',
-      'search', 'find', 'look up', 'cherche',
-    ];
-    const lowerQuery = query.toLowerCase();
-    return searchKeywords.some(kw => lowerQuery.includes(kw));
-  }
 }
 
 export function createGrokClient(apiKey?: string): GrokClient {

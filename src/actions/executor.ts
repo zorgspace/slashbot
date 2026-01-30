@@ -2,7 +2,7 @@
  * Action Executor - Execute parsed actions with Claude Code-style display
  */
 
-import type { Action, ActionResult, ActionHandlers } from './types';
+import type { Action, ActionResult, ActionHandlers, GrepOptions } from './types';
 import { step } from '../ui/colors';
 
 /**
@@ -45,10 +45,24 @@ async function executeAction(
       return executeExec(action, handlers);
     case 'schedule':
       return executeSchedule(action, handlers);
-    case 'skill':
-      return executeSkill(action, handlers);
     case 'notify':
       return executeNotify(action, handlers);
+    case 'glob':
+      return executeGlob(action, handlers);
+    case 'git':
+      return executeGit(action, handlers);
+    case 'fetch':
+      return executeFetch(action, handlers);
+    case 'format':
+      return executeFormat(action, handlers);
+    case 'typecheck':
+      return executeTypecheck(action, handlers);
+    case 'search':
+      return executeSearch(action, handlers);
+    case 'skill':
+      return executeSkill(action, handlers);
+    case 'skill-install':
+      return executeSkillInstall(action, handlers);
     default:
       return null;
   }
@@ -60,10 +74,26 @@ async function executeGrep(
 ): Promise<ActionResult | null> {
   if (!handlers.onGrep) return null;
 
-  // Display action in Claude Code style
-  step.grep(action.pattern, action.filePattern);
+  // Build options display string
+  const opts: string[] = [];
+  if (action.context) opts.push(`-C${action.context}`);
+  if (action.contextBefore) opts.push(`-B${action.contextBefore}`);
+  if (action.contextAfter) opts.push(`-A${action.contextAfter}`);
+  if (action.caseInsensitive) opts.push('-i');
+  const optsStr = opts.length > 0 ? ` ${opts.join(' ')}` : '';
 
-  const grepResults = await handlers.onGrep(action.pattern, action.filePattern);
+  // Display action in Claude Code style
+  step.grep(action.pattern + optsStr, action.filePattern);
+
+  // Build options for handler
+  const grepOptions: GrepOptions = {
+    context: action.context,
+    contextBefore: action.contextBefore,
+    contextAfter: action.contextAfter,
+    caseInsensitive: action.caseInsensitive,
+  };
+
+  const grepResults = await handlers.onGrep(action.pattern, action.filePattern, grepOptions);
   const lines = grepResults ? grepResults.split('\n').filter(l => l.trim()) : [];
 
   // Display result
@@ -82,31 +112,18 @@ async function executeRead(
 ): Promise<ActionResult | null> {
   if (!handlers.onRead) return null;
 
-  // Check if this is a skill file
-  const isSkill = action.path.includes('.slashbot/skills/') && action.path.endsWith('.md');
-
-  if (isSkill) {
-    // Extract skill name from path
-    const skillName = action.path.split('/').pop()?.replace('.md', '') || action.path;
-    step.skill(skillName);
-  } else {
-    // Display action in Claude Code style
-    step.read(action.path);
-  }
+  // Display action in Claude Code style
+  step.read(action.path);
 
   const fileContent = await handlers.onRead(action.path);
 
   if (fileContent) {
     const lineCount = fileContent.split('\n').length;
-    if (isSkill) {
-      step.success(`Loaded skill (${lineCount} lines)`);
-    } else {
-      step.readResult(lineCount);
-    }
+    step.readResult(lineCount);
     const preview = fileContent.length > 1000 ? fileContent.slice(0, 1000) + '...' : fileContent;
-    return { action: isSkill ? `SKILL ${action.path}` : `READ ${action.path}`, success: true, result: preview };
+    return { action: `READ ${action.path}`, success: true, result: preview };
   } else {
-    step.error(isSkill ? 'Skill not found' : 'File not found');
+    step.error('File not found');
     return { action: `READ ${action.path}`, success: false, result: 'File not found', error: 'File not found' };
   }
 }
@@ -214,35 +231,6 @@ async function executeSchedule(
   };
 }
 
-async function executeSkill(
-  action: Extract<Action, { type: 'skill' }>,
-  handlers: ActionHandlers
-): Promise<ActionResult | null> {
-  if (!handlers.onSkill) return null;
-
-  // Display action in Claude Code style
-  step.skill(action.name);
-
-  try {
-    const context = await handlers.onSkill(action.name);
-    const lineCount = context.split('\n').length;
-    step.success(`Loaded context (${lineCount} lines)`);
-    return {
-      action: `SKILL ${action.name}`,
-      success: true,
-      result: context,
-    };
-  } catch (error) {
-    step.error(`Skill "${action.name}" not found`);
-    return {
-      action: `SKILL ${action.name}`,
-      success: false,
-      result: 'Skill not found',
-      error: `Skill "${action.name}" not found`,
-    };
-  }
-}
-
 async function executeNotify(
   action: Extract<Action, { type: 'notify' }>,
   handlers: ActionHandlers
@@ -284,6 +272,284 @@ async function executeNotify(
     step.error(`Notify failed: ${errorMsg}`);
     return {
       action: 'NOTIFY',
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeGlob(
+  action: Extract<Action, { type: 'glob' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onGlob) return null;
+
+  // Display action in Claude Code style
+  const pathInfo = action.path ? `, "${action.path}"` : '';
+  step.tool('Glob', `"${action.pattern}"${pathInfo}`);
+
+  try {
+    const files = await handlers.onGlob(action.pattern, action.path);
+
+    // Display results
+    if (files.length === 0) {
+      step.result('No files found');
+    } else {
+      const preview = files.slice(0, 10).join('\n');
+      step.result(`Found ${files.length} file${files.length > 1 ? 's' : ''}\n${preview}${files.length > 10 ? `\n... and ${files.length - 10} more` : ''}`);
+    }
+
+    return {
+      action: `GLOB ${action.pattern}`,
+      success: true,
+      result: files.length > 0 ? files.join('\n') : 'No files found',
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Glob failed: ${errorMsg}`);
+    return {
+      action: `GLOB ${action.pattern}`,
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeGit(
+  action: Extract<Action, { type: 'git' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onGit) return null;
+
+  // Display action in Claude Code style
+  const argsInfo = action.args ? ` ${action.args}` : '';
+  step.tool('Git', `${action.command}${argsInfo}`);
+
+  try {
+    const output = await handlers.onGit(action.command, action.args);
+    const lines = output.split('\n').filter(l => l.trim());
+    const isError = output.startsWith('Error:') || output.includes('fatal:');
+
+    if (isError) {
+      step.error(output.slice(0, 100));
+    } else {
+      const preview = lines.slice(0, 8).join('\n');
+      step.result(`${lines.length} line${lines.length !== 1 ? 's' : ''}\n${preview}${lines.length > 8 ? `\n... and ${lines.length - 8} more` : ''}`);
+    }
+
+    return {
+      action: `GIT ${action.command}`,
+      success: !isError,
+      result: output || 'OK',
+      error: isError ? output : undefined,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Git failed: ${errorMsg}`);
+    return {
+      action: `GIT ${action.command}`,
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeFetch(
+  action: Extract<Action, { type: 'fetch' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onFetch) return null;
+
+  // Display action in Claude Code style
+  const shortUrl = action.url.length > 50 ? action.url.slice(0, 47) + '...' : action.url;
+  const promptInfo = action.prompt ? `, "${action.prompt.slice(0, 30)}..."` : '';
+  step.tool('Fetch', `${shortUrl}${promptInfo}`);
+
+  try {
+    const content = await handlers.onFetch(action.url, action.prompt);
+    const lines = content.split('\n').length;
+    const charCount = content.length;
+
+    step.result(`Fetched ${charCount} chars, ${lines} lines`);
+
+    return {
+      action: `FETCH ${action.url}`,
+      success: true,
+      result: content,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Fetch failed: ${errorMsg}`);
+    return {
+      action: `FETCH ${action.url}`,
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeFormat(
+  action: Extract<Action, { type: 'format' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onFormat) return null;
+
+  const pathInfo = action.path ? `(${action.path})` : '';
+  step.tool('Format', pathInfo);
+
+  try {
+    const output = await handlers.onFormat(action.path);
+    step.result(output || 'Formatted');
+
+    return {
+      action: 'FORMAT',
+      success: true,
+      result: output || 'OK',
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Format failed: ${errorMsg}`);
+    return {
+      action: 'FORMAT',
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeTypecheck(
+  action: Extract<Action, { type: 'typecheck' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onTypecheck) return null;
+
+  step.tool('Typecheck', '');
+
+  try {
+    const output = await handlers.onTypecheck();
+    const hasErrors = output.includes('error') || output.includes('Error');
+
+    if (hasErrors) {
+      step.result(output, true);
+    } else {
+      step.result(output || 'No errors');
+    }
+
+    return {
+      action: 'TYPECHECK',
+      success: !hasErrors,
+      result: output || 'OK',
+      error: hasErrors ? output : undefined,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Typecheck failed: ${errorMsg}`);
+    return {
+      action: 'TYPECHECK',
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeSearch(
+  action: Extract<Action, { type: 'search' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onSearch) return null;
+
+  const xInfo = action.xSearch ? ' (+ X/Twitter)' : '';
+  step.tool('Search', `"${action.query}"${xInfo}`);
+
+  try {
+    const { response, citations } = await handlers.onSearch(action.query, { xSearch: action.xSearch });
+
+    // Show citations if any
+    if (citations.length > 0) {
+      const citationPreview = citations.slice(0, 3).join(', ');
+      step.result(`Found ${citations.length} sources: ${citationPreview}${citations.length > 3 ? '...' : ''}`);
+    } else {
+      step.result('Search completed');
+    }
+
+    return {
+      action: `SEARCH ${action.query}`,
+      success: true,
+      result: response,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Search failed: ${errorMsg}`);
+    return {
+      action: `SEARCH ${action.query}`,
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeSkill(
+  action: Extract<Action, { type: 'skill' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onSkill) return null;
+
+  const argsInfo = action.args ? ` "${action.args}"` : '';
+  step.tool('Skill', `${action.name}${argsInfo}`);
+
+  try {
+    const content = await handlers.onSkill(action.name, action.args);
+
+    step.result(`Loaded skill: ${action.name}`);
+
+    return {
+      action: `SKILL ${action.name}`,
+      success: true,
+      result: content,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Skill failed: ${errorMsg}`);
+    return {
+      action: `SKILL ${action.name}`,
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeSkillInstall(
+  action: Extract<Action, { type: 'skill-install' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onSkillInstall) return null;
+
+  const nameInfo = action.name ? ` as "${action.name}"` : '';
+  step.tool('SkillInstall', `${action.url}${nameInfo}`);
+
+  try {
+    const result = await handlers.onSkillInstall(action.url, action.name);
+
+    step.result(`Installed skill: ${result.name} → ${result.path}`);
+
+    return {
+      action: `SKILL-INSTALL ${action.url}`,
+      success: true,
+      result: `Skill "${result.name}" installed at ${result.path}`,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Skill install failed: ${errorMsg}`);
+    return {
+      action: `SKILL-INSTALL ${action.url}`,
       success: false,
       result: 'Failed',
       error: errorMsg,

@@ -91,6 +91,7 @@ import type { ConnectorSource } from './connectors/base';
 import { initTranscription } from './services/transcription';
 import { enableBracketedPaste, disableBracketedPaste, expandPaste } from './ui/pasteHandler';
 import { readMultilineInput } from './ui/multilineInput';
+import { createSkillManager, SkillManager } from './skills/manager';
 
 
 
@@ -105,6 +106,7 @@ class Slashbot {
   private configManager: ConfigManager;
   private codeEditor: CodeEditor;
   private commandPermissions: CommandPermissions;
+  private skillManager: SkillManager;
   private connectors: Map<string, { connector: any; isRunning: () => boolean; sendMessage: (msg: string) => Promise<void>; stop?: () => void }> = new Map();
   private running = false;
   private history: string[] = [];
@@ -119,6 +121,7 @@ class Slashbot {
     this.configManager = createConfigManager();
     this.codeEditor = createCodeEditor(config.basePath);
     this.commandPermissions = createCommandPermissions();
+    this.skillManager = createSkillManager(config.basePath);
   }
 
   private getContext(): CommandContext {
@@ -128,6 +131,7 @@ class Slashbot {
       fileSystem: this.fileSystem,
       configManager: this.configManager,
       codeEditor: this.codeEditor,
+      skillManager: this.skillManager,
       connectors: this.connectors,
       reinitializeGrok: () => this.initializeGrok(),
     };
@@ -178,19 +182,11 @@ class Slashbot {
           this.grokClient.setProjectContext(context, workDir);
         }
 
-        // Load skills from .slashbot/skills/
-        try {
-          const skillsDir = `${workDir}/.slashbot/skills`;
-          const { readdir } = await import('fs/promises');
-          const files = await readdir(skillsDir);
-          const skills = files
-            .filter(f => f.endsWith('.md'))
-            .map(f => `.slashbot/skills/${f}`); // Include full path to preserve case
-          if (skills.length > 0) {
-            this.grokClient.setSkills(skills);
-          }
-        } catch {
-          // Skills directory doesn't exist or is empty
+        // Add available skills to system prompt
+        const skillsPrompt = await this.skillManager.getSkillsForSystemPrompt();
+        if (skillsPrompt) {
+          const currentContext = this.grokClient.getHistory()[0]?.content as string || '';
+          this.grokClient.setProjectContext(currentContext + skillsPrompt, workDir);
         }
 
         // Wire up action handlers
@@ -204,8 +200,8 @@ class Slashbot {
           },
 
           // Code editing handlers
-          onGrep: async (pattern, filePattern) => {
-            const results = await this.codeEditor.grep(pattern, filePattern);
+          onGrep: async (pattern, filePattern, options) => {
+            const results = await this.codeEditor.grep(pattern, filePattern, options);
             if (results.length === 0) {
               return 'No results';
             }
@@ -268,9 +264,15 @@ class Slashbot {
               const { stdout, stderr } = await execAsync(command, {
                 cwd: workDir,
                 timeout: 30000,
+                maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large outputs
               });
               return stdout || stderr || 'Command executed';
             } catch (error: any) {
+              // Capture actual output from failed commands (e.g. curl with non-zero exit)
+              const output = error.stdout || error.stderr || '';
+              if (output) {
+                return `Error: Command failed: ${command}\n${output}`;
+              }
               return `Error: ${error.message || error}`;
             }
           },
@@ -294,6 +296,189 @@ class Slashbot {
             }
 
             return { sent, failed };
+          },
+
+          // Glob pattern matching
+          onGlob: async (pattern, basePath) => {
+            const workDir = this.codeEditor.getWorkDir();
+            const searchDir = basePath ? `${workDir}/${basePath}` : workDir;
+
+            try {
+              const { Glob } = await import('bun');
+              const glob = new Glob(pattern);
+              const files: string[] = [];
+
+              for await (const file of glob.scan({
+                cwd: searchDir,
+                onlyFiles: true,
+                dot: false, // Exclude hidden files
+              })) {
+                // Exclude common non-code directories
+                if (!file.includes('node_modules/') && !file.includes('.git/') && !file.includes('dist/')) {
+                  files.push(basePath ? `${basePath}/${file}` : file);
+                }
+                // Limit results
+                if (files.length >= 100) break;
+              }
+
+              return files;
+            } catch {
+              return [];
+            }
+          },
+
+          // Git operations
+          onGit: async (command, args) => {
+            const workDir = this.codeEditor.getWorkDir();
+            const allowedCommands = ['status', 'diff', 'log', 'branch', 'add', 'commit', 'checkout', 'stash'];
+
+            if (!allowedCommands.includes(command)) {
+              return `Error: Git command '${command}' not allowed`;
+            }
+
+            // Build the git command
+            let gitCmd = `git ${command}`;
+            if (args) {
+              gitCmd += ` ${args}`;
+            }
+
+            // Add safety limits for log
+            if (command === 'log' && !args?.includes('-n') && !args?.includes('--oneline')) {
+              gitCmd += ' -n 20';
+            }
+
+            try {
+              const { exec } = await import('child_process');
+              const { promisify } = await import('util');
+              const execAsync = promisify(exec);
+              const { stdout, stderr } = await execAsync(gitCmd, {
+                cwd: workDir,
+                timeout: 30000,
+              });
+              return stdout || stderr || 'OK';
+            } catch (error: any) {
+              return `Error: ${error.message || error}`;
+            }
+          },
+
+          // Format code
+          onFormat: async (path) => {
+            const workDir = this.codeEditor.getWorkDir();
+            try {
+              const { exec } = await import('child_process');
+              const { promisify } = await import('util');
+              const execAsync = promisify(exec);
+              const target = path || '.';
+              const { stdout, stderr } = await execAsync(`npx prettier --write "${target}"`, {
+                cwd: workDir,
+                timeout: 30000,
+              });
+              return stdout || stderr || 'Formatted';
+            } catch (error: any) {
+              return `Error: ${error.message || error}`;
+            }
+          },
+
+          // TypeScript type check
+          onTypecheck: async () => {
+            const workDir = this.codeEditor.getWorkDir();
+            try {
+              const { exec } = await import('child_process');
+              const { promisify } = await import('util');
+              const execAsync = promisify(exec);
+              const { stdout, stderr } = await execAsync('npx tsc --noEmit', {
+                cwd: workDir,
+                timeout: 60000,
+              });
+              return stdout || stderr || 'No errors';
+            } catch (error: any) {
+              // tsc exits with error code on type errors, but we want the output
+              return error.stdout || error.stderr || error.message || 'Typecheck failed';
+            }
+          },
+
+          // Fetch URL and return content for context
+          onFetch: async (url, prompt) => {
+            try {
+              // Fetch the URL
+              const response = await fetch(url, {
+                headers: {
+                  'User-Agent': 'Slashbot/1.0 (CLI Assistant)',
+                  'Accept': 'text/html,application/json,text/plain,*/*',
+                },
+                redirect: 'follow',
+              });
+
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+              }
+
+              const contentType = response.headers.get('content-type') || '';
+              let content: string;
+
+              if (contentType.includes('application/json')) {
+                const json = await response.json();
+                content = JSON.stringify(json, null, 2);
+              } else {
+                content = await response.text();
+
+                // If HTML, extract text content
+                if (contentType.includes('text/html')) {
+                  // Simple HTML to text - remove tags, decode entities
+                  content = content
+                    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                    .replace(/<[^>]+>/g, ' ')
+                    .replace(/&nbsp;/g, ' ')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                }
+              }
+
+              // Return content with prompt hint - agentic loop will process it
+              if (prompt) {
+                return `[Fetched from ${url}]\n\n${content}\n\n[User wants: ${prompt}]`;
+              }
+
+              return `[Fetched from ${url}]\n\n${content}`;
+            } catch (error: any) {
+              throw new Error(`Fetch failed: ${error.message || error}`);
+            }
+          },
+
+          // Web search using X.AI search API
+          onSearch: async (query, options) => {
+            if (!this.grokClient) {
+              throw new Error('Not connected to Grok');
+            }
+            return await this.grokClient.searchChat(query, {
+              enableXSearch: options?.xSearch,
+            });
+          },
+
+          // Skill invocation
+          onSkill: async (name, args) => {
+            const skill = await this.skillManager.getSkill(name);
+            if (!skill) {
+              throw new Error(`Skill not found: ${name}`);
+            }
+            let content = `[SKILL: ${name}]\n${skill.content}`;
+            if (args) {
+              content += `\n\n[TASK: ${args}]`;
+            }
+            return content;
+          },
+
+          // Skill installation
+          onSkillInstall: async (url, name) => {
+            const skill = await this.skillManager.installSkill(url, name);
+            // Reinitialize Grok to update system prompt with new skill
+            await this.initializeGrok();
+            return { name: skill.name, path: skill.path };
           },
 
         });
@@ -412,6 +597,9 @@ class Slashbot {
 
     // Initialize code editor
     await this.codeEditor.init();
+
+    // Initialize skill manager
+    await this.skillManager.init();
 
     // Initialize command permissions
     await this.commandPermissions.load();

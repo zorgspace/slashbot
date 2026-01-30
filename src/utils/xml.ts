@@ -13,6 +13,12 @@ const ACTION_TAG_PATTERNS = [
   /\[\[notify[^\]]*\]\][\s\S]*?\[\[\/notify\]\]/g,
   /\[\[skill[^\]]*\s*\/?\]\]/g,
   /\[\[plan\]\][\s\S]*?\[\[\/plan\]\]/g,
+  // New actions
+  /\[\[glob[^\]]*\s*\/?\]\]/g,
+  /\[\[git[^\]]*\s*\/?\]\]/g,
+  /\[\[fetch[^\]]*\s*\/?\]\]/g,
+  /\[\[format[^\]]*\s*\/?\]\]/g,
+  /\[\[typecheck[^\]]*\s*\/?\]\]/g,
   // Also clean inner tags
   /\[\[search\]\][\s\S]*?\[\[\/search\]\]/g,
   /\[\[replace\]\][\s\S]*?\[\[\/replace\]\]/g,

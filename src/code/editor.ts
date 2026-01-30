@@ -5,7 +5,7 @@
 
 import { c, colors, fileViewer } from '../ui/colors';
 import * as path from 'path';
-import type { EditResult, EditStatus } from '../actions/types';
+import type { EditResult, EditStatus, GrepOptions } from '../actions/types';
 
 export interface SearchResult {
   file: string;
@@ -35,7 +35,7 @@ export class CodeEditor {
     return true; // Always authorized
   }
 
-  async grep(pattern: string, filePattern?: string): Promise<SearchResult[]> {
+  async grep(pattern: string, filePattern?: string, options?: GrepOptions): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
     try {
@@ -43,14 +43,30 @@ export class CodeEditor {
       const { promisify } = await import('util');
       const execAsync = promisify(exec);
 
-      // Build grep command
+      // Build grep command with options
       const excludes = '--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude=*.lock';
       const fileArg = filePattern ? `--include="${filePattern}"` : '';
-      const cmd = `grep -rn ${excludes} ${fileArg} "${pattern}" ${this.workDir} 2>/dev/null | head -50`;
+
+      // Context options
+      let contextArg = '';
+      if (options?.context) {
+        contextArg = `-C ${options.context}`;
+      } else {
+        if (options?.contextBefore) contextArg += `-B ${options.contextBefore} `;
+        if (options?.contextAfter) contextArg += `-A ${options.contextAfter} `;
+      }
+
+      // Case insensitivity
+      const caseArg = options?.caseInsensitive ? '-i' : '';
+
+      const cmd = `grep -rn ${caseArg} ${contextArg} ${excludes} ${fileArg} "${pattern}" ${this.workDir} 2>/dev/null | head -100`;
 
       const { stdout } = await execAsync(cmd);
 
       for (const line of stdout.split('\n').filter(l => l.trim())) {
+        // Handle context separator lines (--)
+        if (line === '--') continue;
+
         const match = line.match(/^(.+?):(\d+):(.*)$/);
         if (match) {
           results.push({
@@ -58,6 +74,16 @@ export class CodeEditor {
             line: parseInt(match[2]),
             content: match[3].trim(),
             match: pattern,
+          });
+        }
+        // Also handle context lines (file-linenum-content format)
+        const contextMatch = line.match(/^(.+?)-(\d+)-(.*)$/);
+        if (contextMatch) {
+          results.push({
+            file: contextMatch[1].replace(this.workDir + '/', ''),
+            line: parseInt(contextMatch[2]),
+            content: contextMatch[3].trim(),
+            match: '', // Context line, not a match
           });
         }
       }

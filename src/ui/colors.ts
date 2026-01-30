@@ -276,13 +276,13 @@ export class ThinkingAnimation {
 export const step = {
   // Assistant message/thought (white bullet)
   message: (text: string) => {
-    console.log(`\n${colors.white}●${colors.reset} ${text}`);
+    console.log(`${colors.white}●${colors.reset} ${text}`);
   },
 
   // Tool call: ● ToolName(args)
   tool: (toolName: string, args?: string) => {
     const argsStr = args ? `(${args})` : '';
-    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}${toolName}${colors.reset}${argsStr}`);
+    console.log(`${colors.white}●${colors.reset} ${colors.bold}${toolName}${colors.reset}${argsStr}`);
   },
 
   // Tool result: ⎿  Result text (indented, supports multiline)
@@ -297,7 +297,7 @@ export const step = {
 
   // Read action: ● Read(file_path) - green bullet
   read: (filePath: string) => {
-    console.log(`\n${colors.success}●${colors.reset} ${colors.bold}Read${colors.reset}(${filePath})`);
+    console.log(`${colors.success}●${colors.reset} ${colors.bold}Read${colors.reset}(${filePath})`);
   },
 
   // Read result: ⎿  Read N lines - grey/muted
@@ -308,7 +308,7 @@ export const step = {
   // Grep action: ● Grep(pattern, file)
   grep: (pattern: string, filePattern?: string) => {
     const args = filePattern ? `"${pattern}", "${filePattern}"` : `"${pattern}"`;
-    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Grep${colors.reset}(${args})`);
+    console.log(`${colors.white}●${colors.reset} ${colors.bold}Grep${colors.reset}(${args})`);
   },
 
   // Grep result: ⎿  Found N matches
@@ -329,27 +329,34 @@ export const step = {
   bash: (command: string) => {
     // Truncate long commands
     const displayCmd = command.length > 60 ? command.slice(0, 57) + '...' : command;
-    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Bash${colors.reset}(${displayCmd})`);
+    console.log(`${colors.white}●${colors.reset} ${colors.bold}Bash${colors.reset}(${displayCmd})`);
   },
 
   // Bash result: ⎿  $ command \n output
   bashResult: (command: string, output: string, exitCode = 0) => {
-    if (exitCode !== 0) {
+    const isError = exitCode !== 0 || output.startsWith('Error:');
+    if (isError) {
       console.log(`  ${colors.error}⎿  Error: Exit code ${exitCode}${colors.reset}`);
       console.log(`     ${colors.muted}$ ${command}${colors.reset}`);
     } else {
       console.log(`  ${colors.muted}⎿  $ ${command}${colors.reset}`);
     }
     if (output) {
-      output.split('\n').slice(0, 10).forEach(line => {
-        console.log(`     ${colors.muted}${line}${colors.reset}`);
+      const lines = output.split('\n');
+      const maxLines = isError ? 30 : 15; // Show more lines for errors
+      lines.slice(0, maxLines).forEach(line => {
+        const lineColor = isError ? colors.error : colors.muted;
+        console.log(`     ${lineColor}${line}${colors.reset}`);
       });
+      if (lines.length > maxLines) {
+        console.log(`     ${colors.muted}... (${lines.length - maxLines} more lines)${colors.reset}`);
+      }
     }
   },
 
   // Edit/Update action: ● Update(file_path)
   update: (filePath: string) => {
-    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Update${colors.reset}(${filePath})`);
+    console.log(`${colors.white}●${colors.reset} ${colors.bold}Update${colors.reset}(${filePath})`);
   },
 
   // Edit result with diff display
@@ -383,7 +390,7 @@ export const step = {
 
   // Create action: ● Write(file_path)
   write: (filePath: string) => {
-    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Write${colors.reset}(${filePath})`);
+    console.log(`${colors.white}●${colors.reset} ${colors.bold}Write${colors.reset}(${filePath})`);
   },
 
   // Create result
@@ -398,12 +405,12 @@ export const step = {
 
   // Schedule action
   schedule: (name: string, cron: string) => {
-    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Schedule${colors.reset}(${name}, "${cron}")`);
+    console.log(`${colors.white}●${colors.reset} ${colors.bold}Schedule${colors.reset}(${name}, "${cron}")`);
   },
 
   // Skill action
   skill: (name: string) => {
-    console.log(`\n${colors.white}●${colors.reset} ${colors.bold}Skill${colors.reset}(${name})`);
+    console.log(`${colors.white}●${colors.reset} ${colors.bold}Skill${colors.reset}(${name})`);
   },
 
   // Success result (green checkmark style)
@@ -430,7 +437,7 @@ export const step = {
 
   // Thinking/status message
   thinking: (text: string) => {
-    console.log(`\n${colors.white}●${colors.reset} ${colors.muted}${text}${colors.reset}`);
+    console.log(`${colors.white}●${colors.reset} ${colors.muted}${text}${colors.reset}`);
   },
 
   end: () => {}
