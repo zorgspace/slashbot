@@ -1,5 +1,11 @@
 /**
  * Telegram Connector for Slashbot
+ *
+ * RULES:
+ * - Messages are only accepted from the authorized chatId
+ * - Responses are ALWAYS sent back to the same chatId that sent the message
+ * - Voice messages are transcribed and processed as text
+ * - Max message length: 4000 chars (auto-split if longer)
  */
 
 import { Telegraf } from 'telegraf';
@@ -18,12 +24,14 @@ export class TelegramConnector implements Connector {
 
   private bot: Telegraf;
   private chatId: string;
+  private replyTargetChatId: string; // Track where to send replies
   private messageHandler: MessageHandler | null = null;
   private running = false;
 
   constructor(config: TelegramConfig) {
     this.bot = new Telegraf(config.botToken);
     this.chatId = config.chatId;
+    this.replyTargetChatId = config.chatId; // Default to configured chatId
     this.setupHandlers();
   }
 
@@ -46,6 +54,9 @@ export class TelegramConnector implements Connector {
         await ctx.reply('Bot not fully initialized');
         return;
       }
+
+      // Track the chat to reply to (same chat that sent the message)
+      this.replyTargetChatId = ctx.chat.id.toString();
 
       try {
         // Send typing indicator
@@ -70,6 +81,9 @@ export class TelegramConnector implements Connector {
         await ctx.reply('Bot not fully initialized');
         return;
       }
+
+      // Track the chat to reply to (same chat that sent the message)
+      this.replyTargetChatId = ctx.chat.id.toString();
 
       const transcriptionService = getTranscriptionService();
       if (!transcriptionService) {
@@ -147,20 +161,21 @@ export class TelegramConnector implements Connector {
   }
 
   /**
-   * Send a message to the configured chat
+   * Send a message to the current reply target (same chat that sent the last message)
    */
   async sendMessage(text: string): Promise<void> {
     if (!this.running) {
       throw new Error('Telegram bot not running');
     }
 
+    const targetChat = this.replyTargetChatId;
     const chunks = splitMessage(text, this.config.maxMessageLength);
     for (const chunk of chunks) {
-      await this.bot.telegram.sendMessage(this.chatId, chunk, {
+      await this.bot.telegram.sendMessage(targetChat, chunk, {
         parse_mode: 'Markdown',
       }).catch(async () => {
         // Fallback to plain text if markdown fails
-        await this.bot.telegram.sendMessage(this.chatId, chunk);
+        await this.bot.telegram.sendMessage(targetChat, chunk);
       });
     }
   }

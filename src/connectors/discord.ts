@@ -1,5 +1,11 @@
 /**
  * Discord Connector for Slashbot
+ *
+ * RULES:
+ * - Messages are only accepted from the authorized channelId
+ * - Responses are ALWAYS sent back to the same channel that sent the message
+ * - Voice attachments (ogg/mp3/wav) are transcribed and processed as text
+ * - Max message length: 2000 chars (auto-split if longer)
  */
 
 import { Client, GatewayIntentBits, Message as DiscordMessage } from 'discord.js';
@@ -18,6 +24,7 @@ export class DiscordConnector implements Connector {
 
   private client: Client;
   private channelId: string;
+  private replyTargetChannelId: string; // Track where to send replies
   private messageHandler: MessageHandler | null = null;
   private running = false;
 
@@ -31,6 +38,7 @@ export class DiscordConnector implements Connector {
       ],
     });
     this.channelId = config.channelId;
+    this.replyTargetChannelId = config.channelId; // Default to configured channelId
     this.setupHandlers(config.botToken);
   }
 
@@ -50,6 +58,9 @@ export class DiscordConnector implements Connector {
         await message.reply('Bot not fully initialized');
         return;
       }
+
+      // Track the channel to reply to (same channel that sent the message)
+      this.replyTargetChannelId = message.channelId;
 
       try {
         // Show typing indicator if channel supports it
@@ -131,8 +142,11 @@ export class DiscordConnector implements Connector {
     this.running = false;
   }
 
+  /**
+   * Send a message to the current reply target (same channel that sent the last message)
+   */
   async sendMessage(text: string): Promise<void> {
-    await this.sendMessageToChannel(this.channelId, text);
+    await this.sendMessageToChannel(this.replyTargetChannelId, text);
   }
 
   private async sendMessageToChannel(channelId: string, text: string): Promise<void> {
