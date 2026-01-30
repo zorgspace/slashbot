@@ -49,6 +49,10 @@ async function executeAction(
       return executeSkill(action, handlers);
     case 'telegram':
       return executeTelegram(action, handlers);
+    case 'web':
+      return executeWeb(action, handlers);
+    case 'fetch':
+      return executeFetch(action, handlers);
     default:
       return null;
   }
@@ -275,6 +279,83 @@ async function executeTelegram(
       action: 'TELEGRAM',
       success: false,
       result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeWeb(
+  action: Extract<Action, { type: 'web' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onWebSearch) {
+    step.error('Web search not configured');
+    return {
+      action: 'WEB',
+      success: false,
+      result: 'Web search not available',
+      error: 'onWebSearch handler not configured',
+    };
+  }
+
+  // Display action
+  step.thinking(`Searching: ${action.query.slice(0, 50)}...`);
+
+  try {
+    const results = await handlers.onWebSearch(action.query);
+    const lineCount = results.split('\n').length;
+    step.success(`Found results (${lineCount} lines)`);
+    return {
+      action: `WEB ${action.query}`,
+      success: true,
+      result: results,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Search failed: ${errorMsg}`);
+    return {
+      action: `WEB ${action.query}`,
+      success: false,
+      result: 'Search failed',
+      error: errorMsg,
+    };
+  }
+}
+
+async function executeFetch(
+  action: Extract<Action, { type: 'fetch' }>,
+  handlers: ActionHandlers
+): Promise<ActionResult | null> {
+  if (!handlers.onFetch) {
+    step.error('Fetch not configured');
+    return {
+      action: 'FETCH',
+      success: false,
+      result: 'Fetch not available',
+      error: 'onFetch handler not configured',
+    };
+  }
+
+  // Display action
+  const shortUrl = action.url.length > 50 ? action.url.slice(0, 50) + '...' : action.url;
+  step.thinking(`Fetching: ${shortUrl}`);
+
+  try {
+    const content = await handlers.onFetch(action.url);
+    const charCount = content.length;
+    step.success(`Fetched (${charCount} chars)`);
+    return {
+      action: `FETCH ${action.url}`,
+      success: true,
+      result: content,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Fetch failed: ${errorMsg}`);
+    return {
+      action: `FETCH ${action.url}`,
+      success: false,
+      result: 'Fetch failed',
       error: errorMsg,
     };
   }

@@ -279,6 +279,17 @@ class Slashbot {
             }
             await this.telegramConnector.sendMessage(message);
           },
+
+          onWebSearch: async (query) => {
+            const { searchWeb, formatResults } = await import('./services/websearch');
+            const results = await searchWeb(query);
+            return formatResults(results);
+          },
+
+          onFetch: async (url) => {
+            const { fetchPage } = await import('./services/websearch');
+            return await fetchPage(url);
+          },
         });
       } catch {
         this.grokClient = null;
