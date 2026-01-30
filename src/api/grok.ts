@@ -62,6 +62,9 @@ AVAILABLE SKILLS (use exact paths, case-sensitive):
 [[notify to="telegram"]]msg[[/notify]]       Send to specific connector
 [[schedule cron="* * * * *" name="x"]]cmd[[/schedule]]
 
+# Platform Response Rule
+When message has [PLATFORM: TELEGRAM] or [PLATFORM: DISCORD], ALWAYS reply using [[notify to="platform"]]response[[/notify]] to send response back to that channel.
+
 # Code Rules
 - Grep → Read → Edit (never edit unread code)
 - One action per response, observe result, continue
