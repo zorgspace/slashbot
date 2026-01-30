@@ -273,11 +273,31 @@ class Slashbot {
             }
           },
 
-          onTelegram: async (message) => {
-            if (!this.telegramConnector?.isRunning()) {
-              throw new Error('Telegram not connected');
+          onNotify: async (message, target) => {
+            const sent: string[] = [];
+            const failed: string[] = [];
+
+            // Send to Telegram if available and matches target
+            if ((!target || target === 'telegram') && this.telegramConnector?.isRunning()) {
+              try {
+                await this.telegramConnector.sendMessage(message);
+                sent.push('telegram');
+              } catch {
+                failed.push('telegram');
+              }
             }
-            await this.telegramConnector.sendMessage(message);
+
+            // Send to Discord if available and matches target
+            if ((!target || target === 'discord') && this.discordConnector?.isRunning()) {
+              try {
+                await this.discordConnector.sendMessage(message);
+                sent.push('discord');
+              } catch {
+                failed.push('discord');
+              }
+            }
+
+            return { sent, failed };
           },
 
           onWebSearch: async (query) => {

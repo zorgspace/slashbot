@@ -58,7 +58,8 @@ AVAILABLE SKILLS (use exact paths, case-sensitive):
 [[fetch url="https://..."/]]         Fetch page content
 
 ## Communication
-[[telegram]]message[[/telegram]]
+[[notify]]message[[/notify]]                 Send to all connectors (Telegram, Discord)
+[[notify to="telegram"]]msg[[/notify]]       Send to specific connector
 [[schedule cron="* * * * *" name="x"]]cmd[[/schedule]]
 
 # Code Rules

@@ -47,8 +47,8 @@ async function executeAction(
       return executeSchedule(action, handlers);
     case 'skill':
       return executeSkill(action, handlers);
-    case 'telegram':
-      return executeTelegram(action, handlers);
+    case 'notify':
+      return executeNotify(action, handlers);
     case 'web':
       return executeWeb(action, handlers);
     case 'fetch':
@@ -247,36 +247,47 @@ async function executeSkill(
   }
 }
 
-async function executeTelegram(
-  action: Extract<Action, { type: 'telegram' }>,
+async function executeNotify(
+  action: Extract<Action, { type: 'notify' }>,
   handlers: ActionHandlers
 ): Promise<ActionResult | null> {
-  if (!handlers.onTelegram) {
-    step.error('Telegram not configured');
+  if (!handlers.onNotify) {
+    step.error('No connectors configured');
     return {
-      action: 'TELEGRAM',
+      action: 'NOTIFY',
       success: false,
-      result: 'Telegram not configured',
-      error: 'Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID',
+      result: 'No connectors available',
+      error: 'Configure Telegram or Discord',
     };
   }
 
   // Display action
-  step.thinking('Sending to Telegram...');
+  const targetInfo = action.target ? ` to ${action.target}` : ' to all';
+  step.thinking(`Sending${targetInfo}...`);
 
   try {
-    await handlers.onTelegram(action.message);
-    step.success('Message sent to Telegram');
+    const result = await handlers.onNotify(action.message, action.target);
+
+    if (result.sent.length > 0) {
+      step.success(`Sent to: ${result.sent.join(', ')}`);
+    }
+    if (result.failed.length > 0) {
+      step.error(`Failed: ${result.failed.join(', ')}`);
+    }
+
     return {
-      action: 'TELEGRAM',
-      success: true,
-      result: 'Message sent',
+      action: 'NOTIFY',
+      success: result.sent.length > 0,
+      result: result.sent.length > 0
+        ? `Sent to ${result.sent.join(', ')}`
+        : 'No messages sent',
+      error: result.failed.length > 0 ? `Failed: ${result.failed.join(', ')}` : undefined,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    step.error(`Telegram failed: ${errorMsg}`);
+    step.error(`Notify failed: ${errorMsg}`);
     return {
-      action: 'TELEGRAM',
+      action: 'NOTIFY',
       success: false,
       result: 'Failed',
       error: errorMsg,

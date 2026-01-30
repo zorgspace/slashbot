@@ -5,7 +5,7 @@
  * from XML-like patterns appearing in code examples or documentation.
  */
 
-import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, SkillAction, TelegramAction, WebAction, FetchAction } from './types';
+import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, SkillAction, NotifyAction, WebAction, FetchAction } from './types';
 
 // Quote pattern: matches both single and double quotes
 const Q = `["']`;  // quote
@@ -40,8 +40,8 @@ const PATTERNS = {
   schedule: new RegExp(`\\[\\[schedule\\s+cron=${Q}(${NQR})${Q}(?:\\s+name=${Q}(${NQ})${Q})?\\s*\\]\\]([\\s\\S]+?)\\[\\[/schedule\\]\\]`, 'gi'),
   // [[skill name="..."/]] or [[skill name="..."]]
   skill: new RegExp(`\\[\\[skill\\s+name=${Q}(${NQR})${Q}\\s*/?\\]\\]`, 'gi'),
-  // [[telegram]]message[[/telegram]]
-  telegram: /\[\[telegram\s*\]\]([\s\S]+?)\[\[\/telegram\]\]/gi,
+  // [[notify]]message[[/notify]] or [[notify to="telegram"]]message[[/notify]]
+  notify: /\[\[notify(?:\s+to=["']([^"']+)["'])?\s*\]\]([\s\S]+?)\[\[\/notify\]\]/gi,
   // [[web]]query[[/web]]
   web: /\[\[web\s*\]\]([\s\S]+?)\[\[\/web\]\]/gi,
   // [[fetch url="..."]] or [[fetch]]url[[/fetch]]
@@ -138,14 +138,15 @@ export function parseActions(content: string): Action[] {
     } as SkillAction);
   }
 
-  // Parse telegram actions
-  const telegramRegex = new RegExp(PATTERNS.telegram.source, 'gi');
-  while ((match = telegramRegex.exec(content)) !== null) {
-    const [, message] = match;
+  // Parse notify actions
+  const notifyRegex = new RegExp(PATTERNS.notify.source, 'gi');
+  while ((match = notifyRegex.exec(content)) !== null) {
+    const [, target, message] = match;
     actions.push({
-      type: 'telegram',
+      type: 'notify',
       message: message.trim(),
-    } as TelegramAction);
+      target: target || undefined,
+    } as NotifyAction);
   }
 
   // Parse web search actions
