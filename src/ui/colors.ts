@@ -153,11 +153,10 @@ export interface BannerOptions {
   workingDir?: string;
   contextFile?: string | null;
   tasksCount?: number;
-  isAuthorized?: boolean;
 }
 
 export function banner(options: BannerOptions = {}): string {
-  const { version = 'v1.0.0', workingDir, contextFile, tasksCount = 0, isAuthorized = false } = options;
+  const { version = 'v1.0.0', workingDir, contextFile, tasksCount = 0 } = options;
   const cwd = workingDir || process.cwd();
   const shortCwd = cwd.replace(process.env.HOME || '', '~');
 
@@ -175,7 +174,6 @@ export function banner(options: BannerOptions = {}): string {
     `${colors.muted}Grok 4.1 · X.AI · ${shortCwd}${colors.reset}`,
     contextFile ? `${colors.muted}Context: ${contextFile}${colors.reset}` : '',
     tasksCount > 0 ? `${colors.muted}${tasksCount} task(s) scheduled${colors.reset}` : '',
-    isAuthorized ? '' : `${colors.muted}Code: /auth to authorize editing${colors.reset}`,
     `${colors.muted}? for help · Tab to autocomplete${colors.reset}`,
   ].filter(line => line !== '');
 
@@ -237,14 +235,21 @@ export class ThinkingAnimation {
   }
 
   stop(): void {
+    // Only output if animation was actually running (interval exists)
+    const wasRunning = this.interval !== null;
+
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
     }
-    const duration = this.formatDuration(Date.now() - this.startTime);
-    const shortPath = this.contextPath.replace(process.env.HOME || '', '~');
-    const location = shortPath ? ` · ${shortPath}` : '';
-    process.stdout.write(`\r\x1b[K${colors.muted}${duration}${location}${colors.reset}\n`);
+
+    // Only write output if we were actually running
+    if (wasRunning) {
+      const duration = this.formatDuration(Date.now() - this.startTime);
+      const shortPath = this.contextPath.replace(process.env.HOME || '', '~');
+      const location = shortPath ? ` · ${shortPath}` : '';
+      process.stdout.write(`\r\x1b[K${colors.muted}${duration}${location}${colors.reset}\n`);
+    }
   }
 
   private formatDuration(ms: number): string {
