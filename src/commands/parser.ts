@@ -214,6 +214,7 @@ export interface CommandContext {
   configManager: any;
   codeEditor: any;
   telegramConnector: any;
+  discordConnector: any;
   reinitializeGrok: () => Promise<void>;
   rl?: any;
 }
@@ -424,34 +425,6 @@ commands.set('config', {
   },
 });
 
-// /auth - Authorize code editing in current directory
-commands.set('auth', {
-  name: 'auth',
-  description: 'Authorize code editing in this folder',
-  usage: '/auth [revoke]',
-  execute: async (args, context) => {
-    if (!context.codeEditor) {
-      console.log(c.error('CodeEditor not available'));
-      return true;
-    }
-
-    if (args[0] === 'revoke') {
-      await context.codeEditor.revoke();
-      return true;
-    }
-
-    const isAuthorized = await context.codeEditor.isAuthorized();
-    if (isAuthorized) {
-      console.log(c.success('Already authorized for this folder'));
-      console.log(c.muted(`Folder: ${context.codeEditor.getWorkDir()}`));
-      console.log(c.muted('Use /auth revoke to revoke'));
-    } else {
-      await context.codeEditor.authorize();
-    }
-    return true;
-  },
-});
-
 // /init - Initialize project context file using Grok AI analysis
 commands.set('init', {
   name: 'init',
@@ -649,10 +622,6 @@ commands.set('files', {
 
     if (files.length === 0) {
       console.log(c.muted('No files found'));
-      const isAuthorized = await context.codeEditor.isAuthorized();
-      if (!isAuthorized) {
-        console.log(c.warning('Not authorized. Use /auth to authorize.'));
-      }
     } else {
       console.log(`\n${c.violet('Project files:')}\n`);
       files.forEach(f => console.log(`  ${c.muted(f)}`));
@@ -1166,6 +1135,88 @@ commands.set('telegram', {
         try {
           await context.telegramConnector.sendMessage(message);
           console.log(c.success('Message sent to Telegram'));
+        } catch (error) {
+          console.log(c.error(`Failed: ${error}`));
+        }
+        break;
+
+      default:
+        console.log(c.muted('Commands: status, setup, logout, send <message>'));
+    }
+
+    return true;
+  },
+});
+
+// /discord - Manage Discord connector
+commands.set('discord', {
+  name: 'discord',
+  description: 'Manage Discord connector',
+  usage: '/discord [status|setup|logout|send <message>]',
+  execute: async (args, context) => {
+    const subcommand = args[0] || 'status';
+
+    switch (subcommand) {
+      case 'status':
+        const discordConfig = context.configManager?.getDiscordConfig();
+        if (!discordConfig) {
+          console.log(c.warning('\nDiscord not configured'));
+          console.log(c.muted('Use /discord setup <bot_token> <channel_id>'));
+        } else if (!context.discordConnector) {
+          console.log(`\n${c.violet('Discord Connector')}\n`);
+          console.log(`  ${c.muted('Status:')}  ${c.warning('Configured but not running')}`);
+          console.log(c.muted('  Restart slashbot to connect'));
+        } else {
+          const running = context.discordConnector.isRunning();
+          console.log(`\n${c.violet('Discord Connector')}\n`);
+          console.log(`  ${c.muted('Status:')}  ${running ? c.success('Connected') : c.warning('Disconnected')}`);
+        }
+        console.log();
+        break;
+
+      case 'setup':
+        const botToken = args[1];
+        const channelId = args[2];
+        if (!botToken || !channelId) {
+          console.log(`\n${c.violet('Discord Setup')}`);
+          console.log(c.muted('\nUsage: /discord setup <bot_token> <channel_id>\n'));
+          console.log(c.muted('1. Create app at https://discord.com/developers/applications'));
+          console.log(c.muted('2. Create a Bot and copy the token'));
+          console.log(c.muted('3. Enable MESSAGE CONTENT intent'));
+          console.log(c.muted('4. Invite bot to server with bot scope + Send Messages'));
+          console.log(c.muted('5. Right-click channel > Copy ID for channel_id\n'));
+          console.log(c.muted('Example: /discord setup MTIxMjM0... 1234567890'));
+          return true;
+        }
+        try {
+          await context.configManager?.saveDiscordConfig(botToken, channelId);
+          console.log(c.success('Discord configured!'));
+          console.log(c.muted('Restart slashbot to connect.'));
+        } catch (error) {
+          console.log(c.error(`Error: ${error}`));
+        }
+        break;
+
+      case 'logout':
+        await context.configManager?.clearDiscordConfig();
+        console.log(c.success('Discord configuration cleared'));
+        console.log(c.muted('Restart slashbot to disconnect.'));
+        break;
+
+      case 'send':
+        const message = args.slice(1).join(' ');
+        if (!message) {
+          console.log(c.error('Message required'));
+          console.log(c.muted('Usage: /discord send <message>'));
+          return true;
+        }
+        if (!context.discordConnector) {
+          console.log(c.error('Discord not connected'));
+          return true;
+        }
+        try {
+          await context.discordConnector.sendMessage(message);
+          console.log(c.success('Message sent to Discord'));
         } catch (error) {
           console.log(c.error(`Failed: ${error}`));
         }
