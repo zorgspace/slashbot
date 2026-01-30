@@ -213,8 +213,7 @@ export interface CommandContext {
   fileSystem: any;
   configManager: any;
   codeEditor: any;
-  telegramConnector: any;
-  discordConnector: any;
+  connectors: Map<string, { isRunning: () => boolean; sendMessage: (msg: string) => Promise<void>; stop?: () => void }>;
   reinitializeGrok: () => Promise<void>;
   rl?: any;
 }
@@ -1069,85 +1068,6 @@ commands.set('ls', {
   },
 });
 
-// /telegram - Manage Telegram connector
-commands.set('telegram', {
-  name: 'telegram',
-  description: 'Manage Telegram connector',
-  usage: '/telegram [status|setup|logout|send <message>]',
-  execute: async (args, context) => {
-    const subcommand = args[0] || 'status';
-
-    switch (subcommand) {
-      case 'status':
-        const telegramConfig = context.configManager?.getTelegramConfig();
-        if (!telegramConfig) {
-          console.log(c.warning('\nTelegram not configured'));
-          console.log(c.muted('Use /telegram setup <bot_token> <chat_id>'));
-        } else if (!context.telegramConnector) {
-          console.log(`\n${c.violet('Telegram Connector')}\n`);
-          console.log(`  ${c.muted('Status:')}  ${c.warning('Configured but not running')}`);
-          console.log(c.muted('  Restart slashbot to connect'));
-        } else {
-          const running = context.telegramConnector.isRunning();
-          console.log(`\n${c.violet('Telegram Connector')}\n`);
-          console.log(`  ${c.muted('Status:')}  ${running ? c.success('Connected') : c.warning('Disconnected')}`);
-        }
-        console.log();
-        break;
-
-      case 'setup':
-        const botToken = args[1];
-        const chatId = args[2];
-        if (!botToken || !chatId) {
-          console.log(`\n${c.violet('Telegram Setup')}`);
-          console.log(c.muted('\nUsage: /telegram setup <bot_token> <chat_id>\n'));
-          console.log(c.muted('1. Create a bot via @BotFather on Telegram'));
-          console.log(c.muted('2. Get your chat ID via @userinfobot\n'));
-          console.log(c.muted('Example: /telegram setup 123456:ABC-xyz 987654321'));
-          return true;
-        }
-        try {
-          await context.configManager?.saveTelegramConfig(botToken, chatId);
-          console.log(c.success('Telegram configured!'));
-          console.log(c.muted('Restart slashbot to connect.'));
-        } catch (error) {
-          console.log(c.error(`Error: ${error}`));
-        }
-        break;
-
-      case 'logout':
-        await context.configManager?.clearTelegramConfig();
-        console.log(c.success('Telegram configuration cleared'));
-        console.log(c.muted('Restart slashbot to disconnect.'));
-        break;
-
-      case 'send':
-        const message = args.slice(1).join(' ');
-        if (!message) {
-          console.log(c.error('Message required'));
-          console.log(c.muted('Usage: /telegram send <message>'));
-          return true;
-        }
-        if (!context.telegramConnector) {
-          console.log(c.error('Telegram not connected'));
-          return true;
-        }
-        try {
-          await context.telegramConnector.sendMessage(message);
-          console.log(c.success('Message sent to Telegram'));
-        } catch (error) {
-          console.log(c.error(`Failed: ${error}`));
-        }
-        break;
-
-      default:
-        console.log(c.muted('Commands: status, setup, logout, send <message>'));
-    }
-
-    return true;
-  },
-});
-
 // /discord - Manage Discord connector
 commands.set('discord', {
   name: 'discord',
@@ -1162,14 +1082,17 @@ commands.set('discord', {
         if (!discordConfig) {
           console.log(c.warning('\nDiscord not configured'));
           console.log(c.muted('Use /discord setup <bot_token> <channel_id>'));
-        } else if (!context.discordConnector) {
-          console.log(`\n${c.violet('Discord Connector')}\n`);
-          console.log(`  ${c.muted('Status:')}  ${c.warning('Configured but not running')}`);
-          console.log(c.muted('  Restart slashbot to connect'));
         } else {
-          const running = context.discordConnector.isRunning();
-          console.log(`\n${c.violet('Discord Connector')}\n`);
-          console.log(`  ${c.muted('Status:')}  ${running ? c.success('Connected') : c.warning('Disconnected')}`);
+          const discord = context.connectors.get('discord');
+          if (!discord) {
+            console.log(`\n${c.violet('Discord Connector')}\n`);
+            console.log(`  ${c.muted('Status:')}  ${c.warning('Configured but not running')}`);
+            console.log(c.muted('  Restart slashbot to connect'));
+          } else {
+            const running = discord.isRunning();
+            console.log(`\n${c.violet('Discord Connector')}\n`);
+            console.log(`  ${c.muted('Status:')}  ${running ? c.success('Connected') : c.warning('Disconnected')}`);
+          }
         }
         console.log();
         break;
@@ -1210,12 +1133,13 @@ commands.set('discord', {
           console.log(c.muted('Usage: /discord send <message>'));
           return true;
         }
-        if (!context.discordConnector) {
+        const discord = context.connectors.get('discord');
+        if (!discord) {
           console.log(c.error('Discord not connected'));
           return true;
         }
         try {
-          await context.discordConnector.sendMessage(message);
+          await discord.sendMessage(message);
           console.log(c.success('Message sent to Discord'));
         } catch (error) {
           console.log(c.error(`Failed: ${error}`));

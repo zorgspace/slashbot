@@ -101,8 +101,7 @@ class Slashbot {
   private configManager: ConfigManager;
   private codeEditor: CodeEditor;
   private commandPermissions: CommandPermissions;
-  private telegramConnector: TelegramConnector | null = null;
-  private discordConnector: DiscordConnector | null = null;
+  private connectors: Map<string, { connector: any; isRunning: () => boolean; sendMessage: (msg: string) => Promise<void>; stop?: () => void }> = new Map();
   private rl: readline.Interface | null = null;
   private running = false;
   private history: string[] = [];
@@ -125,8 +124,7 @@ class Slashbot {
       fileSystem: this.fileSystem,
       configManager: this.configManager,
       codeEditor: this.codeEditor,
-      telegramConnector: this.telegramConnector,
-      discordConnector: this.discordConnector,
+      connectors: this.connectors,
       reinitializeGrok: () => this.initializeGrok(),
     };
   }
@@ -277,23 +275,17 @@ class Slashbot {
             const sent: string[] = [];
             const failed: string[] = [];
 
-            // Send to Telegram if available and matches target
-            if ((!target || target === 'telegram') && this.telegramConnector?.isRunning()) {
-              try {
-                await this.telegramConnector.sendMessage(message);
-                sent.push('telegram');
-              } catch {
-                failed.push('telegram');
-              }
-            }
+            for (const [name, conn] of this.connectors) {
+              // Skip if target specified and doesn't match
+              if (target && name !== target) continue;
+              // Skip if not running
+              if (!conn.isRunning()) continue;
 
-            // Send to Discord if available and matches target
-            if ((!target || target === 'discord') && this.discordConnector?.isRunning()) {
               try {
-                await this.discordConnector.sendMessage(message);
-                sent.push('discord');
+                await conn.sendMessage(message);
+                sent.push(name);
               } catch {
-                failed.push('discord');
+                failed.push(name);
               }
             }
 
@@ -442,16 +434,21 @@ class Slashbot {
     const telegramConfig = this.configManager.getTelegramConfig();
     if (telegramConfig) {
       try {
-        this.telegramConnector = createTelegramConnector(telegramConfig);
-        this.telegramConnector.setMessageHandler(async (message, source) => {
+        const connector = createTelegramConnector(telegramConfig);
+        connector.setMessageHandler(async (message, source) => {
           console.log(c.muted(`\n[Telegram] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}`));
           const response = await this.handleInput(message, source);
           return response as string;
         });
-        await this.telegramConnector.start();
+        await connector.start();
+        this.connectors.set('telegram', {
+          connector,
+          isRunning: () => connector.isRunning(),
+          sendMessage: (msg) => connector.sendMessage(msg),
+          stop: () => connector.stop(),
+        });
       } catch (error) {
         console.log(c.warning(`[Telegram] Could not start: ${error}`));
-        this.telegramConnector = null;
       }
     }
 
@@ -459,16 +456,21 @@ class Slashbot {
     const discordConfig = this.configManager.getDiscordConfig();
     if (discordConfig) {
       try {
-        this.discordConnector = createDiscordConnector(discordConfig);
-        this.discordConnector.setMessageHandler(async (message, source) => {
+        const connector = createDiscordConnector(discordConfig);
+        connector.setMessageHandler(async (message, source) => {
           console.log(c.muted(`\n[Discord] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}`));
           const response = await this.handleInput(message, source);
           return response as string;
         });
-        await this.discordConnector.start();
+        await connector.start();
+        this.connectors.set('discord', {
+          connector,
+          isRunning: () => connector.isRunning(),
+          sendMessage: (msg) => connector.sendMessage(msg),
+          stop: () => connector.stop(),
+        });
       } catch (error) {
         console.log(c.warning(`[Discord] Could not start: ${error}`));
-        this.discordConnector = null;
       }
     }
 
@@ -561,8 +563,10 @@ class Slashbot {
   async stop(): Promise<void> {
     this.running = false;
     this.scheduler.stop();
-    this.telegramConnector?.stop();
-    this.discordConnector?.stop();
+    // Stop all connectors
+    for (const [, conn] of this.connectors) {
+      conn.stop?.();
+    }
     await this.saveHistory();
     this.rl?.close();
   }
