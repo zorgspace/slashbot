@@ -5,7 +5,7 @@
  * from XML-like patterns appearing in code examples or documentation.
  */
 
-import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, SkillAction, NotifyAction, WebAction, FetchAction } from './types';
+import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, SkillAction, NotifyAction } from './types';
 
 // Quote pattern: matches both single and double quotes
 const Q = `["']`;  // quote
@@ -42,10 +42,6 @@ const PATTERNS = {
   skill: new RegExp(`\\[\\[skill\\s+name=${Q}(${NQR})${Q}\\s*/?\\]\\]`, 'gi'),
   // [[notify]]message[[/notify]] or [[notify to="telegram"]]message[[/notify]]
   notify: /\[\[notify(?:\s+to=["']([^"']+)["'])?\s*\]\]([\s\S]+?)\[\[\/notify\]\]/gi,
-  // [[web]]query[[/web]]
-  web: /\[\[web\s*\]\]([\s\S]+?)\[\[\/web\]\]/gi,
-  // [[fetch url="..."]] or [[fetch]]url[[/fetch]]
-  fetch: /\[\[fetch(?:\s+url=["']([^"']+)["'])?\s*\]\](?:([\s\S]*?)\[\[\/fetch\]\])?/gi,
 };
 
 /**
@@ -165,29 +161,6 @@ export function parseActions(content: string): Action[] {
       message: message.trim(),
       target: target || undefined,
     } as NotifyAction);
-  }
-
-  // Parse web search actions
-  const webRegex = new RegExp(PATTERNS.web.source, 'gi');
-  while ((match = webRegex.exec(safeContent)) !== null) {
-    const [, query] = match;
-    actions.push({
-      type: 'web',
-      query: query.trim(),
-    } as WebAction);
-  }
-
-  // Parse fetch actions
-  const fetchRegex = new RegExp(PATTERNS.fetch.source, 'gi');
-  while ((match = fetchRegex.exec(safeContent)) !== null) {
-    const [, urlAttr, urlContent] = match;
-    const url = urlAttr || (urlContent ? urlContent.trim() : '');
-    if (url) {
-      actions.push({
-        type: 'fetch',
-        url,
-      } as FetchAction);
-    }
   }
 
   return actions;

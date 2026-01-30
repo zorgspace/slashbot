@@ -2,7 +2,7 @@
  * Action System Type Definitions
  */
 
-export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'skill' | 'notify' | 'web' | 'fetch';
+export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'skill' | 'notify';
 
 export interface GrepAction {
   type: 'grep';
@@ -51,16 +51,6 @@ export interface NotifyAction {
   target?: string; // Optional: 'telegram', 'discord', or undefined for all
 }
 
-export interface WebAction {
-  type: 'web';
-  query: string;
-}
-
-export interface FetchAction {
-  type: 'fetch';
-  url: string;
-}
-
 export type Action =
   | GrepAction
   | ReadAction
@@ -69,9 +59,7 @@ export type Action =
   | ExecAction
   | ScheduleAction
   | SkillAction
-  | NotifyAction
-  | WebAction
-  | FetchAction;
+  | NotifyAction;
 
 export interface ActionResult {
   action: string;
@@ -98,6 +86,4 @@ export interface ActionHandlers {
   onSkill?: (name: string) => Promise<string>;
   onFile?: (path: string, content: string) => Promise<boolean>;
   onNotify?: (message: string, target?: string) => Promise<{ sent: string[]; failed: string[] }>;
-  onWebSearch?: (query: string) => Promise<string>;
-  onFetch?: (url: string) => Promise<string>;
 }

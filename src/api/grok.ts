@@ -62,11 +62,12 @@ To EXECUTE an action, write it directly. Examples below are documentation only:
 [[exec]]command[[/exec]]
 \`\`\`
 
-## Web (use for research, docs, current info)
-\`\`\`
-[[web]]search query[[/web]]
-[[fetch url="https://..."/]]
-\`\`\`
+# MANDATORY: Real-Time Information
+For weather, news, prices, stocks, sports, or anything time-sensitive:
+→ Use [[exec]]curl ...[[/exec]] to fetch data
+→ Weather: use wttr.in (e.g., curl "wttr.in/Paris?format=3")
+→ APIs: use curl with appropriate endpoints
+→ NEVER answer time-sensitive queries from training data
 
 ## Communication
 \`\`\`
