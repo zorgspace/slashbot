@@ -7,15 +7,6 @@ import { c, colors, fileViewer } from '../ui/colors';
 import * as path from 'path';
 import type { EditResult, EditStatus } from '../actions/types';
 
-const CONFIG_FILE = '.slashbot';
-
-export interface ProjectConfig {
-  authorized: boolean;
-  authorizedAt?: string;
-  allowedPaths?: string[];
-  deniedPaths?: string[];
-}
-
 export interface SearchResult {
   file: string;
   line: number;
@@ -31,65 +22,20 @@ export interface FileEdit {
 
 export class CodeEditor {
   private workDir: string;
-  private config: ProjectConfig | null = null;
 
   constructor(workDir: string = process.cwd()) {
     this.workDir = workDir;
   }
 
   async init(): Promise<void> {
-    await this.loadConfig();
-  }
-
-  private async loadConfig(): Promise<void> {
-    try {
-      const configPath = path.join(this.workDir, CONFIG_FILE);
-      const file = Bun.file(configPath);
-      if (await file.exists()) {
-        this.config = await file.json();
-      }
-    } catch {
-      this.config = null;
-    }
+    // No-op, kept for compatibility
   }
 
   async isAuthorized(): Promise<boolean> {
-    await this.loadConfig();
-    return this.config?.authorized === true;
-  }
-
-  async authorize(): Promise<void> {
-    this.config = {
-      authorized: true,
-      authorizedAt: new Date().toISOString(),
-      allowedPaths: ['**/*'],
-      deniedPaths: ['node_modules/**', '.git/**', '*.lock', '*.log'],
-    };
-
-    const configPath = path.join(this.workDir, CONFIG_FILE);
-    await Bun.write(configPath, JSON.stringify(this.config, null, 2));
-    console.log(c.success(`Authorization granted for ${this.workDir}`));
-    console.log(c.muted(`Config: ${configPath}`));
-  }
-
-  async revoke(): Promise<void> {
-    const configPath = path.join(this.workDir, CONFIG_FILE);
-    try {
-      const { unlink } = await import('fs/promises');
-      await unlink(configPath);
-    } catch {
-      // File might not exist
-    }
-    this.config = null;
-    console.log(c.success('Authorization revoked'));
+    return true; // Always authorized
   }
 
   async grep(pattern: string, filePattern?: string): Promise<SearchResult[]> {
-    if (!await this.isAuthorized()) {
-      console.log(c.error('Not authorized. Use /auth to authorize.'));
-      return [];
-    }
-
     const results: SearchResult[] = [];
 
     try {
@@ -123,11 +69,6 @@ export class CodeEditor {
   }
 
   async readFile(filePath: string): Promise<string | null> {
-    if (!await this.isAuthorized()) {
-      console.log(c.error('Not authorized'));
-      return null;
-    }
-
     try {
       const fullPath = path.isAbsolute(filePath) ? filePath : path.join(this.workDir, filePath);
       const file = Bun.file(fullPath);
@@ -138,11 +79,6 @@ export class CodeEditor {
   }
 
   async editFile(edit: FileEdit): Promise<EditResult> {
-    if (!await this.isAuthorized()) {
-      console.log(c.error('Not authorized'));
-      return { success: false, status: 'error', message: 'Not authorized' };
-    }
-
     try {
       const fullPath = path.isAbsolute(edit.path) ? edit.path : path.join(this.workDir, edit.path);
       const file = Bun.file(fullPath);
@@ -186,11 +122,6 @@ export class CodeEditor {
   }
 
   async createFile(filePath: string, content: string): Promise<boolean> {
-    if (!await this.isAuthorized()) {
-      console.log(c.error('Not authorized'));
-      return false;
-    }
-
     try {
       const fullPath = path.isAbsolute(filePath) ? filePath : path.join(this.workDir, filePath);
 
@@ -213,10 +144,6 @@ export class CodeEditor {
   }
 
   async listFiles(pattern?: string): Promise<string[]> {
-    if (!await this.isAuthorized()) {
-      return [];
-    }
-
     try {
       const { exec } = await import('child_process');
       const { promisify } = await import('util');
