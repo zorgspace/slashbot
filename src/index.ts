@@ -260,6 +260,27 @@ class Slashbot {
               return result;
             }
 
+            // Check if command needs interactive input (sudo, ssh, etc.)
+            const needsInteractive = /^sudo\s|^ssh\s|passwd|read\s+-/.test(command);
+
+            if (needsInteractive) {
+              // Use spawn with inherited stdio for interactive commands
+              const { spawn } = await import('child_process');
+              return new Promise<string>((resolve) => {
+                const child = spawn('bash', ['-lc', command], {
+                  cwd: workDir,
+                  stdio: 'inherit', // Pass through stdin/stdout/stderr
+                  env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1' },
+                });
+                child.on('close', (code) => {
+                  resolve(code === 0 ? 'Command completed' : `Command exited with code ${code}`);
+                });
+                child.on('error', (err) => {
+                  resolve(`Error: ${err.message}`);
+                });
+              });
+            }
+
             // Normal execution - use login shell to load user's bashrc/zshrc (nvm, pyenv, etc.)
             try {
               const { exec } = await import('child_process');
