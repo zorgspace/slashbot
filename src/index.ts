@@ -223,7 +223,7 @@ class Slashbot {
           onExec: async (command) => {
             const workDir = this.codeEditor.getWorkDir();
 
-            // Security check via scheduler
+            // Security check via scheduler (blocks dangerous patterns)
             const security = this.scheduler.validateCommand(command);
             if (security.blocked) {
               console.log(c.error(`[SECURITY] Command blocked: ${security.blockedReason}`));
@@ -233,30 +233,7 @@ class Slashbot {
               security.warnings.forEach(w => console.log(c.warning(`[SECURITY] ${w}`)));
             }
 
-            // Check if command was denied this session
-            if (this.commandPermissions.isDeniedThisSession(command, workDir)) {
-              return 'Command refused by user';
-            }
-
-            // Check if command is already allowed
-            if (!this.commandPermissions.isAllowed(command, workDir)) {
-              // Prompt user for approval
-              const result = await this.commandPermissions.promptForApproval(command, workDir);
-
-              if (result === 'no') {
-                this.commandPermissions.denyForSession(command, workDir);
-                console.log(c.muted('Command refused'));
-                return 'Command refused by user';
-              }
-
-              if (result === 'always') {
-                await this.commandPermissions.addPermission(command, workDir);
-                const cmdBase = command.split(' ')[0];
-                console.log(c.success(`'${cmdBase}' authorized in this directory`));
-              }
-            }
-
-            // Execute the command
+            // Execute the command (no prompt - auto-allow)
             try {
               const { exec } = await import('child_process');
               const { promisify } = await import('util');
@@ -612,9 +589,10 @@ class Slashbot {
 
     // Initialize transcription service if OpenAI API key available
     const openaiKey = this.configManager.getOpenAIApiKey();
+    let voiceEnabled = false;
     if (openaiKey) {
       initTranscription(openaiKey);
-      console.log(c.muted('[Voice] Transcription enabled (Whisper)'));
+      voiceEnabled = true;
     }
 
     // Start scheduler
@@ -626,8 +604,13 @@ class Slashbot {
       try {
         const connector = createTelegramConnector(telegramConfig);
         connector.setMessageHandler(async (message, source) => {
-          console.log(c.muted(`\n[Telegram] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}`));
+          // Use stderr to avoid interfering with readline raw mode on stdout
+          process.stderr.write(c.muted(`\n[Telegram] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}\n`));
           const response = await this.handleInput(message, source);
+          // Redraw prompt after Telegram processing completes
+          if (this.running) {
+            process.stdout.write(inputPrompt());
+          }
           return response as string;
         });
         await connector.start();
@@ -648,8 +631,13 @@ class Slashbot {
       try {
         const connector = createDiscordConnector(discordConfig);
         connector.setMessageHandler(async (message, source) => {
-          console.log(c.muted(`\n[Discord] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}`));
+          // Use stderr to avoid interfering with readline raw mode on stdout
+          process.stderr.write(c.muted(`\n[Discord] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}\n`));
           const response = await this.handleInput(message, source);
+          // Redraw prompt after Discord processing completes
+          if (this.running) {
+            process.stdout.write(inputPrompt());
+          }
           return response as string;
         });
         await connector.start();
@@ -671,6 +659,9 @@ class Slashbot {
       workingDir: this.codeEditor.getWorkDir(),
       contextFile: this.loadedContextFile,
       tasksCount: tasks.length,
+      telegram: this.connectors.has('telegram'),
+      discord: this.connectors.has('discord'),
+      voice: voiceEnabled,
     }));
 
     // Enable bracketed paste mode to detect pastes

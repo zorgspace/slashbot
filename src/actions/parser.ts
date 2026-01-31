@@ -26,8 +26,8 @@ function extractAttr(tag: string, name: string): string | null {
 // Regex patterns for each action type using [[action]] syntax
 // This is less likely to appear in normal text/code than XML-like <action> tags
 const PATTERNS = {
-  // [[grep ...]]...[[/grep]] - flexible attribute extraction
-  grep: /\[\[grep\s+[^\]]*\]\]([\s\S]*?)\[\[\/grep\]\]/gi,
+  // [[grep ...]]...[[/grep]] or [[grep .../]] - flexible attribute extraction
+  grep: /\[\[grep\s+[^\]]*(?:\/\]\]|\]\][\s\S]*?\[\[\/grep\]\])/gi,
   // [[read path="..."/]] or [[read path="..."]] or [[read path="..."]]...[[/read]]
   read: /\[\[read\s+[^\]]*\/?\]\](?:[\s\S]*?\[\[\/read\]\])?/gi,
   // [[edit path="..."]][[search]]...[[/search]][[replace]]...[[/replace]][[/edit]]

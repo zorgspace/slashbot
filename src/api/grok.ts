@@ -53,14 +53,13 @@ To EXECUTE an action, write it directly. Examples below are documentation only:
 
 ## Code
 \`\`\`
-[[grep pattern="regex" file="*.ts"]]why[[/grep]]
-[[grep pattern="regex" file="*.ts" context="3"]]with context[[/grep]]
-[[grep pattern="regex" before="2" after="5" case="i"]]case insensitive with context[[/grep]]
+[[grep pattern="regex" file="*.ts"/]]
 [[read path="file.ts"/]]
-[[edit path="file.ts"]][[search]]exact[[/search]][[replace]]new[[/replace]][[/edit]]
-[[create path="file.ts"]]content[[/create]]
-[[exec]]command[[/exec]]
+[[edit path="file.ts"]][[search]]exact text to find[[/search]][[replace]]replacement text[[/replace]][[/edit]]
+[[create path="file.ts"]]file content here[[/create]]
+[[exec]]shell command[[/exec]]
 \`\`\`
+CRITICAL: [[edit]] MUST be ONE CONTINUOUS TAG - never split across lines. Include [[search]], [[/search]], [[replace]], [[/replace]], [[/edit]] all together.
 
 ## File Search (Glob)
 \`\`\`
@@ -117,13 +116,23 @@ After [[skill name="x"/]], the full skill markdown appears in conversation. Use 
 \`\`\`
 
 # Platform Response Rule
-When message has [PLATFORM: TELEGRAM] or [PLATFORM: DISCORD], reply using the notify action (written directly, not in code block) to send response back.
+When message has [PLATFORM: TELEGRAM] or [PLATFORM: DISCORD]:
+- Execute actions normally (read, edit, exec, etc.)
+- After completing actions, end with a SHORT summary (1-2 sentences max)
+- The summary text will be sent to the user
 
 # Code Rules
 - Grep → Read → Edit (never edit unread code)
 - One action per response, observe result, continue
 - Exact matches only for edits
 - After edits, run typecheck
+- Install whatever packages/tools you need to fulfill the task (npm, bun, apt, etc.)
+
+# Verification Rule
+ALWAYS verify your work before finishing a task:
+- Run [[typecheck/]] after code changes
+- Run [[exec]]npm run build[[/exec]] to ensure build succeeds
+- Fix any errors before reporting task complete
 
 # Efficiency Rules
 - NEVER fetch the same URL twice in one conversation
@@ -316,7 +325,7 @@ export class GrokClient {
             });
             const firstTag = foundTags[0].toLowerCase().match(/\[\[(\w+)/)?.[1] || '';
             const tagPatterns: Record<string, string> = {
-              grep: '[[grep pattern="..." file="..."]]reason[[/grep]]',
+              grep: '[[grep pattern="..." file="..."/]]',
               read: '[[read path="..."/]]',
               edit: '[[edit path="..."]][[search]]...[[/search]][[replace]]...[[/replace]][[/edit]]',
               create: '[[create path="..."]]content[[/create]]',
@@ -583,13 +592,13 @@ export class GrokClient {
   }
 
   /**
-   * Chat without streaming to console - used for Telegram/Discord/external integrations
+   * Chat with action execution for Telegram/Discord - executes actions and returns summary
    * @param source - The platform source to adapt response style
    */
   async chatWithResponse(userMessage: string, source?: 'telegram' | 'discord'): Promise<string> {
-    // Add platform context hint for concise responses
+    // Add platform context hint
     const platformHint = source
-      ? `\n[PLATFORM: ${source.toUpperCase()} - Keep response under ${source === 'discord' ? '1800' : '3500'} chars, be concise]`
+      ? `\n[PLATFORM: ${source.toUpperCase()} - Execute actions normally. End with a SHORT summary (1-2 sentences) of what you did.]`
       : '';
 
     this.conversationHistory.push({
@@ -599,53 +608,96 @@ export class GrokClient {
 
     this.compressContext();
 
-    const hasVision = this.conversationHistory.some((msg: Message) =>
-      Array.isArray(msg.content) &&
-      (msg.content as any[]).some((part: any) => part.type === 'image_url')
-    );
-    const modelToUse = hasVision ? 'grok-vision-beta' : this.config.model;
+    const actionsSummary: string[] = [];
+    let maxIterations = 10;
+    let finalResponse = '';
 
-    const requestBody = {
-      model: modelToUse,
-      messages: this.conversationHistory,
-      max_tokens: this.config.maxTokens,
-      temperature: this.config.temperature,
-      stream: false,
-    };
+    // Agentic loop for actions
+    while (maxIterations > 0) {
+      maxIterations--;
 
-    this.usage.requests++;
+      const hasVision = this.conversationHistory.some((msg: Message) =>
+        Array.isArray(msg.content) &&
+        (msg.content as any[]).some((part: any) => part.type === 'image_url')
+      );
+      const modelToUse = hasVision ? 'grok-vision-beta' : this.config.model;
 
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
+      const requestBody = {
+        model: modelToUse,
+        messages: this.conversationHistory,
+        max_tokens: this.config.maxTokens,
+        temperature: this.config.temperature,
+        stream: false,
+      };
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Grok API Error: ${response.status} - ${errorText}`);
+      this.usage.requests++;
+
+      const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Grok API Error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || '';
+      finalResponse = content;
+
+      // Track usage
+      if (data.usage) {
+        this.usage.promptTokens += data.usage.prompt_tokens || 0;
+        this.usage.completionTokens += data.usage.completion_tokens || 0;
+        this.usage.totalTokens += data.usage.total_tokens || 0;
+      }
+
+      // Parse and execute actions
+      const actions = parseActions(content);
+
+      if (actions.length === 0) {
+        // No more actions, we're done
+        this.conversationHistory.push({ role: 'assistant', content });
+        break;
+      }
+
+      // Execute actions
+      const actionResults = await executeActions(actions, this.actionHandlers);
+
+      // Collect summaries
+      for (const r of actionResults) {
+        const status = r.success ? '✓' : '✗';
+        actionsSummary.push(`${status} ${r.action}`);
+      }
+
+      // Feed results back
+      const resultsMessage = actionResults.map(r => {
+        const status = r.success ? '✓' : '✗ FAILED';
+        const errorNote = r.error ? ` - ${r.error}` : '';
+        return `[${status}] ${r.action}${errorNote}\n${r.result}`;
+      }).join('\n\n');
+
+      this.conversationHistory.push({ role: 'assistant', content });
+      this.conversationHistory.push({
+        role: 'user',
+        content: `Action results:\n${resultsMessage}\n\nContinue or provide final summary.`,
+      });
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
+    // Return clean text (summary) or actions summary if response only had actions
+    const cleanResponse = cleanXmlTags(finalResponse).trim();
 
-    // Track usage
-    if (data.usage) {
-      this.usage.promptTokens += data.usage.prompt_tokens || 0;
-      this.usage.completionTokens += data.usage.completion_tokens || 0;
-      this.usage.totalTokens += data.usage.total_tokens || 0;
+    if (cleanResponse) {
+      return cleanResponse;
+    } else if (actionsSummary.length > 0) {
+      return `Done: ${actionsSummary.join(', ')}`;
     }
-
-    // Store assistant response in history
-    this.conversationHistory.push({
-      role: 'assistant',
-      content,
-    });
-
-    return cleanXmlTags(content);
+    return 'Done.';
   }
 
   /**

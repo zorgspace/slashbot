@@ -67,10 +67,16 @@ export class TelegramConnector implements Connector {
 
         // Send response if any
         if (response) {
-          await this.sendMessage(response);
+          await ctx.reply(response, { parse_mode: 'Markdown' }).catch(async () => {
+            // Fallback to plain text if markdown fails
+            await ctx.reply(response);
+          });
+        } else {
+          await ctx.reply('No response generated');
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error('[Telegram] Handler error:', errorMsg);
         await ctx.reply(`Error: ${errorMsg}`);
       }
     });
@@ -141,9 +147,40 @@ export class TelegramConnector implements Connector {
     if (this.running) return;
 
     try {
-      await this.bot.launch();
+      // Clear pending updates to avoid processing old messages on startup
+      // Use AbortController for timeout
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+
+        const response = await fetch(
+          `https://api.telegram.org/bot${this.bot.telegram.token}/getUpdates?offset=-1`,
+          { signal: controller.signal }
+        );
+        clearTimeout(timeout);
+
+        const data = await response.json() as { ok: boolean; result: Array<{ update_id: number }> };
+        if (data.ok && data.result.length > 0) {
+          const lastUpdateId = data.result[data.result.length - 1].update_id;
+          // Mark all updates as read
+          const controller2 = new AbortController();
+          const timeout2 = setTimeout(() => controller2.abort(), 3000);
+          await fetch(
+            `https://api.telegram.org/bot${this.bot.telegram.token}/getUpdates?offset=${lastUpdateId + 1}`,
+            { signal: controller2.signal }
+          );
+          clearTimeout(timeout2);
+        }
+      } catch {
+        // Ignore errors - bot will still work
+      }
+
+      // Launch bot in background (non-blocking)
+      this.bot.launch().catch((err) => {
+        console.log(c.error(`[Telegram] Error: ${err}`));
+      });
+
       this.running = true;
-      console.log(c.success('[Telegram] Connected'));
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.log(c.error(`[Telegram] Failed to start: ${errorMsg}`));
