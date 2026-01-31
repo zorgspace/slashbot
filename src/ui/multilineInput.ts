@@ -81,18 +81,60 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     };
 
     const redrawCurrentLine = () => {
-      // Clear current line and redraw
+      const termWidth = process.stdout.columns || 80;
+      const promptWidth = getPromptWidth();
+      const totalLength = promptWidth + currentLine.length;
+
+      // Calculate how many terminal rows the text occupies
+      const wrappedRows = Math.ceil(totalLength / termWidth) || 1;
+
+      // Move cursor to the beginning of the first row of this logical line
+      // and clear all wrapped rows
+      if (wrappedRows > 1) {
+        // Calculate which row we're currently on based on cursor position
+        const cursorTotal = promptWidth + cursorPos;
+        const currentRow = Math.floor(cursorTotal / termWidth);
+        // Move up to the first row
+        if (currentRow > 0) {
+          process.stdout.write(`\x1b[${currentRow}A`);
+        }
+      }
+
+      // Clear from the beginning of the line
       process.stdout.write('\r\x1b[K');
+
+      // Clear any additional wrapped rows below
+      for (let i = 1; i < wrappedRows; i++) {
+        process.stdout.write('\x1b[B\x1b[K'); // Move down and clear
+      }
+      // Move back up to the first row
+      if (wrappedRows > 1) {
+        process.stdout.write(`\x1b[${wrappedRows - 1}A`);
+      }
+      process.stdout.write('\r');
+
+      // Write the prompt
       if (lines.length > 0) {
         process.stdout.write('   '); // Continuation indent
       } else {
         process.stdout.write(options.prompt);
       }
       process.stdout.write(currentLine);
+
       // Move cursor to correct position
-      const moveBack = currentLine.length - cursorPos;
-      if (moveBack > 0) {
-        process.stdout.write(`\x1b[${moveBack}D`);
+      const cursorTotal = promptWidth + cursorPos;
+      const endTotal = promptWidth + currentLine.length;
+      const cursorRow = Math.floor(cursorTotal / termWidth);
+      const cursorCol = cursorTotal % termWidth;
+      const endRow = Math.floor(endTotal / termWidth);
+      const endCol = endTotal % termWidth;
+
+      // Move cursor from end position to correct position
+      if (endRow > cursorRow) {
+        process.stdout.write(`\x1b[${endRow - cursorRow}A`); // Move up
+      }
+      if (endCol !== cursorCol) {
+        process.stdout.write(`\r\x1b[${cursorCol}C`); // Move to column
       }
     };
 
@@ -230,8 +272,8 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         }
       }
 
-      // Check for Enter (submit)
-      if (str === '\r' || str === '\n') {
+      // Check for Enter (submit) - handle \r, \n, or \r\n
+      if (str === '\r' || str === '\n' || str === '\r\n') {
         submit();
         return;
       }

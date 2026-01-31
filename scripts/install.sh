@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Edit these to match your GitHub repo for "computer"
-REPO_OWNER="slashdot-ai"  # Change to your GitHub username/org
-REPO_NAME="computer"      # Repo name
-BIN_NAME="computer"       # Binary name after install
+REPO_OWNER="zorgspace"  # Change to your GitHub username/org
+REPO_NAME="slashbot"      # Repo name
+BIN_NAME="slashbot"       # Binary name after install
 
 VERSION="${1:-latest}"
 INSTALL_DIR="${2:-/usr/local/bin}"
@@ -23,7 +23,7 @@ esac
 
 ARCH=$(uname -m)
 case "$ARCH" in
-  x86_64|amd64) ARCH="amd64" ;;
+  x86_64|amd64) ARCH="x64" ;;
   arm64|aarch64) ARCH="arm64" ;;
   *) echo "Unsupported arch: $ARCH"; exit 1 ;;
 esac
