@@ -95,6 +95,11 @@ export interface SkillInstallAction {
   name?: string;
 }
 
+export interface ImageAction {
+  type: 'image';
+  prompt: string;
+}
+
 export type Action =
   | GrepAction
   | ReadAction

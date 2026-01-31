@@ -12,6 +12,7 @@ import { Telegraf } from 'telegraf';
 import { c } from '../ui/colors';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
 import { getTranscriptionService } from '../services/transcription';
+import { imageBuffer } from '../code/imageBuffer';
 
 export interface TelegramConfig {
   botToken: string;
@@ -59,11 +60,20 @@ export class TelegramConnector implements Connector {
       this.replyTargetChatId = ctx.chat.id.toString();
 
       try {
-        // Send typing indicator
-        await ctx.sendChatAction('typing');
+        // Start continuous typing indicator (Telegram typing expires after ~5s)
+        const chatId = ctx.chat.id;
+        await this.bot.telegram.sendChatAction(chatId, 'typing');
+        const typingInterval = setInterval(() => {
+          this.bot.telegram.sendChatAction(chatId, 'typing').catch(() => {});
+        }, 4000);
 
         // Process message through slashbot
-        const response = await this.messageHandler(message, 'telegram');
+        let response: string | void;
+        try {
+          response = await this.messageHandler(message, 'telegram');
+        } finally {
+          clearInterval(typingInterval);
+        }
 
         // Send response if any
         if (response) {
@@ -98,32 +108,95 @@ export class TelegramConnector implements Connector {
       }
 
       try {
-        await ctx.sendChatAction('typing');
+        // Start continuous typing indicator
+        const chatId = ctx.chat.id;
+        await this.bot.telegram.sendChatAction(chatId, 'typing');
+        const typingInterval = setInterval(() => {
+          this.bot.telegram.sendChatAction(chatId, 'typing').catch(() => {});
+        }, 4000);
 
-        // Get file URL from Telegram
-        const fileId = ctx.message.voice.file_id;
-        const file = await ctx.telegram.getFile(fileId);
-        const fileUrl = `https://api.telegram.org/file/bot${this.bot.telegram.token}/${file.file_path}`;
+        try {
+          // Get file URL from Telegram
+          const fileId = ctx.message.voice.file_id;
+          const file = await ctx.telegram.getFile(fileId);
+          const fileUrl = `https://api.telegram.org/file/bot${this.bot.telegram.token}/${file.file_path}`;
 
-        // Transcribe
-        console.log(c.muted('[Telegram] Transcribing voice message...'));
-        const result = await transcriptionService.transcribeFromUrl(fileUrl);
+          // Transcribe
+          console.log(c.muted('[Telegram] Transcribing voice message...'));
+          const result = await transcriptionService.transcribeFromUrl(fileUrl);
 
-        if (!result || !result.text) {
-          await ctx.reply('Could not transcribe voice message');
-          return;
-        }
+          if (!result || !result.text) {
+            await ctx.reply('Could not transcribe voice message');
+            return;
+          }
 
-        console.log(c.muted(`[Telegram] Voice: "${result.text.slice(0, 50)}..."`));
+          console.log(c.muted(`[Telegram] Voice: "${result.text.slice(0, 50)}..."`));
 
-        // Process transcribed text
-        const response = await this.messageHandler(result.text, 'telegram');
-        if (response) {
-          await this.sendMessage(response);
+          // Process transcribed text
+          const response = await this.messageHandler(result.text, 'telegram');
+          if (response) {
+            await this.sendMessage(response);
+          }
+        } finally {
+          clearInterval(typingInterval);
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         await ctx.reply(`Voice error: ${errorMsg}`);
+      }
+    });
+
+    // Handle photo messages
+    this.bot.on('photo', async (ctx) => {
+      if (!this.messageHandler) {
+        await ctx.reply('Bot not fully initialized');
+        return;
+      }
+
+      // Track the chat to reply to
+      this.replyTargetChatId = ctx.chat.id.toString();
+
+      try {
+        // Start continuous typing indicator
+        const chatId = ctx.chat.id;
+        await this.bot.telegram.sendChatAction(chatId, 'typing');
+        const typingInterval = setInterval(() => {
+          this.bot.telegram.sendChatAction(chatId, 'typing').catch(() => {});
+        }, 4000);
+
+        try {
+          // Get the largest photo (last in array)
+          const photos = ctx.message.photo;
+          const largestPhoto = photos[photos.length - 1];
+          const file = await ctx.telegram.getFile(largestPhoto.file_id);
+          const fileUrl = `https://api.telegram.org/file/bot${this.bot.telegram.token}/${file.file_path}`;
+
+          // Download and convert to base64 data URL
+          console.log(c.muted('[Telegram] Downloading image...'));
+          const imageResponse = await fetch(fileUrl);
+          const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString('base64');
+          const mimeType = file.file_path?.endsWith('.png') ? 'image/png' : 'image/jpeg';
+          const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
+
+          // Add to image buffer for vision context
+          imageBuffer.push(dataUrl);
+          console.log(c.muted(`[Telegram] Image added to context (${Math.round(imageBuffer64.length / 1024)}KB)`));
+
+          // Use caption or default prompt
+          const message = ctx.message.caption || 'What is in this image?';
+
+          // Process with the image in context
+          const response = await this.messageHandler(message, 'telegram');
+          if (response) {
+            await this.sendMessage(response);
+          }
+        } finally {
+          clearInterval(typingInterval);
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error('[Telegram] Photo error:', errorMsg);
+        await ctx.reply(`Photo error: ${errorMsg}`);
       }
     });
 

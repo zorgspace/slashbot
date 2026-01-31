@@ -92,13 +92,32 @@ CRITICAL: [[edit]] MUST be ONE CONTINUOUS TAG - never split across lines. Includ
 [[typecheck/]]
 \`\`\`
 
-## Web Search
+## Real-time Information (CURL FIRST, then Search)
+For real-time data, ALWAYS try curl with known APIs FIRST before using [[search]]:
+
+**Weather** - Use wttr.in:
 \`\`\`
-[[search query="weather in Paris"/]]
-[[search query="latest bitcoin price" x="true"/]]
+[[exec]]curl -s "wttr.in/Paris?format=j1"[[/exec]]
+[[exec]]curl -s "wttr.in/Tokyo?format=%C+%t+%w"[[/exec]]
 \`\`\`
 
-Use search for weather, news, prices, stocks, sports, or anything requiring real-time information.
+**Crypto prices** - Use CoinGecko:
+\`\`\`
+[[exec]]curl -s "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd,eur"[[/exec]]
+\`\`\`
+
+**Public APIs** - Use curl when you know the endpoint:
+\`\`\`
+[[exec]]curl -s "https://api.example.com/data"[[/exec]]
+\`\`\`
+
+**Web Search** - Use ONLY for keyword searches when no API is known:
+\`\`\`
+[[search query="latest news about AI"/]]
+[[search query="who won the match yesterday" x="true"/]]
+\`\`\`
+
+PRIORITY: curl with known API > [[search]] for keywords
 
 ## Skills
 \`\`\`
@@ -390,14 +409,8 @@ export class GrokClient {
   }
 
   private async streamResponse(): Promise<string> {
-    const hasVision = this.conversationHistory.some((msg: Message) =>
-      Array.isArray(msg.content) &&
-      (msg.content as any[]).some((part: any) => part.type === 'image_url')
-    );
-    const modelToUse = hasVision ? 'grok-vision-beta' : this.config.model;
-
     const requestBody = {
-      model: modelToUse,
+      model: this.config.model,
       messages: this.conversationHistory,
       max_tokens: this.config.maxTokens,
       temperature: this.config.temperature,
@@ -601,10 +614,25 @@ export class GrokClient {
       ? `\n[PLATFORM: ${source.toUpperCase()} - Execute actions normally. End with a SHORT summary (1-2 sentences) of what you did.]`
       : '';
 
-    this.conversationHistory.push({
-      role: 'user',
-      content: userMessage + platformHint,
-    });
+    // Include recent images from imageBuffer (same as chat method)
+    const recentImages = imageBuffer.slice(-3);
+    if (recentImages.length > 0) {
+      const userContent: Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string } }> = [
+        { type: 'text', text: userMessage + platformHint },
+      ];
+      recentImages.forEach((imgUrl: string) => {
+        userContent.push({ type: 'image_url', image_url: { url: imgUrl } });
+      });
+      this.conversationHistory.push({
+        role: 'user',
+        content: userContent,
+      });
+    } else {
+      this.conversationHistory.push({
+        role: 'user',
+        content: userMessage + platformHint,
+      });
+    }
 
     this.compressContext();
 
@@ -616,14 +644,8 @@ export class GrokClient {
     while (maxIterations > 0) {
       maxIterations--;
 
-      const hasVision = this.conversationHistory.some((msg: Message) =>
-        Array.isArray(msg.content) &&
-        (msg.content as any[]).some((part: any) => part.type === 'image_url')
-      );
-      const modelToUse = hasVision ? 'grok-vision-beta' : this.config.model;
-
       const requestBody = {
-        model: modelToUse,
+        model: this.config.model,
         messages: this.conversationHistory,
         max_tokens: this.config.maxTokens,
         temperature: this.config.temperature,

@@ -12,6 +12,7 @@ import { Client, GatewayIntentBits, Message as DiscordMessage } from 'discord.js
 import { c } from '../ui/colors';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
 import { getTranscriptionService } from '../services/transcription';
+import { imageBuffer } from '../code/imageBuffer';
 
 export interface DiscordConfig {
   botToken: string;
@@ -63,47 +64,83 @@ export class DiscordConnector implements Connector {
       this.replyTargetChannelId = message.channelId;
 
       try {
-        // Show typing indicator if channel supports it
+        // Start continuous typing indicator (Discord typing expires after ~10s)
+        let typingInterval: ReturnType<typeof setInterval> | null = null;
         if ('sendTyping' in message.channel) {
           await message.channel.sendTyping();
+          typingInterval = setInterval(() => {
+            if ('sendTyping' in message.channel) {
+              message.channel.sendTyping().catch(() => {});
+            }
+          }, 8000);
         }
 
-        let textContent = message.content;
+        try {
+          let textContent = message.content;
 
-        // Check for voice message attachments (Discord voice messages are ogg files)
-        const voiceAttachment = message.attachments.find(att =>
-          att.contentType?.startsWith('audio/') ||
-          att.name?.endsWith('.ogg') ||
-          att.name?.endsWith('.mp3') ||
-          att.name?.endsWith('.wav')
-        );
+          // Check for image attachments
+          const imageAttachments = message.attachments.filter(att =>
+            att.contentType?.startsWith('image/') ||
+            att.name?.match(/\.(png|jpg|jpeg|gif|webp)$/i)
+          );
 
-        if (voiceAttachment) {
-          const transcriptionService = getTranscriptionService();
-          if (!transcriptionService) {
-            await message.reply('Voice transcription not configured. Set OPENAI_API_KEY.');
-            return;
+          // Process images and add to context
+          for (const imgAtt of imageAttachments.values()) {
+            try {
+              console.log(c.muted('[Discord] Downloading image...'));
+              const imageResponse = await fetch(imgAtt.url);
+              const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString('base64');
+              const mimeType = imgAtt.contentType || 'image/jpeg';
+              const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
+              imageBuffer.push(dataUrl);
+              console.log(c.muted(`[Discord] Image added to context (${Math.round(imageBuffer64.length / 1024)}KB)`));
+            } catch (imgErr) {
+              console.log(c.error(`[Discord] Failed to download image: ${imgErr}`));
+            }
           }
 
-          console.log(c.muted('[Discord] Transcribing voice message...'));
-          const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
+          // Check for voice message attachments (Discord voice messages are ogg files)
+          const voiceAttachment = message.attachments.find(att =>
+            att.contentType?.startsWith('audio/') ||
+            att.name?.endsWith('.ogg') ||
+            att.name?.endsWith('.mp3') ||
+            att.name?.endsWith('.wav')
+          );
 
-          if (!result || !result.text) {
-            await message.reply('Could not transcribe voice message');
-            return;
+          if (voiceAttachment) {
+            const transcriptionService = getTranscriptionService();
+            if (!transcriptionService) {
+              await message.reply('Voice transcription not configured. Set OPENAI_API_KEY.');
+              return;
+            }
+
+            console.log(c.muted('[Discord] Transcribing voice message...'));
+            const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
+
+            if (!result || !result.text) {
+              await message.reply('Could not transcribe voice message');
+              return;
+            }
+
+            console.log(c.muted(`[Discord] Voice: "${result.text.slice(0, 50)}..."`));
+            textContent = result.text;
           }
 
-          console.log(c.muted(`[Discord] Voice: "${result.text.slice(0, 50)}..."`));
-          textContent = result.text;
-        }
+          // If only images and no text, use default prompt
+          if (!textContent && imageAttachments.size > 0) {
+            textContent = 'What is in this image?';
+          }
 
-        if (!textContent) return;
+          if (!textContent) return;
 
-        // Process message
-        const response = await this.messageHandler(textContent, 'discord');
+          // Process message
+          const response = await this.messageHandler(textContent, 'discord');
 
-        if (response) {
-          await this.sendMessageToChannel(message.channelId, response);
+          if (response) {
+            await this.sendMessageToChannel(message.channelId, response);
+          }
+        } finally {
+          if (typingInterval) clearInterval(typingInterval);
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);

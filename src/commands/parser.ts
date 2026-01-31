@@ -1304,6 +1304,42 @@ commands.set('skills', {
   },
 });
 
+// /paste-image or /pi - Paste image from clipboard
+commands.set('paste-image', {
+  name: 'paste-image',
+  description: 'Paste image from system clipboard',
+  usage: '/paste-image',
+  execute: async () => {
+    const { readImageFromClipboard } = await import('../ui/pasteHandler');
+    const { addImage, imageBuffer } = await import('../code/imageBuffer');
+
+    console.log(c.muted('Reading clipboard...'));
+    const dataUrl = await readImageFromClipboard();
+
+    if (dataUrl) {
+      addImage(dataUrl);
+      const sizeKB = Math.round(dataUrl.length / 1024);
+      console.log(c.success(`🖼️  Image pasted from clipboard (${sizeKB}KB)`));
+      console.log(c.muted('   Now ask a question about the image'));
+    } else {
+      console.log(c.warning('No image found in clipboard'));
+      console.log(c.muted('   Linux: install xclip (X11) or wl-clipboard (Wayland)'));
+      console.log(c.muted('   Copy an image to clipboard first'));
+    }
+    return true;
+  },
+});
+
+// Alias /pi for /paste-image
+commands.set('pi', {
+  name: 'pi',
+  description: 'Alias for /paste-image',
+  usage: '/pi',
+  execute: async (args, context) => {
+    return commands.get('paste-image')!.execute(args, context);
+  },
+});
+
 // Get all command names for autocomplete
 export function getCommandNames(): string[] {
   return Array.from(commands.keys()).map(cmd => `/${cmd}`);

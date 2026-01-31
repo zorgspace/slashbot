@@ -4,7 +4,7 @@
  * A Claude Code-inspired terminal assistant using X.AI's Grok API.
  */
 
-import { banner, inputPrompt, inputClose, responseStart, c, errorBlock, colors } from './ui/colors';
+import { banner, inputPrompt, inputClose, responseStart, c, errorBlock, colors, connectorMessage, connectorResponse } from './ui/colors';
 
 if (process.argv[2] === 'update-check') {
   const updater = await import('./updater') as any;
@@ -483,11 +483,51 @@ class Slashbot {
 
     // Handle pasted images directly into buffer (CLI only)
     if (source === 'cli') {
+      // Check for base64 data URL
       const imageMatch = trimmed.match(/^data:image\/[a-z]+;base64,[A-Za-z0-9+/=]+$/i);
       if (imageMatch) {
         addImage(trimmed);
-        console.log(`${c.success('🖼️  Image pasted to buffer #')}${imageBuffer.length}`);
+        console.log(`${c.success('🖼️  Image added to context #')}${imageBuffer.length}`);
         return;
+      }
+
+      // Check for image file path (supports ~, absolute and relative paths)
+      const pathMatch = trimmed.match(/^['"]?([~\/]?[^\s'"]+\.(png|jpg|jpeg|gif|webp|bmp))['"]?$/i);
+      if (pathMatch) {
+        try {
+          let filePath = pathMatch[1];
+          // Expand ~ to home directory
+          if (filePath.startsWith('~')) {
+            filePath = filePath.replace('~', process.env.HOME || '');
+          }
+          // Make relative paths absolute
+          if (!filePath.startsWith('/')) {
+            filePath = `${process.cwd()}/${filePath}`;
+          }
+
+          const fs = await import('fs');
+          if (fs.existsSync(filePath)) {
+            const imageData = fs.readFileSync(filePath);
+            const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
+            const mimeTypes: Record<string, string> = {
+              'png': 'image/png',
+              'jpg': 'image/jpeg',
+              'jpeg': 'image/jpeg',
+              'gif': 'image/gif',
+              'webp': 'image/webp',
+              'bmp': 'image/bmp',
+            };
+            const mimeType = mimeTypes[ext] || 'image/png';
+            const base64 = imageData.toString('base64');
+            const dataUrl = `data:${mimeType};base64,${base64}`;
+            addImage(dataUrl);
+            console.log(`${c.success('🖼️  Image loaded: ')}${filePath.split('/').pop()} (${Math.round(base64.length / 1024)}KB)`);
+            console.log(c.muted('   Now ask a question about the image'));
+            return;
+          }
+        } catch (err) {
+          // Not a valid image file, continue processing as normal input
+        }
       }
     }
 
@@ -604,9 +644,13 @@ class Slashbot {
       try {
         const connector = createTelegramConnector(telegramConfig);
         connector.setMessageHandler(async (message, source) => {
-          // Use stderr to avoid interfering with readline raw mode on stdout
-          process.stderr.write(c.muted(`\n[Telegram] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}\n`));
+          // Display incoming message
+          process.stderr.write(connectorMessage('telegram', message) + '\n');
           const response = await this.handleInput(message, source);
+          // Display response sent
+          if (response) {
+            process.stderr.write(connectorResponse('telegram', response) + '\n');
+          }
           // Redraw prompt after Telegram processing completes
           if (this.running) {
             process.stdout.write(inputPrompt());
@@ -631,9 +675,13 @@ class Slashbot {
       try {
         const connector = createDiscordConnector(discordConfig);
         connector.setMessageHandler(async (message, source) => {
-          // Use stderr to avoid interfering with readline raw mode on stdout
-          process.stderr.write(c.muted(`\n[Discord] ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}\n`));
+          // Display incoming message
+          process.stderr.write(connectorMessage('discord', message) + '\n');
           const response = await this.handleInput(message, source);
+          // Display response sent
+          if (response) {
+            process.stderr.write(connectorResponse('discord', response) + '\n');
+          }
           // Redraw prompt after Discord processing completes
           if (this.running) {
             process.stdout.write(inputPrompt());

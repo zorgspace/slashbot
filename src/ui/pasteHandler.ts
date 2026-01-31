@@ -5,9 +5,11 @@
  * the full text, allowing the user to continue typing before sending.
  *
  * Also handles Shift+Enter to insert newlines without submitting.
+ * Shift+Ctrl+V pastes images from clipboard.
  */
 
 import { Transform, TransformCallback } from 'stream';
+import { spawn } from 'child_process';
 
 // Bracketed paste mode escape sequences
 const PASTE_START = '\x1b[200~';
@@ -20,6 +22,13 @@ const SHIFT_ENTER_SEQUENCES = [
   '\x1b[13;2u',  // Kitty keyboard protocol
   '\x1b[27;2;13~', // xterm modifyOtherKeys
   '\x1bOM',      // Some terminals
+];
+
+// Shift+Ctrl+V sequences for image paste
+const SHIFT_CTRL_V_SEQUENCES = [
+  '\x1b[118;6u',   // Kitty keyboard protocol: Shift+Ctrl+v
+  '\x1b[27;6;118~', // xterm modifyOtherKeys
+  '\x16',          // Ctrl+V raw (we check for shift separately)
 ];
 
 // Visible newline marker that won't trigger readline submit
@@ -255,4 +264,94 @@ export function expandPaste(text: string): string {
  */
 export function clearPasteBuffer(): void {
   pasteBuffer.clear();
+}
+
+/**
+ * Read image from system clipboard and return as base64 data URL
+ * Supports Linux (X11/Wayland) and macOS
+ */
+export async function readImageFromClipboard(): Promise<string | null> {
+  const platform = process.platform;
+
+  return new Promise((resolve) => {
+    let cmd: string;
+    let args: string[];
+
+    if (platform === 'darwin') {
+      // macOS - use osascript to get clipboard image
+      cmd = 'osascript';
+      args = ['-e', `
+        use framework "AppKit"
+        use scripting additions
+        set pb to current application's NSPasteboard's generalPasteboard()
+        set imgData to pb's dataForType:(current application's NSPasteboardTypePNG)
+        if imgData is missing value then
+          return ""
+        else
+          set base64 to (imgData's base64EncodedStringWithOptions:0) as text
+          return base64
+        end if
+      `];
+    } else {
+      // Linux - try xclip first (X11), then wl-paste (Wayland)
+      const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || process.env.WAYLAND_DISPLAY;
+
+      if (isWayland) {
+        cmd = 'wl-paste';
+        args = ['--type', 'image/png', '--no-newline'];
+      } else {
+        cmd = 'xclip';
+        args = ['-selection', 'clipboard', '-t', 'image/png', '-o'];
+      }
+    }
+
+    try {
+      const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const chunks: Buffer[] = [];
+
+      proc.stdout.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+
+      proc.on('close', (code) => {
+        if (code !== 0 || chunks.length === 0) {
+          resolve(null);
+          return;
+        }
+
+        const data = Buffer.concat(chunks);
+        if (data.length === 0) {
+          resolve(null);
+          return;
+        }
+
+        // For macOS, osascript returns base64 string directly
+        // For Linux, we get raw PNG data
+        let base64: string;
+        if (platform === 'darwin') {
+          base64 = data.toString('utf8').trim();
+          if (!base64) {
+            resolve(null);
+            return;
+          }
+        } else {
+          base64 = data.toString('base64');
+        }
+
+        resolve(`data:image/png;base64,${base64}`);
+      });
+
+      proc.on('error', () => {
+        resolve(null);
+      });
+
+      // Timeout after 2 seconds
+      setTimeout(() => {
+        proc.kill();
+        resolve(null);
+      }, 2000);
+    } catch {
+      resolve(null);
+    }
+  });
 }

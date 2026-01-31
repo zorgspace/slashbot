@@ -6,15 +6,26 @@
  * - Enter submits the input
  * - Arrow keys navigate within text
  * - Paste is supported via bracketed paste mode
+ * - Ctrl+Shift+V pastes images from clipboard
  */
 
-import { expandPaste } from './pasteHandler';
+import { expandPaste, readImageFromClipboard } from './pasteHandler';
+import { addImage, imageBuffer } from '../code/imageBuffer';
+import { c } from './colors';
 
 // Shift+Enter sequences (varies by terminal)
 const SHIFT_ENTER_SEQUENCES = [
   '\x1b[13;2u',     // Kitty keyboard protocol
   '\x1b[27;2;13~',  // xterm modifyOtherKeys
   '\x1bOM',         // Some terminals
+];
+
+// Image paste sequences
+// Ctrl+Shift+V varies by terminal, Ctrl+P is more universal
+const IMAGE_PASTE_SEQUENCES = [
+  '\x10',           // Ctrl+P (universal - P for Paste image)
+  '\x1b[118;6u',    // Kitty keyboard protocol: Ctrl+Shift+V
+  '\x1b[27;6;118~', // xterm modifyOtherKeys: Ctrl+Shift+V
 ];
 
 // Bracketed paste mode sequences
@@ -268,6 +279,56 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
           currentLine = '';
           cursorPos = 0;
           process.stdout.write('\n   '); // New line with continuation indent
+          return;
+        }
+      }
+
+      // Check for image paste sequences (Ctrl+P or Ctrl+Shift+V)
+      for (const seq of IMAGE_PASTE_SEQUENCES) {
+        if (str === seq || str.includes(seq)) {
+          // Async clipboard read - need to handle carefully
+          process.stdout.write(c.muted(' Reading clipboard...'));
+          readImageFromClipboard().then((dataUrl) => {
+            // Clear the "Reading clipboard..." message
+            process.stdout.write('\r\x1b[K');
+            if (lines.length > 0) {
+              process.stdout.write('   ');
+            } else {
+              process.stdout.write(options.prompt);
+            }
+            process.stdout.write(currentLine);
+
+            if (dataUrl) {
+              addImage(dataUrl);
+              const sizeKB = Math.round(dataUrl.length / 1024);
+              process.stdout.write(`\n${c.success('🖼️  Image pasted from clipboard')} (${sizeKB}KB)\n`);
+              process.stdout.write(c.muted('   Now ask a question about the image\n'));
+              // Redraw prompt
+              if (lines.length > 0) {
+                process.stdout.write('   ');
+              } else {
+                process.stdout.write(options.prompt);
+              }
+              process.stdout.write(currentLine);
+            } else {
+              process.stdout.write(`\n${c.warning('No image in clipboard')} (use xclip/wl-paste on Linux)\n`);
+              // Redraw prompt
+              if (lines.length > 0) {
+                process.stdout.write('   ');
+              } else {
+                process.stdout.write(options.prompt);
+              }
+              process.stdout.write(currentLine);
+            }
+          }).catch(() => {
+            process.stdout.write('\r\x1b[K');
+            if (lines.length > 0) {
+              process.stdout.write('   ');
+            } else {
+              process.stdout.write(options.prompt);
+            }
+            process.stdout.write(currentLine);
+          });
           return;
         }
       }
