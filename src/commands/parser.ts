@@ -3,6 +3,7 @@
  */
 
 import { c, colors, errorBlock, ThinkingAnimation } from '../ui/colors';
+import { getLocalHistoryFile, HOME_SKILLS_DIR } from '../constants';
 
 // Gather comprehensive codebase context for /init command
 async function gatherCodebaseContext(): Promise<string> {
@@ -22,7 +23,15 @@ async function gatherCodebaseContext(): Promise<string> {
   context += '## Code Styling & Formatting\n\n';
 
   // ESLint
-  const eslintConfigs = ['.eslintrc', '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.json', '.eslintrc.yml', 'eslint.config.js', 'eslint.config.mjs'];
+  const eslintConfigs = [
+    '.eslintrc',
+    '.eslintrc.js',
+    '.eslintrc.cjs',
+    '.eslintrc.json',
+    '.eslintrc.yml',
+    'eslint.config.js',
+    'eslint.config.mjs',
+  ];
   for (const config of eslintConfigs) {
     try {
       const content = await Bun.file(config).text();
@@ -32,7 +41,14 @@ async function gatherCodebaseContext(): Promise<string> {
   }
 
   // Prettier
-  const prettierConfigs = ['.prettierrc', '.prettierrc.js', '.prettierrc.json', '.prettierrc.yml', 'prettier.config.js', 'prettier.config.mjs'];
+  const prettierConfigs = [
+    '.prettierrc',
+    '.prettierrc.js',
+    '.prettierrc.json',
+    '.prettierrc.yml',
+    'prettier.config.js',
+    'prettier.config.mjs',
+  ];
   for (const config of prettierConfigs) {
     try {
       const content = await Bun.file(config).text();
@@ -64,8 +80,18 @@ async function gatherCodebaseContext(): Promise<string> {
 
   // Entry points
   context += '### Entry Points\n';
-  const entryFiles = ['src/index.ts', 'src/main.ts', 'src/app.ts', 'index.ts', 'main.ts', 'app.ts',
-                      'src/index.js', 'src/main.js', 'pages/_app.tsx', 'app/layout.tsx'];
+  const entryFiles = [
+    'src/index.ts',
+    'src/main.ts',
+    'src/app.ts',
+    'index.ts',
+    'main.ts',
+    'app.ts',
+    'src/index.js',
+    'src/main.js',
+    'pages/_app.tsx',
+    'app/layout.tsx',
+  ];
   for (const entry of entryFiles) {
     try {
       const content = await Bun.file(entry).text();
@@ -77,7 +103,8 @@ async function gatherCodebaseContext(): Promise<string> {
 
   // Directory structure
   try {
-    const result = await Bun.$`find . -maxdepth 2 -type d | grep -v node_modules | grep -v .git | head -30`.text();
+    const result =
+      await Bun.$`find . -maxdepth 2 -type d | grep -v node_modules | grep -v .git | head -30`.text();
     context += `\n### Directory Structure\n\`\`\`\n${result}\`\`\`\n\n`;
   } catch {}
 
@@ -144,7 +171,10 @@ async function gatherCodebaseContext(): Promise<string> {
   context += '## Code Patterns (samples)\n\n';
   try {
     const files = await Bun.$`find src -name "*.ts" -o -name "*.tsx" 2>/dev/null | head -5`.text();
-    const fileList = files.trim().split('\n').filter(f => f && !apiFiles.includes(f));
+    const fileList = files
+      .trim()
+      .split('\n')
+      .filter(f => f && !apiFiles.includes(f));
     for (const file of fileList.slice(0, 3)) {
       try {
         const content = await Bun.file(file).text();
@@ -186,7 +216,6 @@ export interface CommandHandler {
   execute: (args: string[], context: CommandContext) => Promise<boolean>;
 }
 
-
 export function parse(input: string): ParsedCommand {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) {
@@ -207,16 +236,30 @@ export function parse(input: string): ParsedCommand {
   };
 }
 
+import type { GrokClient } from '../api/grok';
+import type { TaskScheduler } from '../scheduler/scheduler';
+import type { SecureFileSystem } from '../fs/filesystem';
+import type { ConfigManager } from '../config/config';
+import type { CodeEditor } from '../code/editor';
+import type { SkillManager } from '../skills/manager';
+import type { Interface as ReadlineInterface } from 'readline';
+
+export interface ConnectorHandle {
+  isRunning: () => boolean;
+  sendMessage: (msg: string) => Promise<void>;
+  stop?: () => void;
+}
+
 export interface CommandContext {
-  grokClient: any;
-  scheduler: any;
-  fileSystem: any;
-  configManager: any;
-  codeEditor: any;
-  skillManager: any;
-  connectors: Map<string, { isRunning: () => boolean; sendMessage: (msg: string) => Promise<void>; stop?: () => void }>;
+  grokClient: GrokClient | null;
+  scheduler: TaskScheduler;
+  fileSystem: SecureFileSystem;
+  configManager: ConfigManager;
+  codeEditor: CodeEditor;
+  skillManager: SkillManager;
+  connectors: Map<string, ConnectorHandle>;
   reinitializeGrok: () => Promise<void>;
-  rl?: any;
+  rl?: ReadlineInterface;
 }
 
 import clipboardy from 'clipboardy';
@@ -304,7 +347,7 @@ commands.set('help', {
   name: 'help',
   description: 'Show available commands',
   usage: '/help [command]',
-  execute: async (args) => {
+  execute: async args => {
     if (args.length > 0) {
       const cmd = commands.get(args[0]);
       if (cmd) {
@@ -414,7 +457,9 @@ commands.set('config', {
     const configDir = context.configManager.getConfigDir();
 
     console.log(`\n${c.violet('Slashbot Configuration')}\n`);
-    console.log(`  ${c.muted('Status:')}     ${isAuth ? c.success('Connected') : c.warning('Not connected')}`);
+    console.log(
+      `  ${c.muted('Status:')}     ${isAuth ? c.success('Connected') : c.warning('Not connected')}`,
+    );
     console.log(`  ${c.muted('Model:')}      grok-4-1-fast-reasoning`);
     console.log(`  ${c.muted('Config:')}     ${configDir}`);
 
@@ -449,7 +494,9 @@ commands.set('init', {
 
     // Check if Grok client is available
     if (!context.grokClient) {
-      console.log(c.error('Grok API not configured. Set GROK_API_KEY or XAI_API_KEY environment variable.'));
+      console.log(
+        c.error('Grok API not configured. Set GROK_API_KEY or XAI_API_KEY environment variable.'),
+      );
       return true;
     }
 
@@ -485,10 +532,15 @@ ${codebaseContext}`;
     thinking.start('Generating GROK.md...', workDir);
 
     try {
-      const apiKey = context.configManager?.getApiKey() || process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+      const apiKey =
+        context.configManager?.getApiKey() || process.env.GROK_API_KEY || process.env.XAI_API_KEY;
       if (!apiKey) {
         thinking.stop();
-        console.log(c.error('Grok API key not configured. Use /login or set GROK_API_KEY environment variable.'));
+        console.log(
+          c.error(
+            'Grok API key not configured. Use /login or set GROK_API_KEY environment variable.',
+          ),
+        );
         return true;
       }
       const baseUrl = 'https://api.x.ai/v1';
@@ -497,13 +549,17 @@ ${codebaseContext}`;
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           model: 'grok-3-mini-fast',
           messages: [
-            { role: 'system', content: 'You are an expert at documenting codebases. Generate clean, useful documentation in markdown format. No XML tags, no action syntax, just markdown.' },
-            { role: 'user', content: generatePrompt }
+            {
+              role: 'system',
+              content:
+                'You are an expert at documenting codebases. Generate clean, useful documentation in markdown format. No XML tags, no action syntax, just markdown.',
+            },
+            { role: 'user', content: generatePrompt },
           ],
           max_tokens: 4096,
           temperature: 0.3,
@@ -560,7 +616,6 @@ ${codebaseContext}`;
       console.log(c.success(`File created: GROK.md`));
       console.log(c.muted('Generated by Grok AI based on codebase analysis'));
       console.log(c.muted('Compatible with CLAUDE.md and SLASHBOT.md'));
-
     } catch (error) {
       thinking.stop();
       console.log(c.error(`Error: ${error}`));
@@ -648,13 +703,19 @@ commands.set('task', {
           console.log(c.muted('\nNo scheduled tasks'));
           console.log(c.muted('Ask Slashbot to create a task in natural language.\n'));
         } else {
-          console.log(`\n${c.violet('Scheduled tasks:')} ${status.running ? c.success('(running)') : c.warning('(stopped)')}\n`);
+          console.log(
+            `\n${c.violet('Scheduled tasks:')} ${status.running ? c.success('(running)') : c.warning('(stopped)')}\n`,
+          );
           tasks.forEach((task: any, i: number) => {
             const statusIcon = task.enabled ? c.success('●') : c.muted('○');
             console.log(`  ${statusIcon} ${c.violet(`[${i + 1}]`)} ${task.name}`);
             console.log(`      ${c.muted('Cron:')}    ${task.cron}`);
-            console.log(`      ${c.muted('Command:')} ${task.command.slice(0, 50)}${task.command.length > 50 ? '...' : ''}`);
-            console.log(`      ${c.muted('Next:')}    ${task.next}  ${c.muted(`(${task.runs} runs)`)}`);
+            console.log(
+              `      ${c.muted('Command:')} ${task.command.slice(0, 50)}${task.command.length > 50 ? '...' : ''}`,
+            );
+            console.log(
+              `      ${c.muted('Next:')}    ${task.next}  ${c.muted(`(${task.runs} runs)`)}`,
+            );
           });
           console.log(`\n${c.muted('Commands: /task run|remove|toggle|cron <id>')}\n`);
         }
@@ -702,9 +763,11 @@ commands.set('task', {
 
         const enabled = await context.scheduler?.toggleTask(toggleId);
         const taskToggled = tasks[toggleId];
-        console.log(enabled
-          ? c.success(`Enabled: ${taskToggled.name}`)
-          : c.warning(`Disabled: ${taskToggled.name}`));
+        console.log(
+          enabled
+            ? c.success(`Enabled: ${taskToggled.name}`)
+            : c.warning(`Disabled: ${taskToggled.name}`),
+        );
         break;
 
       case 'cron':
@@ -735,7 +798,9 @@ commands.set('task', {
 
       case 'status':
         console.log(`\n${c.violet('Scheduler status:')}\n`);
-        console.log(`  ${c.muted('Running:')}  ${status.running ? c.success('Yes') : c.warning('No')}`);
+        console.log(
+          `  ${c.muted('Running:')}  ${status.running ? c.success('Yes') : c.warning('No')}`,
+        );
         console.log(`  ${c.muted('Tasks:')}    ${status.taskCount}`);
         console.log(`  ${c.muted('Active:')}   ${status.activeCount}\n`);
         break;
@@ -828,11 +893,11 @@ commands.set('history', {
   name: 'history',
   description: 'Show command history',
   usage: '/history [n]',
-  execute: async (args) => {
+  execute: async args => {
     const limit = parseInt(args[0]) || 20;
 
     try {
-      const historyPath = `${process.cwd()}/.slashbot/history`;
+      const historyPath = getLocalHistoryFile();
       const file = Bun.file(historyPath);
 
       if (!(await file.exists())) {
@@ -891,7 +956,9 @@ commands.set('context', {
         const estimatedTokens = context.grokClient.estimateTokens();
 
         console.log(`\n${c.violet('Context:')}\n`);
-        console.log(`  ${c.muted('Compression:')}  ${enabled ? c.success('Enabled') : c.warning('Disabled')}`);
+        console.log(
+          `  ${c.muted('Compression:')}  ${enabled ? c.success('Enabled') : c.warning('Disabled')}`,
+        );
         console.log(`  ${c.muted('Max messages:')} ${maxMessages}`);
         console.log(`  ${c.muted('Messages:')}     ${contextSize}`);
         console.log(`  ${c.muted('Tokens (~):')}   ${estimatedTokens.toLocaleString()}`);
@@ -968,7 +1035,9 @@ commands.set('telegram', {
       console.log(`\n${c.violet('Telegram Configuration')}\n`);
 
       if (telegramConfig) {
-        console.log(`  ${c.muted('Status:')}  ${connector?.isRunning() ? c.success('Connected') : c.warning('Configured but not running')}`);
+        console.log(
+          `  ${c.muted('Status:')}  ${connector?.isRunning() ? c.success('Connected') : c.warning('Configured but not running')}`,
+        );
         console.log(`  ${c.muted('Bot:')}     ${telegramConfig.botToken.slice(0, 10)}...`);
         console.log(`  ${c.muted('Chat ID:')} ${telegramConfig.chatId}`);
       } else {
@@ -1011,7 +1080,10 @@ commands.set('telegram', {
 
       try {
         const response = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates`);
-        const data = await response.json() as { ok: boolean; result: Array<{ message?: { chat?: { id: number } } }> };
+        const data = (await response.json()) as {
+          ok: boolean;
+          result: Array<{ message?: { chat?: { id: number } } }>;
+        };
 
         if (!data.ok) {
           console.log(c.error('Invalid bot token'));
@@ -1024,7 +1096,11 @@ commands.set('telegram', {
           finalChatId = String(update.message.chat.id);
           console.log(c.success(`Found chat_id: ${finalChatId}`));
         } else {
-          console.log(c.warning('No messages found. Send a message to your bot first, then run this command again.'));
+          console.log(
+            c.warning(
+              'No messages found. Send a message to your bot first, then run this command again.',
+            ),
+          );
           return true;
         }
       } catch (error) {
@@ -1136,7 +1212,7 @@ commands.set('unhinged', {
 
 export async function executeCommand(
   parsed: ParsedCommand,
-  context: CommandContext
+  context: CommandContext,
 ): Promise<boolean> {
   if (!parsed.isCommand || !parsed.command) {
     return false;
@@ -1187,7 +1263,7 @@ commands.set('skill', {
         if (skills.length === 0) {
           console.log(c.muted('\nNo skills installed'));
           console.log(c.muted('Install with: /skill install <url>'));
-          console.log(c.muted('Skills are stored in .slashbot/skills/\n'));
+          console.log(c.muted(`Skills are stored in ${HOME_SKILLS_DIR}/\n`));
         } else {
           console.log(`\n${c.violet('Installed skills:')}\n`);
           for (const skill of skills) {

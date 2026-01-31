@@ -1,16 +1,84 @@
 /**
  * Action Parser - Extract actions from LLM response content
  *
- * Uses [[action ...]]...[[/action]] syntax to avoid false positives
- * from XML-like patterns appearing in code examples or documentation.
+ * Uses <action ...>...</action> XML syntax for better LLM compatibility.
+ * Actions inside code blocks are stripped to prevent injection.
+ * Aligned with Claude Code tool schema.
  */
 
-import type { Action, GrepAction, ReadAction, EditAction, CreateAction, ExecAction, ScheduleAction, NotifyAction, GlobAction, GitAction, FetchAction, FormatAction, TypecheckAction, SearchAction, SkillAction, SkillInstallAction } from './types';
+import type {
+  Action,
+  BashAction,
+  ReadAction,
+  EditAction,
+  MultiEditAction,
+  WriteAction,
+  CreateAction,
+  GlobAction,
+  GrepAction,
+  LSAction,
+  GitAction,
+  FetchAction,
+  SearchAction,
+  FormatAction,
+  TypecheckAction,
+  ScheduleAction,
+  NotifyAction,
+  SkillAction,
+  SkillInstallAction,
+  ExecAction,
+  PsAction,
+  KillAction,
+} from './types';
 
 // Quote pattern: matches both single and double quotes
-const Q = `["']`;  // quote
-const NQ = `[^"']*`;  // non-quote content (allow empty)
-const NQR = `[^"']+`;  // non-quote content (required - at least 1 char)
+const Q = `["']`; // quote
+const NQ = `[^"']*`; // non-quote content (allow empty)
+const NQR = `[^"']+`; // non-quote content (required - at least 1 char)
+
+// Fix truncated/malformed tags (LLM sometimes makes mistakes)
+function fixTruncatedTags(content: string): string {
+  let result = content;
+
+  // List of action tags that might be truncated
+  const tags = ['bash', 'read', 'edit', 'multi-edit', 'write', 'create', 'exec',
+                'glob', 'grep', 'ls', 'git', 'fetch', 'search', 'format',
+                'typecheck', 'schedule', 'notify', 'skill', 'skill-install',
+                'ps', 'kill', 'replace']; // include inner tags too
+
+  // Fix malformed inner tags like <search"> or <replace"> (stray quotes)
+  result = result.replace(/<search["'\s]*>/gi, '<search>');
+  result = result.replace(/<replace["'\s]*>/gi, '<replace>');
+  result = result.replace(/<\/search["'\s]*>/gi, '</search>');
+  result = result.replace(/<\/replace["'\s]*>/gi, '</replace>');
+
+  // Fix truncated closing tags like </edit (missing >) - ANYWHERE in content, not just end
+  for (const tag of tags) {
+    // Fix </tag followed by newline or other content (missing >)
+    // Match </tag NOT followed by > but followed by newline, space, or end
+    const truncatedClosePattern = new RegExp(`</${tag}(?=[\\s\\n]|$)(?!>)`, 'gi');
+    result = result.replace(truncatedClosePattern, `</${tag}>`);
+
+    // Also fix </tag at very end of content
+    const truncatedCloseEnd = new RegExp(`</${tag}\\s*$`, 'i');
+    result = result.replace(truncatedCloseEnd, `</${tag}>`);
+  }
+
+  // Fix </ at very end (incomplete closing tag)
+  result = result.replace(/<\/\s*$/, '');
+
+  // Fix truncated self-closing tags like <read path="x" or <read path="x"/
+  for (const tag of tags) {
+    // Match opening tag without proper closing at end of string
+    const truncatedSelfClose = new RegExp(`(<${tag}\\s+[^>]*?)\\s*$`, 'i');
+    const match = result.match(truncatedSelfClose);
+    if (match && !match[1].endsWith('/>') && !match[1].endsWith('>')) {
+      result = result.replace(truncatedSelfClose, `$1/>`);
+    }
+  }
+
+  return result;
+}
 
 // Flexible attribute extractor - handles any order and whitespace
 function extractAttr(tag: string, name: string): string | null {
@@ -23,53 +91,112 @@ function extractAttr(tag: string, name: string): string | null {
   return null;
 }
 
-// Regex patterns for each action type using [[action]] syntax
-// This is less likely to appear in normal text/code than XML-like <action> tags
+// Check if attribute is truthy
+function extractBoolAttr(tag: string, name: string): boolean {
+  const val = extractAttr(tag, name);
+  return val === 'true' || val === '1' || val === 'yes';
+}
+
+// Regex patterns for each action type using XML <action> syntax
 const PATTERNS = {
-  // [[grep ...]]...[[/grep]] or [[grep .../]] - flexible attribute extraction
-  grep: /\[\[grep\s+[^\]]*(?:\/\]\]|\]\][\s\S]*?\[\[\/grep\]\])/gi,
-  // [[read path="..."/]] or [[read path="..."]] or [[read path="..."]]...[[/read]]
-  read: /\[\[read\s+[^\]]*\/?\]\](?:[\s\S]*?\[\[\/read\]\])?/gi,
-  // [[edit path="..."]][[search]]...[[/search]][[replace]]...[[/replace]][[/edit]]
-  edit: new RegExp(`\\[\\[edit\\s+path=${Q}(${NQR})${Q}\\s*\\]\\]\\s*\\[\\[search\\]\\]([\\s\\S]*?)\\[\\[/search\\]\\]\\s*\\[\\[replace\\]\\]([\\s\\S]*?)\\[\\[/replace\\]\\]\\s*\\[\\[/edit\\]\\]`, 'gi'),
-  // [[create path="..."]]...[[/create]]
-  create: new RegExp(`\\[\\[create\\s+path=${Q}(${NQR})${Q}\\s*\\]\\]([\\s\\S]*?)\\[\\[/create\\]\\]`, 'gi'),
-  // [[exec]]...[[/exec]]
-  exec: /\[\[exec\s*\]\]([\s\S]+?)\[\[\/exec\]\]/gi,
-  // [[schedule cron="..." name="..."]]...[[/schedule]] (name optional)
-  schedule: new RegExp(`\\[\\[schedule\\s+cron=${Q}(${NQR})${Q}(?:\\s+name=${Q}(${NQ})${Q})?\\s*\\]\\]([\\s\\S]+?)\\[\\[/schedule\\]\\]`, 'gi'),
-  // [[notify]]message[[/notify]] or [[notify to="telegram"]]message[[/notify]]
-  notify: /\[\[notify(?:\s+to=["']([^"']+)["'])?\s*\]\]([\s\S]+?)\[\[\/notify\]\]/gi,
-  // [[glob pattern="**/*.ts"/]] or [[glob pattern="**/*.ts" path="src"/]]
-  glob: /\[\[glob\s+[^\]]*\/?\]\]/gi,
-  // [[git command="status"/]] or [[git command="diff" args="--staged"/]]
-  git: /\[\[git\s+[^\]]*\/?\]\]/gi,
-  // [[fetch url="https://..."/]] or [[fetch url="..." prompt="..."/]]
-  fetch: /\[\[fetch\s+[^\]]*\/?\]\]/gi,
-  // [[format/]] or [[format path="..."/]]
-  format: /\[\[format(?:\s+[^\]]*)?\s*\/?\]\]/gi,
-  // [[typecheck/]]
-  typecheck: /\[\[typecheck\s*\/?\]\]/gi,
-  // [[search query="..."/]] or [[search query="..." x="true"/]]
-  search: /\[\[search\s+[^\]]*\/?\]\]/gi,
-  // [[skill name="..."/]] or [[skill name="..." args="..."/]]
-  skill: /\[\[skill\s+[^\]]*\/?\]\]/gi,
-  // [[skill-install url="..."/]] or [[skill-install url="..." name="..."/]]
-  skillInstall: /\[\[skill-install\s+[^\]]*\/?\]\]/gi,
+  // ===== Shell Commands =====
+  // <bash>command</bash> or <bash timeout="5000">command</bash>
+  bash: /<bash(?:\s+[^>]*)?\s*>([\s\S]+?)<\/bash>/gi,
+  // <exec>command</exec> (legacy alias)
+  exec: /<exec\s*>([\s\S]+?)<\/exec>/gi,
+
+  // ===== File Operations =====
+  // <read path="..." /> or <read path="..." offset="10" limit="50"/>
+  read: /<read\s+[^>]*\/?>/gi,
+  // <edit path="..."><search>...</search><replace>...</replace></edit>
+  edit: new RegExp(
+    `<edit\\s+path=${Q}(${NQR})${Q}[^>]*>\\s*<search>([\\s\\S]*?)</search>\\s*<replace>([\\s\\S]*?)</replace>\\s*</edit>`,
+    'gi',
+  ),
+  // <multi-edit path="..."><edit><search>...</search><replace>...</replace></edit>...</multi-edit>
+  multiEdit: /<multi-edit\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/multi-edit>/gi,
+  // <write path="...">content</write>
+  write: new RegExp(`<write\\s+path=${Q}(${NQR})${Q}\\s*>([\\s\\S]*?)</write>`, 'gi'),
+  // <create path="...">content</create> (legacy alias)
+  create: new RegExp(`<create\\s+path=${Q}(${NQR})${Q}\\s*>([\\s\\S]*?)</create>`, 'gi'),
+
+  // ===== Search & Navigation =====
+  // <glob pattern="**/*.ts"/> or <glob pattern="..." path="src"/>
+  glob: /<glob\s+[^>]*\/?>/gi,
+  // <grep pattern="..."/> with many optional attributes
+  grep: /<grep\s+[^>]*(?:\/>|>[\s\S]*?<\/grep>)/gi,
+  // <ls path="/dir"/> or <ls path="/dir" ignore="node_modules,dist"/>
+  ls: /<ls\s+[^>]*\/?>/gi,
+
+  // ===== Git Operations =====
+  // <git command="status"/> or <git command="diff" args="--staged"/>
+  git: /<git\s+[^>]*\/?>/gi,
+
+  // ===== Web Operations =====
+  // <fetch url="..."/> or <fetch url="..." prompt="..."/>
+  fetch: /<fetch\s+[^>]*\/?>/gi,
+  // <search query="..."/> with optional domain filters
+  search: /<search\s+[^>]*\/?>/gi,
+
+  // ===== Code Quality =====
+  // <format/> or <format path="..."/>
+  format: /<format(?:\s+[^>]*)?\s*\/?>/gi,
+  // <typecheck/>
+  typecheck: /<typecheck\s*\/?>/gi,
+
+  // ===== Scheduling & Notifications =====
+  // <schedule cron="..." name="...">command</schedule>
+  // <schedule cron="..." name="..." prompt="true">LLM prompt</schedule>
+  schedule: new RegExp(
+    `<schedule\\s+cron=${Q}(${NQR})${Q}(?:\\s+name=${Q}(${NQ})${Q})?(?:\\s+prompt=${Q}(true|false)?${Q})?\\s*>([\\s\\S]+?)</schedule>`,
+    'gi',
+  ),
+  // <notify>message</notify> or <notify to="telegram">message</notify>
+  notify: /<notify(?:\s+to=["']([^"']+)["'])?\s*>([\s\S]+?)<\/notify>/gi,
+
+  // ===== Skills =====
+  // <skill name="..."/> or <skill name="..." args="..."/>
+  skill: /<skill\s+[^>]*\/?>/gi,
+  // <skill-install url="..."/> or <skill-install url="..." name="..."/>
+  skillInstall: /<skill-install\s+[^>]*\/?>/gi,
+
+  // ===== Process Management =====
+  // <ps/> - list running processes
+  ps: /<ps\s*\/?>/gi,
+  // <kill target="..."/> or <kill pid="..."/>
+  kill: /<kill\s+[^>]*\/?>/gi,
 };
 
 /**
  * Remove code blocks from content to prevent parsing actions inside them
- * This prevents injection when AI outputs documentation/examples
  */
 function stripCodeBlocks(content: string): string {
   // Remove fenced code blocks (```...```)
   let result = content.replace(/```[\s\S]*?```/g, '');
   // Remove inline code (`...`)
   result = result.replace(/`[^`]+`/g, '');
-  // Remove [[literal]]...[[/literal]] blocks (explicit no-execute)
-  result = result.replace(/\[\[literal\]\][\s\S]*?\[\[\/literal\]\]/gi, '');
+  // Remove <literal>...</literal> blocks (explicit no-execute)
+  result = result.replace(/<literal>[\s\S]*?<\/literal>/gi, '');
   return result;
+}
+
+/**
+ * Parse inner edit blocks from multi-edit content
+ */
+function parseInnerEdits(content: string): Array<{ search: string; replace: string; replaceAll?: boolean }> {
+  const edits: Array<{ search: string; replace: string; replaceAll?: boolean }> = [];
+  const innerEditRegex = /<edit(?:\s+[^>]*)?>[\s\S]*?<search>([\s\S]*?)<\/search>\s*<replace>([\s\S]*?)<\/replace>\s*<\/edit>/gi;
+  let match;
+  while ((match = innerEditRegex.exec(content)) !== null) {
+    const [fullMatch, search, replace] = match;
+    const replaceAll = extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
+    edits.push({
+      search: search.trim(),
+      replace: replace.trim(),
+      replaceAll: replaceAll || undefined,
+    });
+  }
+  return edits;
 }
 
 /**
@@ -79,59 +206,103 @@ function stripCodeBlocks(content: string): string {
 export function parseActions(content: string): Action[] {
   const actions: Action[] = [];
 
-  // Strip code blocks to prevent parsing actions inside them
-  const safeContent = stripCodeBlocks(content);
+  // Fix truncated tags first (LLM sometimes cuts off at end)
+  const fixedContent = fixTruncatedTags(content);
 
-  // Parse grep actions (flexible attribute extraction with context options)
+  // Strip code blocks to prevent parsing actions inside them
+  const safeContent = stripCodeBlocks(fixedContent);
+
   let match;
-  const grepRegex = new RegExp(PATTERNS.grep.source, 'gi');
-  while ((match = grepRegex.exec(safeContent)) !== null) {
+
+  // ===== Shell Commands =====
+
+  // Parse bash actions
+  const bashRegex = new RegExp(PATTERNS.bash.source, 'gi');
+  while ((match = bashRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
-    const pattern = extractAttr(fullTag, 'pattern');
-    const filePattern = extractAttr(fullTag, 'file');
-    const context = extractAttr(fullTag, 'context');
-    const contextBefore = extractAttr(fullTag, 'before');
-    const contextAfter = extractAttr(fullTag, 'after');
-    const caseInsensitive = extractAttr(fullTag, 'case');
-    if (pattern) {
-      actions.push({
-        type: 'grep',
-        pattern,
-        filePattern: filePattern || undefined,
-        context: context ? parseInt(context, 10) : undefined,
-        contextBefore: contextBefore ? parseInt(contextBefore, 10) : undefined,
-        contextAfter: contextAfter ? parseInt(contextAfter, 10) : undefined,
-        caseInsensitive: caseInsensitive === 'insensitive' || caseInsensitive === 'i',
-      } as GrepAction);
-    }
+    const command = match[1].trim();
+    const timeout = extractAttr(fullTag, 'timeout');
+    const description = extractAttr(fullTag, 'description');
+    const runInBackground = extractBoolAttr(fullTag, 'background');
+    actions.push({
+      type: 'bash',
+      command,
+      timeout: timeout ? parseInt(timeout, 10) : undefined,
+      description: description || undefined,
+      runInBackground: runInBackground || undefined,
+    } as BashAction);
   }
 
-  // Parse read actions (flexible attribute extraction)
+  // Parse exec actions (legacy alias → treated as bash)
+  const execRegex = new RegExp(PATTERNS.exec.source, 'gi');
+  while ((match = execRegex.exec(safeContent)) !== null) {
+    const command = match[1].trim();
+    actions.push({
+      type: 'exec',
+      command,
+    } as ExecAction);
+  }
+
+  // ===== File Operations =====
+
+  // Parse read actions with offset/limit support
   const readRegex = new RegExp(PATTERNS.read.source, 'gi');
   while ((match = readRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const path = extractAttr(fullTag, 'path');
+    const offset = extractAttr(fullTag, 'offset');
+    const limit = extractAttr(fullTag, 'limit');
     if (path) {
       actions.push({
         type: 'read',
         path,
+        offset: offset ? parseInt(offset, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
       } as ReadAction);
     }
   }
 
-  // Parse edit actions
+  // Parse edit actions with replaceAll support
   const editRegex = new RegExp(PATTERNS.edit.source, 'gi');
   while ((match = editRegex.exec(safeContent)) !== null) {
+    const fullMatch = match[0];
     const [, path, search, replace] = match;
+    const replaceAll = extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
     actions.push({
       type: 'edit',
       path,
       search: search.trim(),
       replace: replace.trim(),
+      replaceAll: replaceAll || undefined,
     } as EditAction);
   }
 
-  // Parse create actions
+  // Parse multi-edit actions
+  const multiEditRegex = new RegExp(PATTERNS.multiEdit.source, 'gi');
+  while ((match = multiEditRegex.exec(safeContent)) !== null) {
+    const [, path, innerContent] = match;
+    const edits = parseInnerEdits(innerContent);
+    if (edits.length > 0) {
+      actions.push({
+        type: 'multi-edit',
+        path,
+        edits,
+      } as MultiEditAction);
+    }
+  }
+
+  // Parse write actions
+  const writeRegex = new RegExp(PATTERNS.write.source, 'gi');
+  while ((match = writeRegex.exec(safeContent)) !== null) {
+    const [, path, fileContent] = match;
+    actions.push({
+      type: 'write',
+      path,
+      content: fileContent.trim(),
+    } as WriteAction);
+  }
+
+  // Parse create actions (legacy alias)
   const createRegex = new RegExp(PATTERNS.create.source, 'gi');
   while ((match = createRegex.exec(safeContent)) !== null) {
     const [, path, fileContent] = match;
@@ -142,40 +313,9 @@ export function parseActions(content: string): Action[] {
     } as CreateAction);
   }
 
-  // Parse exec actions
-  const execRegex = new RegExp(PATTERNS.exec.source, 'gi');
-  while ((match = execRegex.exec(safeContent)) !== null) {
-    const [, command] = match;
-    actions.push({
-      type: 'exec',
-      command: command.trim(),
-    } as ExecAction);
-  }
+  // ===== Search & Navigation =====
 
-  // Parse schedule actions
-  const scheduleRegex = new RegExp(PATTERNS.schedule.source, 'gi');
-  while ((match = scheduleRegex.exec(safeContent)) !== null) {
-    const [, cron, name, command] = match;
-    actions.push({
-      type: 'schedule',
-      cron,
-      name: name || 'Scheduled Task',
-      command: command.trim(),
-    } as ScheduleAction);
-  }
-
-  // Parse notify actions
-  const notifyRegex = new RegExp(PATTERNS.notify.source, 'gi');
-  while ((match = notifyRegex.exec(safeContent)) !== null) {
-    const [, target, message] = match;
-    actions.push({
-      type: 'notify',
-      message: message.trim(),
-      target: target || undefined,
-    } as NotifyAction);
-  }
-
-  // Parse glob actions (flexible attribute extraction)
+  // Parse glob actions
   const globRegex = new RegExp(PATTERNS.glob.source, 'gi');
   while ((match = globRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
@@ -190,13 +330,67 @@ export function parseActions(content: string): Action[] {
     }
   }
 
-  // Parse git actions (flexible attribute extraction)
+  // Parse grep actions with full ripgrep-style options
+  const grepRegex = new RegExp(PATTERNS.grep.source, 'gi');
+  while ((match = grepRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const pattern = extractAttr(fullTag, 'pattern');
+    if (pattern) {
+      const path = extractAttr(fullTag, 'path');
+      const glob = extractAttr(fullTag, 'glob') || extractAttr(fullTag, 'file');
+      const outputMode = extractAttr(fullTag, 'output') || extractAttr(fullTag, 'mode');
+      const context = extractAttr(fullTag, 'context') || extractAttr(fullTag, 'C');
+      const contextBefore = extractAttr(fullTag, 'before') || extractAttr(fullTag, 'B');
+      const contextAfter = extractAttr(fullTag, 'after') || extractAttr(fullTag, 'A');
+      const caseInsensitive = extractBoolAttr(fullTag, 'i') || extractAttr(fullTag, 'case') === 'insensitive';
+      const lineNumbers = extractBoolAttr(fullTag, 'n') || extractBoolAttr(fullTag, 'lines');
+      const headLimit = extractAttr(fullTag, 'limit') || extractAttr(fullTag, 'head');
+      const multiline = extractBoolAttr(fullTag, 'multiline');
+
+      actions.push({
+        type: 'grep',
+        pattern,
+        path: path || undefined,
+        glob: glob || undefined,
+        outputMode: (outputMode as GrepAction['outputMode']) || undefined,
+        context: context ? parseInt(context, 10) : undefined,
+        contextBefore: contextBefore ? parseInt(contextBefore, 10) : undefined,
+        contextAfter: contextAfter ? parseInt(contextAfter, 10) : undefined,
+        caseInsensitive: caseInsensitive || undefined,
+        lineNumbers: lineNumbers || undefined,
+        headLimit: headLimit ? parseInt(headLimit, 10) : undefined,
+        multiline: multiline || undefined,
+      } as GrepAction);
+    }
+  }
+
+  // Parse ls actions
+  const lsRegex = new RegExp(PATTERNS.ls.source, 'gi');
+  while ((match = lsRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const path = extractAttr(fullTag, 'path');
+    const ignoreStr = extractAttr(fullTag, 'ignore');
+    if (path) {
+      actions.push({
+        type: 'ls',
+        path,
+        ignore: ignoreStr ? ignoreStr.split(',').map(s => s.trim()) : undefined,
+      } as LSAction);
+    }
+  }
+
+  // ===== Git Operations =====
+
+  // Parse git actions
   const gitRegex = new RegExp(PATTERNS.git.source, 'gi');
   while ((match = gitRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const command = extractAttr(fullTag, 'command');
     const args = extractAttr(fullTag, 'args');
-    if (command && ['status', 'diff', 'log', 'branch', 'add', 'commit', 'checkout', 'stash'].includes(command)) {
+    if (
+      command &&
+      ['status', 'diff', 'log', 'branch', 'add', 'commit', 'checkout', 'stash'].includes(command)
+    ) {
       actions.push({
         type: 'git',
         command: command as GitAction['command'],
@@ -205,7 +399,9 @@ export function parseActions(content: string): Action[] {
     }
   }
 
-  // Parse fetch actions (flexible attribute extraction)
+  // ===== Web Operations =====
+
+  // Parse fetch actions
   const fetchRegex = new RegExp(PATTERNS.fetch.source, 'gi');
   while ((match = fetchRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
@@ -219,6 +415,25 @@ export function parseActions(content: string): Action[] {
       } as FetchAction);
     }
   }
+
+  // Parse search actions with domain filters
+  const searchRegex = new RegExp(PATTERNS.search.source, 'gi');
+  while ((match = searchRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const query = extractAttr(fullTag, 'query');
+    const allowedDomainsStr = extractAttr(fullTag, 'allowed_domains') || extractAttr(fullTag, 'domains');
+    const blockedDomainsStr = extractAttr(fullTag, 'blocked_domains') || extractAttr(fullTag, 'exclude');
+    if (query) {
+      actions.push({
+        type: 'search',
+        query,
+        allowedDomains: allowedDomainsStr ? allowedDomainsStr.split(',').map(s => s.trim()) : undefined,
+        blockedDomains: blockedDomainsStr ? blockedDomainsStr.split(',').map(s => s.trim()) : undefined,
+      } as SearchAction);
+    }
+  }
+
+  // ===== Code Quality =====
 
   // Parse format actions
   const formatRegex = new RegExp(PATTERNS.format.source, 'gi');
@@ -239,20 +454,34 @@ export function parseActions(content: string): Action[] {
     } as TypecheckAction);
   }
 
-  // Parse search actions
-  const searchRegex = new RegExp(PATTERNS.search.source, 'gi');
-  while ((match = searchRegex.exec(safeContent)) !== null) {
-    const fullTag = match[0];
-    const query = extractAttr(fullTag, 'query');
-    const xSearch = extractAttr(fullTag, 'x');
-    if (query) {
-      actions.push({
-        type: 'search',
-        query,
-        xSearch: xSearch === 'true',
-      } as SearchAction);
-    }
+  // ===== Scheduling & Notifications =====
+
+  // Parse schedule actions
+  const scheduleRegex = new RegExp(PATTERNS.schedule.source, 'gi');
+  while ((match = scheduleRegex.exec(safeContent)) !== null) {
+    const [, cron, name, isPrompt, content] = match;
+    const isPromptTask = isPrompt === 'true';
+    actions.push({
+      type: 'schedule',
+      cron,
+      name: name || 'Scheduled Task',
+      command: isPromptTask ? undefined : content.trim(),
+      prompt: isPromptTask ? content.trim() : undefined,
+    } as ScheduleAction);
   }
+
+  // Parse notify actions
+  const notifyRegex = new RegExp(PATTERNS.notify.source, 'gi');
+  while ((match = notifyRegex.exec(safeContent)) !== null) {
+    const [, target, message] = match;
+    actions.push({
+      type: 'notify',
+      message: message.trim(),
+      target: target || undefined,
+    } as NotifyAction);
+  }
+
+  // ===== Skills =====
 
   // Parse skill actions
   const skillRegex = new RegExp(PATTERNS.skill.source, 'gi');
@@ -281,6 +510,25 @@ export function parseActions(content: string): Action[] {
         url,
         name: name || undefined,
       } as SkillInstallAction);
+    }
+  }
+
+  // Parse ps actions (list processes)
+  const psRegex = new RegExp(PATTERNS.ps.source, 'gi');
+  while ((match = psRegex.exec(safeContent)) !== null) {
+    actions.push({ type: 'ps' } as PsAction);
+  }
+
+  // Parse kill actions
+  const killRegex = new RegExp(PATTERNS.kill.source, 'gi');
+  while ((match = killRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const target = extractAttr(fullTag, 'target') || extractAttr(fullTag, 'pid') || extractAttr(fullTag, 'id');
+    if (target) {
+      actions.push({
+        type: 'kill',
+        target,
+      } as KillAction);
     }
   }
 

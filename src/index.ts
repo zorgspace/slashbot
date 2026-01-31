@@ -6,10 +6,16 @@
 
 import { banner, inputPrompt, inputClose, responseStart, c, errorBlock, colors, connectorMessage, connectorResponse } from './ui/colors';
 
-if (process.argv[2] === 'update-check') {
-  const updater = await import('./updater') as any;
-  const checkForUpdate = updater.checkForUpdate as (notifier?: any) => Promise<void>;
-  await checkForUpdate();
+// Handle update commands before anything else
+if (process.argv[2] === 'update-check' || process.argv.includes('--check-update')) {
+  const { checkForUpdate } = await import('./updater');
+  await checkForUpdate(false, false);
+  process.exit(0);
+}
+
+if (process.argv.includes('--update') || process.argv.includes('-u')) {
+  const { updateAndRestart } = await import('./updater');
+  await updateAndRestart();
   process.exit(0);
 }
 
@@ -68,7 +74,9 @@ process.on('unhandledRejection', (reason) => {
   // Don't exit - keep running
 });
 
-const VERSION = process.env.SLASHBOT_VERSION || "dev";
+// Read version from package.json
+import pkg from '../package.json';
+const VERSION = pkg.version;
 
 if (process.argv.some(arg => arg === '--version' || arg === '-v')) {
   console.log(`slashbot v${VERSION}`);
@@ -92,6 +100,7 @@ import { initTranscription } from './services/transcription';
 import { enableBracketedPaste, disableBracketedPaste, expandPaste } from './ui/pasteHandler';
 import { readMultilineInput } from './ui/multilineInput';
 import { createSkillManager, SkillManager } from './skills/manager';
+import { getLocalSlashbotDir, getLocalHistoryFile } from './constants';
 
 
 
@@ -191,8 +200,8 @@ class Slashbot {
 
         // Wire up action handlers
         this.grokClient.setActionHandlers({
-          onSchedule: async (cron, command, name) => {
-            await this.scheduler.addTask(name, cron, command);
+          onSchedule: async (cron, commandOrPrompt, name, options) => {
+            await this.scheduler.addTask(name, cron, commandOrPrompt, { isPrompt: options?.isPrompt });
           },
 
           onFile: async (path, content) => {
@@ -200,8 +209,8 @@ class Slashbot {
           },
 
           // Code editing handlers
-          onGrep: async (pattern, filePattern, options) => {
-            const results = await this.codeEditor.grep(pattern, filePattern, options);
+          onGrep: async (pattern, options) => {
+            const results = await this.codeEditor.grep(pattern, options?.glob, options);
             if (results.length === 0) {
               return 'No results';
             }
@@ -220,7 +229,7 @@ class Slashbot {
             return await this.codeEditor.createFile(path, content);
           },
 
-          onExec: async (command) => {
+          onBash: async (command, options) => {
             const workDir = this.codeEditor.getWorkDir();
 
             // Security check via scheduler (blocks dangerous patterns)
@@ -233,15 +242,26 @@ class Slashbot {
               security.warnings.forEach(w => console.log(c.warning(`[SECURITY] ${w}`)));
             }
 
-            // Execute the command (no prompt - auto-allow)
+            // Background execution
+            if (options?.runInBackground) {
+              const { processManager } = await import('./utils/processManager');
+              const managed = processManager.spawn(command, workDir);
+              return `Started background process ${managed.id} (PID ${managed.pid})`;
+            }
+
+            // Normal execution - use login shell to load user's bashrc/zshrc (nvm, pyenv, etc.)
             try {
               const { exec } = await import('child_process');
               const { promisify } = await import('util');
               const execAsync = promisify(exec);
-              const { stdout, stderr } = await execAsync(command, {
+              const timeout = options?.timeout || 30000;
+              // Wrap command in login shell to load user environment
+              const wrappedCommand = `bash -lc ${JSON.stringify(command)}`;
+              const { stdout, stderr } = await execAsync(wrappedCommand, {
                 cwd: workDir,
-                timeout: 30000,
+                timeout,
                 maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large outputs
+                env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1' },
               });
               return stdout || stderr || 'Command executed';
             } catch (error: any) {
@@ -301,6 +321,29 @@ class Slashbot {
               return files;
             } catch {
               return [];
+            }
+          },
+
+          // List directory contents
+          onLS: async (path, ignore) => {
+            const workDir = this.codeEditor.getWorkDir();
+            const targetPath = path.startsWith('/') ? path : `${workDir}/${path}`;
+            const ignoreSet = new Set(ignore || ['node_modules', '.git', 'dist']);
+
+            try {
+              const fs = await import('fs/promises');
+              const entries = await fs.readdir(targetPath, { withFileTypes: true });
+              const results: string[] = [];
+
+              for (const entry of entries) {
+                if (ignoreSet.has(entry.name)) continue;
+                const type = entry.isDirectory() ? '/' : '';
+                results.push(`${entry.name}${type}`);
+              }
+
+              return results.sort();
+            } catch (error: any) {
+              return [`Error: ${error.message}`];
             }
           },
 
@@ -377,14 +420,20 @@ class Slashbot {
           // Fetch URL and return content for context
           onFetch: async (url, prompt) => {
             try {
-              // Fetch the URL
+              // Fetch the URL with timeout
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
+
               const response = await fetch(url, {
                 headers: {
                   'User-Agent': 'Slashbot/1.0 (CLI Assistant)',
                   'Accept': 'text/html,application/json,text/plain,*/*',
                 },
                 redirect: 'follow',
+                signal: controller.signal,
               });
+
+              clearTimeout(timeout);
 
               if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -433,7 +482,7 @@ class Slashbot {
               throw new Error('Not connected to Grok');
             }
             return await this.grokClient.searchChat(query, {
-              enableXSearch: options?.xSearch,
+              enableXSearch: true,
             });
           },
 
@@ -574,7 +623,7 @@ class Slashbot {
 
   private async loadHistory(): Promise<void> {
     try {
-      const historyPath = `${process.cwd()}/.slashbot/history`;
+      const historyPath = getLocalHistoryFile();
       const file = Bun.file(historyPath);
       if (await file.exists()) {
         const content = await file.text();
@@ -593,12 +642,12 @@ class Slashbot {
     this.historySaveTimeout = setTimeout(async () => {
       try {
         const { mkdir } = await import('fs/promises');
-        const configDir = `${process.cwd()}/.slashbot`;
+        const configDir = getLocalSlashbotDir();
         await mkdir(configDir, { recursive: true });
 
         // Keep last 500 commands
         const historyToSave = this.history.slice(-500);
-        await Bun.write(`${configDir}/history`, historyToSave.join('\n'));
+        await Bun.write(getLocalHistoryFile(), historyToSave.join('\n'));
       } catch {
         // Ignore save errors
       }
@@ -626,6 +675,17 @@ class Slashbot {
 
     // Initialize Grok client if API key available
     await this.initializeGrok();
+
+    // Check for updates in background (non-blocking, once per 24h)
+    import('./updater').then(({ startupUpdateCheck }) => startupUpdateCheck()).catch(() => {});
+
+    // Set up LLM handler for scheduled tasks (allows tasks to use AI capabilities)
+    this.scheduler.setLLMHandler(async (prompt: string) => {
+      if (!this.grokClient) {
+        throw new Error('Grok client not initialized');
+      }
+      return await this.grokClient.chat(prompt);
+    });
 
     // Initialize transcription service if OpenAI API key available
     const openaiKey = this.configManager.getOpenAIApiKey();
@@ -758,6 +818,18 @@ class Slashbot {
   async stop(): Promise<void> {
     this.running = false;
     this.scheduler.stop();
+
+    // Kill all background processes
+    try {
+      const { processManager } = await import('./utils/processManager');
+      const killed = processManager.killAll();
+      if (killed > 0) {
+        console.log(c.muted(`[Process] Killed ${killed} background process(es)`));
+      }
+    } catch {
+      // Ignore
+    }
+
     // Stop all connectors
     for (const [, conn] of this.connectors) {
       conn.stop?.();
@@ -768,10 +840,10 @@ class Slashbot {
     }
     try {
       const { mkdir } = await import('fs/promises');
-      const configDir = `${process.cwd()}/.slashbot`;
+      const configDir = getLocalSlashbotDir();
       await mkdir(configDir, { recursive: true });
       const historyToSave = this.history.slice(-500);
-      await Bun.write(`${configDir}/history`, historyToSave.join('\n'));
+      await Bun.write(getLocalHistoryFile(), historyToSave.join('\n'));
     } catch {
       // Ignore save errors
     }

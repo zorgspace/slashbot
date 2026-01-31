@@ -6,6 +6,7 @@
  * - Responses are ALWAYS sent back to the same channel that sent the message
  * - Voice attachments (ogg/mp3/wav) are transcribed and processed as text
  * - Max message length: 2000 chars (auto-split if longer)
+ * - Only one instance can run Discord at a time (uses lock file)
  */
 
 import { Client, GatewayIntentBits, Message as DiscordMessage } from 'discord.js';
@@ -13,6 +14,7 @@ import { c } from '../ui/colors';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
 import { getTranscriptionService } from '../services/transcription';
 import { imageBuffer } from '../code/imageBuffer';
+import { acquireLock, releaseLock } from './locks';
 
 export interface DiscordConfig {
   botToken: string;
@@ -79,9 +81,10 @@ export class DiscordConnector implements Connector {
           let textContent = message.content;
 
           // Check for image attachments
-          const imageAttachments = message.attachments.filter(att =>
-            att.contentType?.startsWith('image/') ||
-            att.name?.match(/\.(png|jpg|jpeg|gif|webp)$/i)
+          const imageAttachments = message.attachments.filter(
+            att =>
+              att.contentType?.startsWith('image/') ||
+              att.name?.match(/\.(png|jpg|jpeg|gif|webp)$/i),
           );
 
           // Process images and add to context
@@ -89,22 +92,29 @@ export class DiscordConnector implements Connector {
             try {
               console.log(c.muted('[Discord] Downloading image...'));
               const imageResponse = await fetch(imgAtt.url);
-              const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString('base64');
+              const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString(
+                'base64',
+              );
               const mimeType = imgAtt.contentType || 'image/jpeg';
               const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
               imageBuffer.push(dataUrl);
-              console.log(c.muted(`[Discord] Image added to context (${Math.round(imageBuffer64.length / 1024)}KB)`));
+              console.log(
+                c.muted(
+                  `[Discord] Image added to context (${Math.round(imageBuffer64.length / 1024)}KB)`,
+                ),
+              );
             } catch (imgErr) {
               console.log(c.error(`[Discord] Failed to download image: ${imgErr}`));
             }
           }
 
           // Check for voice message attachments (Discord voice messages are ogg files)
-          const voiceAttachment = message.attachments.find(att =>
-            att.contentType?.startsWith('audio/') ||
-            att.name?.endsWith('.ogg') ||
-            att.name?.endsWith('.mp3') ||
-            att.name?.endsWith('.wav')
+          const voiceAttachment = message.attachments.find(
+            att =>
+              att.contentType?.startsWith('audio/') ||
+              att.name?.endsWith('.ogg') ||
+              att.name?.endsWith('.mp3') ||
+              att.name?.endsWith('.wav'),
           );
 
           if (voiceAttachment) {
@@ -148,7 +158,7 @@ export class DiscordConnector implements Connector {
       }
     });
 
-    this.client.on('error', (err) => {
+    this.client.on('error', err => {
       console.log(c.error(`[Discord] Error: ${err.message}`));
     });
 
@@ -163,10 +173,22 @@ export class DiscordConnector implements Connector {
   async start(): Promise<void> {
     if (this.running) return;
 
+    // Try to acquire lock - only one instance can run Discord
+    const lock = await acquireLock('discord');
+    if (!lock.acquired) {
+      console.log(c.warning(`[Discord] Another instance is already running (PID ${lock.existingPid})`));
+      if (lock.existingWorkDir) {
+        console.log(c.muted(`  Running in: ${lock.existingWorkDir}`));
+      }
+      console.log(c.muted(`  Discord connector disabled for this instance`));
+      return;
+    }
+
     try {
       await this.client.login((this.client as any)._token);
       this.running = true;
     } catch (error) {
+      await releaseLock('discord');
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.log(c.error(`[Discord] Failed to start: ${errorMsg}`));
       throw error;
@@ -177,6 +199,8 @@ export class DiscordConnector implements Connector {
     if (!this.running) return;
     this.client.destroy();
     this.running = false;
+    // Release lock asynchronously
+    releaseLock('discord').catch(() => {});
   }
 
   /**

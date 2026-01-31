@@ -10,27 +10,27 @@ const RESET = `${ESC}0m`;
 // Violet theme colors (using 256-color mode for better violet support)
 export const colors = {
   // Primary violet shades
-  violet: `${ESC}38;5;135m`,        // Main violet
-  violetLight: `${ESC}38;5;177m`,   // Light violet (for thinking)
-  violetDark: `${ESC}38;5;93m`,     // Dark violet
+  violet: `${ESC}38;5;135m`, // Main violet
+  violetLight: `${ESC}38;5;177m`, // Light violet (for thinking)
+  violetDark: `${ESC}38;5;93m`, // Dark violet
 
   // Semantic colors
-  success: `${ESC}38;5;34m`,        // Darker green
-  green: `${ESC}38;5;34m`,          // Darker green
-  error: `${ESC}38;5;124m`,         // Darker red
-  red: `${ESC}38;5;124m`,           // Darker red
-  warning: `${ESC}38;5;214m`,       // Orange
-  info: `${ESC}38;5;39m`,           // Cyan
-  muted: `${ESC}38;5;244m`,         // Gray
-  white: `${ESC}38;5;255m`,         // White
+  success: `${ESC}38;5;34m`, // Darker green
+  green: `${ESC}38;5;34m`, // Darker green
+  error: `${ESC}38;5;124m`, // Darker red
+  red: `${ESC}38;5;124m`, // Darker red
+  warning: `${ESC}38;5;214m`, // Orange
+  info: `${ESC}38;5;39m`, // Cyan
+  muted: `${ESC}38;5;244m`, // Gray
+  white: `${ESC}38;5;255m`, // White
 
   // Background colors
   bgViolet: `${ESC}48;5;135m`,
   bgVioletDark: `${ESC}48;5;53m`,
-  bgGreen: `${ESC}48;5;22m`,      // Dark green background for added lines
-  bgRed: `${ESC}48;5;52m`,        // Dark red background for removed lines
+  bgGreen: `${ESC}48;5;22m`, // Dark green background for added lines
+  bgRed: `${ESC}48;5;52m`, // Dark red background for removed lines
   bgGreenLight: `${ESC}48;5;28m`, // Lighter green for highlights
-  bgRedLight: `${ESC}48;5;88m`,   // Lighter red for highlights
+  bgRedLight: `${ESC}48;5;88m`, // Lighter red for highlights
 
   // Styles
   bold: `${ESC}1m`,
@@ -145,7 +145,7 @@ export function getLogo(): string {
 ▐░▀░░░▀░▌
 ▐░░░▄░░░▌
 ▐░░▀▀▀░░▌
- ▀▀▀▀▀▀▀${colors.reset}`;
+ ▀▀▀▀▀▀▀ ${colors.reset}`;
 }
 
 export interface BannerOptions {
@@ -159,24 +159,34 @@ export interface BannerOptions {
 }
 
 export function banner(options: BannerOptions = {}): string {
-  const { version = 'v1.0.0', workingDir, contextFile, tasksCount = 0, telegram, discord, voice } = options;
+  const {
+    version = 'v1.0.0',
+    workingDir,
+    contextFile,
+    tasksCount = 0,
+    telegram,
+    discord,
+    voice,
+  } = options;
   const cwd = workingDir || process.cwd();
   const shortCwd = cwd.replace(process.env.HOME || '', '~');
 
   // Build status badges
   const badges: string[] = [];
-  if (telegram) badges.push(`${colors.green}●${colors.reset} ${colors.muted}Telegram${colors.reset}`);
+  if (telegram)
+    badges.push(`${colors.green}●${colors.reset} ${colors.muted}Telegram${colors.reset}`);
   if (discord) badges.push(`${colors.green}●${colors.reset} ${colors.muted}Discord${colors.reset}`);
   if (voice) badges.push(`${colors.green}●${colors.reset} ${colors.muted}Voice${colors.reset}`);
   const statusLine = badges.length > 0 ? badges.join('  ') : '';
 
+  // Skull logo - 9 chars wide (space + 7 blocks + space for alignment)
   const logoLines = [
-    `${colors.violet} ▄▄▄▄▄▄▄${colors.reset}`,
+    `${colors.violet} ▄▄▄▄▄▄▄ ${colors.reset}`,
     `${colors.violet}▐░░░░░░░▌${colors.reset}`,
     `${colors.violet}▐░▀░░░▀░▌${colors.reset}`,
     `${colors.violet}▐░░░▄░░░▌${colors.reset}`,
     `${colors.violet}▐░░▀▀▀░░▌${colors.reset}`,
-    `${colors.violet} ▀▀▀▀▀▀▀${colors.reset}`,
+    `${colors.violet} ▀▀▀▀▀▀▀ ${colors.reset}`,
   ];
 
   const infoLines = [
@@ -254,7 +264,9 @@ export class ThinkingAnimation {
 
     this.interval = setInterval(() => {
       this.frameIndex = (this.frameIndex + 1) % this.frames.length;
-      process.stdout.write(`\r\x1b[K${colors.violetLight}${this.frames[this.frameIndex]} ${this.text}${colors.reset}`);
+      process.stdout.write(
+        `\r\x1b[K${colors.violetLight}${this.frames[this.frameIndex]} ${this.text}${colors.reset}`,
+      );
     }, 150);
   }
 
@@ -310,7 +322,9 @@ export const step = {
   // Tool call: ● ToolName(args)
   tool: (toolName: string, args?: string) => {
     const argsStr = args ? `(${args})` : '';
-    console.log(`${colors.white}●${colors.reset} ${colors.bold}${toolName}${colors.reset}${argsStr}`);
+    console.log(
+      `${colors.white}●${colors.reset} ${colors.bold}${toolName}${colors.reset}${argsStr}`,
+    );
   },
 
   // Tool result: ⎿  Result text (indented, supports multiline)
@@ -344,11 +358,16 @@ export const step = {
     if (matches === 0) {
       console.log(`  ${colors.muted}⎿  No matches found${colors.reset}`);
     } else {
-      console.log(`  ${colors.muted}⎿  Found ${matches} match${matches > 1 ? 'es' : ''}${colors.reset}`);
+      console.log(
+        `  ${colors.muted}⎿  Found ${matches} match${matches > 1 ? 'es' : ''}${colors.reset}`,
+      );
       if (preview) {
-        preview.split('\n').slice(0, 5).forEach(line => {
-          console.log(`     ${colors.muted}${line}${colors.reset}`);
-        });
+        preview
+          .split('\n')
+          .slice(0, 5)
+          .forEach(line => {
+            console.log(`     ${colors.muted}${line}${colors.reset}`);
+          });
       }
     }
   },
@@ -377,7 +396,9 @@ export const step = {
         console.log(`     ${lineColor}${line}${colors.reset}`);
       });
       if (lines.length > maxLines) {
-        console.log(`     ${colors.muted}... (${lines.length - maxLines} more lines)${colors.reset}`);
+        console.log(
+          `     ${colors.muted}... (${lines.length - maxLines} more lines)${colors.reset}`,
+        );
       }
     }
   },
@@ -387,33 +408,17 @@ export const step = {
     console.log(`${colors.white}●${colors.reset} ${colors.bold}Update${colors.reset}(${filePath})`);
   },
 
-  // Edit result with diff display
-  updateResult: (success: boolean, linesRemoved: number, linesAdded: number, context?: { before?: string[]; after?: string[]; lineStart?: number }) => {
+  // Edit result indicator (summary shown by diff function)
+  updateResult: (
+    success: boolean,
+    _linesRemoved: number,
+    _linesAdded: number,
+    _context?: { before?: string[]; after?: string[]; lineStart?: number },
+  ) => {
     if (!success) {
       console.log(`  ${colors.error}⎿  Failed - pattern not found${colors.reset}`);
-      return;
     }
-
-    if (linesRemoved > 0 && linesAdded === 0) {
-      console.log(`  ${colors.muted}⎿  Removed ${linesRemoved} line${linesRemoved > 1 ? 's' : ''}${colors.reset}`);
-    } else if (linesAdded > 0 && linesRemoved === 0) {
-      console.log(`  ${colors.muted}⎿  Added ${linesAdded} line${linesAdded > 1 ? 's' : ''}${colors.reset}`);
-    } else {
-      console.log(`  ${colors.muted}⎿  Updated${colors.reset}`);
-    }
-
-    // Show context with line numbers if provided
-    if (context) {
-      const startLine = context.lineStart || 1;
-      context.before?.forEach((line, i) => {
-        const lineNum = String(startLine + i).padStart(4, ' ');
-        console.log(`      ${colors.muted}${lineNum}${colors.reset}   ${line}`);
-      });
-      context.after?.forEach((line, i) => {
-        const lineNum = String(startLine + (context.before?.length || 0) + i).padStart(4, ' ');
-        console.log(`      ${colors.muted}${lineNum}${colors.reset} ${colors.success}- ${line}${colors.reset}`);
-      });
-    }
+    // Summary is now shown by step.diff() function
   },
 
   // Create action: ● Write(file_path)
@@ -433,7 +438,9 @@ export const step = {
 
   // Schedule action
   schedule: (name: string, cron: string) => {
-    console.log(`${colors.white}●${colors.reset} ${colors.bold}Schedule${colors.reset}(${name}, "${cron}")`);
+    console.log(
+      `${colors.white}●${colors.reset} ${colors.bold}Schedule${colors.reset}(${name}, "${cron}")`,
+    );
   },
 
   // Skill action
@@ -451,16 +458,39 @@ export const step = {
     console.log(`  ${colors.error}⎿  Error: ${message}${colors.reset}`);
   },
 
-  // Diff display with removed/added lines (Claude Code style)
+  // Diff display with removed/added lines (Claude Code style with colored backgrounds)
   diff: (removed: string[], added: string[], filePath?: string, lineStart = 1) => {
+    const maxWidth = Math.min(process.stdout.columns || 80, 100) - 15;
+
+    // Show removed lines with red background
     removed.forEach((line, i) => {
-      const lineNum = String(lineStart + i).padStart(4, ' ');
-      console.log(`      ${colors.muted}${lineNum}${colors.reset} ${colors.error}- ${line}${colors.reset}`);
+      const lineNum = String(lineStart + i).padStart(3, ' ');
+      const truncated = line.length > maxWidth ? line.slice(0, maxWidth - 3) + '...' : line;
+      const padded = truncated.padEnd(maxWidth, ' ');
+      console.log(
+        `      ${colors.muted}${lineNum}${colors.reset} ${colors.error}-${colors.reset} ${colors.bgRed}${colors.white}${padded}${colors.reset}`,
+      );
     });
+
+    // Show added lines with green background
     added.forEach((line, i) => {
-      const lineNum = String(lineStart + removed.length + i).padStart(4, ' ');
-      console.log(`      ${colors.muted}${lineNum}${colors.reset} ${colors.success}+ ${line}${colors.reset}`);
+      const lineNum = String(lineStart + i).padStart(3, ' ');
+      const truncated = line.length > maxWidth ? line.slice(0, maxWidth - 3) + '...' : line;
+      const padded = truncated.padEnd(maxWidth, ' ');
+      console.log(
+        `      ${colors.muted}${lineNum}${colors.reset} ${colors.success}+${colors.reset} ${colors.bgGreen}${colors.white}${padded}${colors.reset}`,
+      );
     });
+
+    // Show summary
+    const addedCount = added.length;
+    const removedCount = removed.length;
+    const parts: string[] = [];
+    if (addedCount > 0) parts.push(`Added ${addedCount} line${addedCount > 1 ? 's' : ''}`);
+    if (removedCount > 0) parts.push(`removed ${removedCount} line${removedCount > 1 ? 's' : ''}`);
+    if (parts.length > 0) {
+      console.log(`      ${colors.muted}${parts.join(', ')}${colors.reset}`);
+    }
   },
 
   // Thinking/status message
@@ -468,11 +498,16 @@ export const step = {
     console.log(`${colors.white}●${colors.reset} ${colors.muted}${text}${colors.reset}`);
   },
 
-  end: () => {}
+  end: () => {},
 };
 
 // Status line (muted, with timing info)
-export function statusLine(action: string, elapsed?: string, tokens?: number, thinkTime?: string): string {
+export function statusLine(
+  action: string,
+  elapsed?: string,
+  tokens?: number,
+  thinkTime?: string,
+): string {
   let parts = [`${colors.violetLight}* ${action}${colors.reset}`];
   if (elapsed) parts.push(`${elapsed}`);
   if (tokens) parts.push(`↓ ${tokens} tokens`);
@@ -532,10 +567,11 @@ export class FileViewer {
     displayLines.forEach((line, i) => {
       const lineNum = startLine + i;
       const numStr = this.formatLineNumber(lineNum, maxLine);
-      const truncatedLine = line.length > this.maxLineWidth
-        ? line.slice(0, this.maxLineWidth - 3) + '...'
-        : line;
-      console.log(`${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset} ${colors.white}${truncatedLine}${colors.reset}`);
+      const truncatedLine =
+        line.length > this.maxLineWidth ? line.slice(0, this.maxLineWidth - 3) + '...' : line;
+      console.log(
+        `${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset} ${colors.white}${truncatedLine}${colors.reset}`,
+      );
     });
 
     console.log(`${colors.muted}╰─${colors.reset}`);
@@ -561,25 +597,34 @@ export class FileViewer {
 
     for (const diff of diffLines) {
       const numStr = this.formatLineNumber(diff.lineNumber, maxLineNum);
-      const truncatedContent = diff.content.length > this.maxLineWidth
-        ? diff.content.slice(0, this.maxLineWidth - 3) + '...'
-        : diff.content;
+      const truncatedContent =
+        diff.content.length > this.maxLineWidth
+          ? diff.content.slice(0, this.maxLineWidth - 3) + '...'
+          : diff.content;
 
       // Pad the line to fill the width for background color
       const paddedContent = truncatedContent.padEnd(this.maxLineWidth, ' ');
 
       switch (diff.type) {
         case 'removed':
-          console.log(`${colors.muted}│${colors.reset} ${colors.error}${numStr}${colors.reset} ${colors.bgRed}${colors.white}- ${paddedContent}${colors.reset}`);
+          console.log(
+            `${colors.muted}│${colors.reset} ${colors.error}${numStr}${colors.reset} ${colors.bgRed}${colors.white}- ${paddedContent}${colors.reset}`,
+          );
           break;
         case 'added':
-          console.log(`${colors.muted}│${colors.reset} ${colors.success}${numStr}${colors.reset} ${colors.bgGreen}${colors.white}+ ${paddedContent}${colors.reset}`);
+          console.log(
+            `${colors.muted}│${colors.reset} ${colors.success}${numStr}${colors.reset} ${colors.bgGreen}${colors.white}+ ${paddedContent}${colors.reset}`,
+          );
           break;
         case 'context':
-          console.log(`${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset}   ${colors.muted}${truncatedContent}${colors.reset}`);
+          console.log(
+            `${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset}   ${colors.muted}${truncatedContent}${colors.reset}`,
+          );
           break;
         default:
-          console.log(`${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset}   ${colors.white}${truncatedContent}${colors.reset}`);
+          console.log(
+            `${colors.muted}│${colors.reset} ${colors.muted}${numStr}${colors.reset}   ${colors.white}${truncatedContent}${colors.reset}`,
+          );
       }
     }
 
@@ -599,7 +644,11 @@ export class FileViewer {
     let lineNum = 1;
 
     // Find the first difference
-    while (oldIdx < oldLines.length && newIdx < newLines.length && oldLines[oldIdx] === newLines[newIdx]) {
+    while (
+      oldIdx < oldLines.length &&
+      newIdx < newLines.length &&
+      oldLines[oldIdx] === newLines[newIdx]
+    ) {
       oldIdx++;
       newIdx++;
       lineNum++;
@@ -611,7 +660,7 @@ export class FileViewer {
       result.push({
         lineNumber: i + 1,
         content: oldLines[i],
-        type: 'context'
+        type: 'context',
       });
     }
 
@@ -621,7 +670,7 @@ export class FileViewer {
       result.push({
         lineNumber: oldIdx + 1,
         content: oldLines[oldIdx],
-        type: 'removed'
+        type: 'removed',
       });
       oldIdx++;
     }
@@ -631,7 +680,7 @@ export class FileViewer {
       result.push({
         lineNumber: newIdx + 1,
         content: newLines[newIdx],
-        type: 'added'
+        type: 'added',
       });
       newIdx++;
     }
@@ -642,7 +691,7 @@ export class FileViewer {
       result.push({
         lineNumber: i + 1,
         content: newLines[i],
-        type: 'context'
+        type: 'context',
       });
     }
 
@@ -669,7 +718,9 @@ export class FileViewer {
     oldLines.forEach(line => {
       const truncated = line.slice(0, this.maxLineWidth);
       const padded = truncated.padEnd(this.maxLineWidth, ' ');
-      console.log(`${colors.muted}│${colors.reset} ${colors.bgRed}${colors.white}- ${padded}${colors.reset}`);
+      console.log(
+        `${colors.muted}│${colors.reset} ${colors.bgRed}${colors.white}- ${padded}${colors.reset}`,
+      );
     });
 
     // Show added lines
@@ -677,7 +728,9 @@ export class FileViewer {
     newLines.forEach(line => {
       const truncated = line.slice(0, this.maxLineWidth);
       const padded = truncated.padEnd(this.maxLineWidth, ' ');
-      console.log(`${colors.muted}│${colors.reset} ${colors.bgGreen}${colors.white}+ ${padded}${colors.reset}`);
+      console.log(
+        `${colors.muted}│${colors.reset} ${colors.bgGreen}${colors.white}+ ${padded}${colors.reset}`,
+      );
     });
 
     console.log(`${colors.muted}╰─${colors.reset}`);
@@ -686,4 +739,3 @@ export class FileViewer {
 
 // Global file viewer instance
 export const fileViewer = new FileViewer();
-

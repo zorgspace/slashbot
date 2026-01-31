@@ -1,12 +1,13 @@
 /**
  * Skill Manager - Download, store, and invoke skills
  *
- * Skills are markdown files stored in .slashbot/skills/skill_name.md
+ * Skills are stored in ~/.slashbot/skills/ (home directory) for global access
  * They can be downloaded from URLs and invoked by user (/skill_name) or by Grok automatically.
  */
 
+import path from 'path';
 import { c } from '../ui/colors';
-import * as path from 'path';
+import { HOME_SKILLS_DIR } from '../constants';
 
 export interface Skill {
   name: string;
@@ -84,12 +85,16 @@ function extractSkillName(url: string): string {
   }
 
   // Sanitize: lowercase, replace non-alphanumeric with hyphens
-  return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
-export function createSkillManager(basePath?: string): SkillManager {
-  const workDir = basePath || process.cwd();
-  const skillsDir = path.join(workDir, '.slashbot', 'skills');
+export function createSkillManager(_basePath?: string): SkillManager {
+  // Skills are stored in home directory for global access across all projects
+  const skillsDir = HOME_SKILLS_DIR;
 
   return {
     getSkillsDir(): string {
@@ -184,7 +189,7 @@ export function createSkillManager(basePath?: string): SkillManager {
       const response = await fetch(url, {
         headers: {
           'User-Agent': 'Slashbot/1.0 (Skill Installer)',
-          'Accept': 'text/markdown,text/plain,*/*',
+          Accept: 'text/markdown,text/plain,*/*',
         },
         redirect: 'follow',
       });
@@ -197,7 +202,8 @@ export function createSkillManager(basePath?: string): SkillManager {
       const { metadata } = parseSkillMetadata(content);
 
       // Determine skill name: prefer explicit name param, then metadata name, then extract from URL
-      const skillName = name || metadata?.name?.toLowerCase().replace(/[^a-z0-9-]/g, '-') || extractSkillName(url);
+      const skillName =
+        name || metadata?.name?.toLowerCase().replace(/[^a-z0-9-]/g, '-') || extractSkillName(url);
 
       // Create skill directory and write file
       const skillDir = path.join(skillsDir, skillName);
@@ -250,7 +256,8 @@ export function createSkillManager(basePath?: string): SkillManager {
         prompt += `- **${skill.name}**${version}: ${desc}\n`;
       }
 
-      prompt += '\nTo use: [[skill name="skill_name"/]] → then execute curl commands from the loaded content.\n';
+      prompt +=
+        '\nTo use: [[skill name="skill_name"/]] → then execute curl commands from the loaded content.\n';
 
       return prompt;
     },

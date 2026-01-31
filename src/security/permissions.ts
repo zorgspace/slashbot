@@ -1,18 +1,20 @@
 /**
  * Command Permissions Manager for Slashbot
  * Handles user approval for command execution
+ *
+ * Permissions are stored locally per project
  */
 
-import * as path from 'path';
-import * as os from 'os';
+import path from 'path';
 import * as readline from 'readline';
 import { c } from '../ui/colors';
+import { getLocalSlashbotDir, getLocalPermissionsFile } from '../constants';
 
-const CONFIG_DIR = path.join(process.cwd(), '.slashbot');
-const PERMISSIONS_FILE = path.join(CONFIG_DIR, 'permissions.json');
+const CONFIG_DIR = getLocalSlashbotDir();
+const PERMISSIONS_FILE = getLocalPermissionsFile();
 
 export interface FolderPermissions {
-  allowedCommands: string[];  // Commands always allowed in this folder
+  allowedCommands: string[]; // Commands always allowed in this folder
 }
 
 export interface PermissionsConfig {
@@ -23,7 +25,7 @@ export type PromptResult = 'yes' | 'always' | 'no';
 
 export class CommandPermissions {
   private config: PermissionsConfig = { folders: {} };
-  private sessionDenied: Set<string> = new Set();  // Temporarily denied commands
+  private sessionDenied: Set<string> = new Set(); // Temporarily denied commands
 
   async load(): Promise<void> {
     try {
@@ -107,7 +109,7 @@ export class CommandPermissions {
    * Prompt user for command approval with interactive selector
    */
   async promptForApproval(command: string, folder: string): Promise<PromptResult> {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const folderName = path.basename(folder);
       const cmdBase = command.split(' ')[0];
 

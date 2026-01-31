@@ -6,6 +6,7 @@
  * - Responses are ALWAYS sent back to the same chatId that sent the message
  * - Voice messages are transcribed and processed as text
  * - Max message length: 4000 chars (auto-split if longer)
+ * - Only one instance can run Telegram at a time (uses lock file)
  */
 
 import { Telegraf } from 'telegraf';
@@ -13,6 +14,7 @@ import { c } from '../ui/colors';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
 import { getTranscriptionService } from '../services/transcription';
 import { imageBuffer } from '../code/imageBuffer';
+import { acquireLock, releaseLock } from './locks';
 
 export interface TelegramConfig {
   botToken: string;
@@ -48,7 +50,7 @@ export class TelegramConnector implements Connector {
     });
 
     // Handle text messages
-    this.bot.on('text', async (ctx) => {
+    this.bot.on('text', async ctx => {
       const message = ctx.message.text;
 
       if (!this.messageHandler) {
@@ -75,24 +77,23 @@ export class TelegramConnector implements Connector {
           clearInterval(typingInterval);
         }
 
-        // Send response if any
+        // Send response if any (using sendMessage which handles splitting)
         if (response) {
-          await ctx.reply(response, { parse_mode: 'Markdown' }).catch(async () => {
-            // Fallback to plain text if markdown fails
-            await ctx.reply(response);
-          });
+          await this.sendMessage(response);
         } else {
           await ctx.reply('No response generated');
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error('[Telegram] Handler error:', errorMsg);
-        await ctx.reply(`Error: ${errorMsg}`);
+        // Truncate error message to avoid "message too long" error
+        const truncatedError = errorMsg.length > 500 ? errorMsg.slice(0, 500) + '...' : errorMsg;
+        await ctx.reply(`Error: ${truncatedError}`);
       }
     });
 
     // Handle voice messages
-    this.bot.on('voice', async (ctx) => {
+    this.bot.on('voice', async ctx => {
       if (!this.messageHandler) {
         await ctx.reply('Bot not fully initialized');
         return;
@@ -147,7 +148,7 @@ export class TelegramConnector implements Connector {
     });
 
     // Handle photo messages
-    this.bot.on('photo', async (ctx) => {
+    this.bot.on('photo', async ctx => {
       if (!this.messageHandler) {
         await ctx.reply('Bot not fully initialized');
         return;
@@ -180,7 +181,11 @@ export class TelegramConnector implements Connector {
 
           // Add to image buffer for vision context
           imageBuffer.push(dataUrl);
-          console.log(c.muted(`[Telegram] Image added to context (${Math.round(imageBuffer64.length / 1024)}KB)`));
+          console.log(
+            c.muted(
+              `[Telegram] Image added to context (${Math.round(imageBuffer64.length / 1024)}KB)`,
+            ),
+          );
 
           // Use caption or default prompt
           const message = ctx.message.caption || 'What is in this image?';
@@ -201,7 +206,7 @@ export class TelegramConnector implements Connector {
     });
 
     // Handle errors
-    this.bot.catch((err) => {
+    this.bot.catch(err => {
       console.log(c.error(`[Telegram] Error: ${err}`));
     });
   }
@@ -215,9 +220,21 @@ export class TelegramConnector implements Connector {
 
   /**
    * Start the Telegram bot (polling mode)
+   * Only one instance can run at a time
    */
   async start(): Promise<void> {
     if (this.running) return;
+
+    // Try to acquire lock - only one instance can run Telegram
+    const lock = await acquireLock('telegram');
+    if (!lock.acquired) {
+      console.log(c.warning(`[Telegram] Another instance is already running (PID ${lock.existingPid})`));
+      if (lock.existingWorkDir) {
+        console.log(c.muted(`  Running in: ${lock.existingWorkDir}`));
+      }
+      console.log(c.muted(`  Telegram connector disabled for this instance`));
+      return;
+    }
 
     try {
       // Clear pending updates to avoid processing old messages on startup
@@ -228,11 +245,14 @@ export class TelegramConnector implements Connector {
 
         const response = await fetch(
           `https://api.telegram.org/bot${this.bot.telegram.token}/getUpdates?offset=-1`,
-          { signal: controller.signal }
+          { signal: controller.signal },
         );
         clearTimeout(timeout);
 
-        const data = await response.json() as { ok: boolean; result: Array<{ update_id: number }> };
+        const data = (await response.json()) as {
+          ok: boolean;
+          result: Array<{ update_id: number }>;
+        };
         if (data.ok && data.result.length > 0) {
           const lastUpdateId = data.result[data.result.length - 1].update_id;
           // Mark all updates as read
@@ -240,7 +260,7 @@ export class TelegramConnector implements Connector {
           const timeout2 = setTimeout(() => controller2.abort(), 3000);
           await fetch(
             `https://api.telegram.org/bot${this.bot.telegram.token}/getUpdates?offset=${lastUpdateId + 1}`,
-            { signal: controller2.signal }
+            { signal: controller2.signal },
           );
           clearTimeout(timeout2);
         }
@@ -249,12 +269,14 @@ export class TelegramConnector implements Connector {
       }
 
       // Launch bot in background (non-blocking)
-      this.bot.launch().catch((err) => {
+      this.bot.launch().catch(err => {
         console.log(c.error(`[Telegram] Error: ${err}`));
+        releaseLock('telegram');
       });
 
       this.running = true;
     } catch (error) {
+      await releaseLock('telegram');
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.log(c.error(`[Telegram] Failed to start: ${errorMsg}`));
       throw error;
@@ -268,6 +290,8 @@ export class TelegramConnector implements Connector {
     if (!this.running) return;
     this.bot.stop('SIGINT');
     this.running = false;
+    // Release lock asynchronously
+    releaseLock('telegram').catch(() => {});
   }
 
   /**
@@ -281,12 +305,14 @@ export class TelegramConnector implements Connector {
     const targetChat = this.replyTargetChatId;
     const chunks = splitMessage(text, this.config.maxMessageLength);
     for (const chunk of chunks) {
-      await this.bot.telegram.sendMessage(targetChat, chunk, {
-        parse_mode: 'Markdown',
-      }).catch(async () => {
-        // Fallback to plain text if markdown fails
-        await this.bot.telegram.sendMessage(targetChat, chunk);
-      });
+      await this.bot.telegram
+        .sendMessage(targetChat, chunk, {
+          parse_mode: 'Markdown',
+        })
+        .catch(async () => {
+          // Fallback to plain text if markdown fails
+          await this.bot.telegram.sendMessage(targetChat, chunk);
+        });
     }
   }
 

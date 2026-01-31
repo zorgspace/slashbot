@@ -1,22 +1,37 @@
 /**
  * Action System Type Definitions
+ * Aligned with Claude Code tool schema
  */
 
-export type ActionType = 'grep' | 'read' | 'edit' | 'create' | 'exec' | 'schedule' | 'notify' | 'glob' | 'git' | 'fetch' | 'format' | 'typecheck' | 'search' | 'skill' | 'skill-install';
+export type ActionType =
+  | 'bash'
+  | 'read'
+  | 'edit'
+  | 'multi-edit'
+  | 'write'
+  | 'glob'
+  | 'grep'
+  | 'ls'
+  | 'fetch'
+  | 'search'
+  | 'git'
+  | 'format'
+  | 'typecheck'
+  | 'schedule'
+  | 'notify'
+  | 'skill'
+  | 'skill-install'
+  // Aliases for backwards compatibility
+  | 'exec'
+  | 'create';
 
-export interface GrepAction {
-  type: 'grep';
-  pattern: string;
-  filePattern?: string;
-  context?: number;        // -C: lines of context around match
-  contextBefore?: number;  // -B: lines before match
-  contextAfter?: number;   // -A: lines after match
-  caseInsensitive?: boolean; // -i: case insensitive search
-}
+// ===== Core File Operations =====
 
 export interface ReadAction {
   type: 'read';
   path: string;
+  offset?: number; // Line number to start reading from
+  limit?: number; // Number of lines to read
 }
 
 export interface EditAction {
@@ -24,49 +39,101 @@ export interface EditAction {
   path: string;
   search: string;
   replace: string;
+  replaceAll?: boolean; // Replace all occurrences (default false)
 }
 
+export interface MultiEditAction {
+  type: 'multi-edit';
+  path: string;
+  edits: Array<{
+    search: string;
+    replace: string;
+    replaceAll?: boolean;
+  }>;
+}
+
+export interface WriteAction {
+  type: 'write';
+  path: string;
+  content: string;
+}
+
+// Alias for backwards compatibility
 export interface CreateAction {
   type: 'create';
   path: string;
   content: string;
 }
 
+// ===== Search & Navigation =====
+
+export interface GlobAction {
+  type: 'glob';
+  pattern: string;
+  path?: string;
+}
+
+export interface GrepAction {
+  type: 'grep';
+  pattern: string;
+  path?: string; // File or directory to search in
+  glob?: string; // Glob pattern to filter files
+  outputMode?: 'content' | 'files_with_matches' | 'count';
+  contextBefore?: number; // -B: lines before match
+  contextAfter?: number; // -A: lines after match
+  context?: number; // -C: lines around match
+  caseInsensitive?: boolean; // -i
+  lineNumbers?: boolean; // -n
+  headLimit?: number; // Limit output lines
+  multiline?: boolean; // Enable multiline matching
+}
+
+export interface LSAction {
+  type: 'ls';
+  path: string;
+  ignore?: string[]; // Glob patterns to ignore
+}
+
+// ===== Shell & Commands =====
+
+export interface BashAction {
+  type: 'bash';
+  command: string;
+  timeout?: number; // Optional timeout in ms
+  description?: string;
+  runInBackground?: boolean;
+}
+
+// Alias for backwards compatibility
 export interface ExecAction {
   type: 'exec';
   command: string;
 }
 
-export interface ScheduleAction {
-  type: 'schedule';
-  cron: string;
-  name: string;
-  command: string;
-}
-
-export interface NotifyAction {
-  type: 'notify';
-  message: string;
-  target?: string; // Optional: 'telegram', 'discord', or undefined for all
-}
-
-export interface GlobAction {
-  type: 'glob';
-  pattern: string;  // Glob pattern like "**/*.ts", "src/**/*.tsx"
-  path?: string;    // Base directory to search from
-}
+// ===== Git Operations =====
 
 export interface GitAction {
   type: 'git';
   command: 'status' | 'diff' | 'log' | 'branch' | 'add' | 'commit' | 'checkout' | 'stash';
-  args?: string;    // Additional arguments (e.g., file path for diff, message for commit)
+  args?: string;
 }
+
+// ===== Web Operations =====
 
 export interface FetchAction {
   type: 'fetch';
   url: string;
   prompt?: string;
 }
+
+export interface SearchAction {
+  type: 'search';
+  query: string;
+  allowedDomains?: string[];
+  blockedDomains?: string[];
+}
+
+// ===== Code Quality =====
 
 export interface FormatAction {
   type: 'format';
@@ -77,11 +144,23 @@ export interface TypecheckAction {
   type: 'typecheck';
 }
 
-export interface SearchAction {
-  type: 'search';
-  query: string;
-  xSearch?: boolean;
+// ===== Scheduling & Notifications =====
+
+export interface ScheduleAction {
+  type: 'schedule';
+  cron: string;
+  name: string;
+  command?: string;  // Bash command (mutually exclusive with prompt)
+  prompt?: string;   // LLM prompt for AI-powered tasks (search, fetch, notify, etc.)
 }
+
+export interface NotifyAction {
+  type: 'notify';
+  message: string;
+  target?: string;
+}
+
+// ===== Skills =====
 
 export interface SkillAction {
   type: 'skill';
@@ -95,27 +174,43 @@ export interface SkillInstallAction {
   name?: string;
 }
 
-export interface ImageAction {
-  type: 'image';
-  prompt: string;
+// ===== Process Management =====
+
+export interface PsAction {
+  type: 'ps';
 }
 
+export interface KillAction {
+  type: 'kill';
+  target: string; // Process ID or PID
+}
+
+// ===== Union Type =====
+
 export type Action =
-  | GrepAction
   | ReadAction
   | EditAction
+  | MultiEditAction
+  | WriteAction
   | CreateAction
-  | ExecAction
-  | ScheduleAction
-  | NotifyAction
   | GlobAction
+  | GrepAction
+  | LSAction
+  | BashAction
+  | ExecAction
   | GitAction
   | FetchAction
+  | SearchAction
   | FormatAction
   | TypecheckAction
-  | SearchAction
+  | ScheduleAction
+  | NotifyAction
   | SkillAction
-  | SkillInstallAction;
+  | SkillInstallAction
+  | PsAction
+  | KillAction;
+
+// ===== Results & Options =====
 
 export interface ActionResult {
   action: string;
@@ -133,27 +228,43 @@ export interface EditResult {
 }
 
 export interface GrepOptions {
+  path?: string;
+  glob?: string;
+  outputMode?: 'content' | 'files_with_matches' | 'count';
   context?: number;
   contextBefore?: number;
   contextAfter?: number;
   caseInsensitive?: boolean;
+  lineNumbers?: boolean;
+  headLimit?: number;
+  multiline?: boolean;
 }
 
+// ===== Handler Interface =====
+
 export interface ActionHandlers {
-  onGrep?: (pattern: string, filePattern?: string, options?: GrepOptions) => Promise<string>;
-  onRead?: (path: string) => Promise<string | null>;
-  onEdit?: (path: string, search: string, replace: string) => Promise<EditResult>;
-  onCreate?: (path: string, content: string) => Promise<boolean>;
-  onExec?: (command: string) => Promise<string>;
-  onSchedule?: (cron: string, command: string, name: string) => Promise<void>;
-  onFile?: (path: string, content: string) => Promise<boolean>;
-  onNotify?: (message: string, target?: string) => Promise<{ sent: string[]; failed: string[] }>;
+  onBash?: (command: string, options?: { timeout?: number; runInBackground?: boolean }) => Promise<string>;
+  onRead?: (path: string, options?: { offset?: number; limit?: number }) => Promise<string | null>;
+  onEdit?: (path: string, search: string, replace: string, replaceAll?: boolean) => Promise<EditResult>;
+  onMultiEdit?: (path: string, edits: Array<{ search: string; replace: string; replaceAll?: boolean }>) => Promise<EditResult>;
+  onWrite?: (path: string, content: string) => Promise<boolean>;
+  onCreate?: (path: string, content: string) => Promise<boolean>; // Alias
+  onFile?: (path: string, content: string) => Promise<boolean>; // Alias
   onGlob?: (pattern: string, basePath?: string) => Promise<string[]>;
+  onGrep?: (pattern: string, options?: GrepOptions) => Promise<string>;
+  onLS?: (path: string, ignore?: string[]) => Promise<string[]>;
   onGit?: (command: string, args?: string) => Promise<string>;
   onFetch?: (url: string, prompt?: string) => Promise<string>;
+  onSearch?: (query: string, options?: { allowedDomains?: string[]; blockedDomains?: string[] }) => Promise<{ response: string; citations: string[] }>;
   onFormat?: (path?: string) => Promise<string>;
   onTypecheck?: () => Promise<string>;
-  onSearch?: (query: string, options?: { xSearch?: boolean }) => Promise<{ response: string; citations: string[] }>;
+  onSchedule?: (cron: string, commandOrPrompt: string, name: string, options?: { isPrompt?: boolean }) => Promise<void>;
+  onNotify?: (message: string, target?: string) => Promise<{ sent: string[]; failed: string[] }>;
   onSkill?: (name: string, args?: string) => Promise<string>;
   onSkillInstall?: (url: string, name?: string) => Promise<{ name: string; path: string }>;
+  // Process management
+  onPs?: () => Promise<string>;
+  onKill?: (target: string) => Promise<boolean>;
+  // Legacy alias
+  onExec?: (command: string) => Promise<string>;
 }

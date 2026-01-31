@@ -1,6 +1,6 @@
 {
   "name": "slashbot",
-  "version": "1.0.6",
+  "version": "1.1.0",
   "license": "MIT",
   "description": "CLI assistant powered by Grok API - lightweight Claude Code alternative",
   "type": "module",
@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "bun build --compile --minify src/index.ts --outfile dist/slashbot",
+    "install-global": "bun run build && sudo cp dist/slashbot /usr/local/bin/slashbot",
     "start": "./dist/slashbot",
     "tsc": "tsc",
     "typecheck": "tsc --noEmit -p tsconfig.json"

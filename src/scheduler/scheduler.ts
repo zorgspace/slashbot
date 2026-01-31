@@ -2,59 +2,66 @@
  * Task Scheduler for Slashbot
  * Embedded cron system - runs only when Slashbot is active
  * Output shown directly in terminal
+ *
+ * Tasks are stored locally per project in .slashbot/tasks.json
  */
 
 import { c, colors } from '../ui/colors';
-import * as path from 'path';
-import * as os from 'os';
-import { parseCron, matchesCron, getNextRunTime, describeCron, isValidCron, type ParsedCron } from './cron';
+import {
+  parseCron,
+  matchesCron,
+  getNextRunTime,
+  describeCron,
+  isValidCron,
+  type ParsedCron,
+} from './cron';
+import { getLocalSlashbotDir, getLocalTasksFile } from '../constants';
 
-const SLASHBOT_DIR = path.join(process.cwd(), '.slashbot');
-const TASKS_FILE = path.join(SLASHBOT_DIR, 'tasks.json');
+const SLASHBOT_DIR = getLocalSlashbotDir();
+const TASKS_FILE = getLocalTasksFile();
 
-// Dangerous patterns to block
+// Dangerous patterns to block - NEVER allow these
 const DANGEROUS_PATTERNS = [
-  /rm\s+(-[rfRF]+\s+)*[\/~]\s*$/,
-  /rm\s+(-[rfRF]+\s+)*\/\*/,
-  /rm\s+(-[rfRF]+\s+)*\//,
+  // rm on root directory itself or wildcards on root
+  /rm\s+(-[a-zA-Z]+\s+)*\/\s*$/,
+  /rm\s+(-[a-zA-Z]+\s+)*\/\*/,
+  // rm on system directories
+  /rm\s+.*\/etc\b/,
+  /rm\s+.*\/boot\b/,
+  /rm\s+.*\/usr\b/,
+  /rm\s+.*\/var\b/,
+  /rm\s+.*\/bin\b/,
+  /rm\s+.*\/sbin\b/,
+  /rm\s+.*\/lib\b/,
+  // System destruction
   />\s*\/dev\/sd[a-z]/,
   /dd\s+.*of=\/dev\/sd[a-z]/,
   /mkfs/,
   /:(){ :|:& };:/,
   /chmod\s+(-R\s+)?777\s+\//,
   /chown\s+.*\s+\//,
-  /curl.*\|\s*(ba)?sh/,
-  /wget.*\|\s*(ba)?sh/,
   />\s*\/etc\//,
-  /rm\s+.*\/etc/,
-  /rm\s+.*\/boot/,
-  /rm\s+.*\/usr/,
-  /rm\s+.*\/var/,
-  /rm\s+.*\/home(?!\/[^\/]+\/)/,
   /shutdown/,
   /reboot/,
   /init\s+0/,
   /halt/,
   /poweroff/,
+  // Git destructive operations
+  /git\s+push\s+.*--force/,
+  /git\s+push\s+-f/,
+  /git\s+reset\s+--hard/,
+  /git\s+clean\s+-fd/,
 ];
 
-// Suspicious patterns (warning only)
-const SUSPICIOUS_PATTERNS = [
-  /sudo/,
-  /su\s+-/,
-  /passwd/,
-  /rm\s+-rf/,
-  />\s*\//,
-  /eval/,
-  /\$\(/,
-  /`.*`/,
-];
+// Suspicious patterns (warning only, but still execute)
+const SUSPICIOUS_PATTERNS = [/sudo/, /su\s+-/, /passwd/, />\s*\//, /eval/, /\$\(/, /`.*`/];
 
 export interface ScheduledTask {
   id: string;
   name: string;
   cron: string;
-  command: string;
+  command?: string;  // Bash command to execute (mutually exclusive with prompt)
+  prompt?: string;   // LLM prompt to process (can search, fetch, notify, etc.)
   enabled: boolean;
   createdAt: string;
   lastRun?: string;
@@ -76,6 +83,9 @@ interface ActiveTask {
   nextRun: Date | null;
 }
 
+// LLM handler type for processing prompts
+export type LLMHandler = (prompt: string) => Promise<{ response: string; thinking: string }>;
+
 export class TaskScheduler {
   private tasks: Map<string, ScheduledTask> = new Map();
   private activeTasks: Map<string, ActiveTask> = new Map();
@@ -83,12 +93,21 @@ export class TaskScheduler {
   private running = false;
   private lastCheck: Date = new Date();
   private onTaskComplete: (() => void) | null = null;
+  private llmHandler: LLMHandler | null = null;
 
   /**
    * Set callback to run after task completes (e.g., to redraw prompt)
    */
   setOnTaskComplete(callback: () => void): void {
     this.onTaskComplete = callback;
+  }
+
+  /**
+   * Set LLM handler for processing prompt-based tasks
+   * This allows scheduled tasks to use AI capabilities (search, fetch, notify, etc.)
+   */
+  setLLMHandler(handler: LLMHandler): void {
+    this.llmHandler = handler;
   }
 
   async init(): Promise<void> {
@@ -153,7 +172,21 @@ export class TaskScheduler {
     return result;
   }
 
-  async addTask(name: string, cron: string, command: string): Promise<string | null> {
+  /**
+   * Add a new scheduled task
+   * @param name - Task name (unique identifier)
+   * @param cron - Cron expression for scheduling
+   * @param commandOrPrompt - Either a bash command or LLM prompt
+   * @param options - Optional: { isPrompt: true } to use LLM instead of bash
+   */
+  async addTask(
+    name: string,
+    cron: string,
+    commandOrPrompt: string,
+    options?: { isPrompt?: boolean }
+  ): Promise<string | null> {
+    const isPrompt = options?.isPrompt ?? false;
+
     // Check for duplicate task name
     const existingTask = Array.from(this.tasks.values()).find(t => t.name === name);
     if (existingTask) {
@@ -167,18 +200,20 @@ export class TaskScheduler {
       return null;
     }
 
-    // Validate the command
-    const security = this.validateCommand(command);
+    // Validate the command (only for bash commands, not prompts)
+    if (!isPrompt) {
+      const security = this.validateCommand(commandOrPrompt);
 
-    if (security.blocked) {
-      console.log(c.error(`[SECURITY] Command blocked!`));
-      console.log(c.error(security.blockedReason || 'Dangerous command'));
-      return null;
-    }
+      if (security.blocked) {
+        console.log(c.error(`[SECURITY] Command blocked!`));
+        console.log(c.error(security.blockedReason || 'Dangerous command'));
+        return null;
+      }
 
-    if (security.warnings.length > 0) {
-      console.log(c.warning(`[SECURITY] Warnings:`));
-      security.warnings.forEach(w => console.log(c.warning(`  - ${w}`)));
+      if (security.warnings.length > 0) {
+        console.log(c.warning(`[SECURITY] Warnings:`));
+        security.warnings.forEach(w => console.log(c.warning(`  - ${w}`)));
+      }
     }
 
     const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -187,7 +222,8 @@ export class TaskScheduler {
       id,
       name,
       cron,
-      command,
+      command: isPrompt ? undefined : commandOrPrompt,
+      prompt: isPrompt ? commandOrPrompt : undefined,
       enabled: true,
       createdAt: new Date().toISOString(),
       runCount: 0,
@@ -309,7 +345,7 @@ export class TaskScheduler {
     id: string;
     name: string;
     cron: string;
-    command: string;
+    command?: string;
     enabled: boolean;
     next: string;
     last: string;
@@ -375,7 +411,9 @@ export class TaskScheduler {
 
     // Tick every second to check for due tasks (fire and forget, don't block)
     this.tickInterval = setInterval(() => {
-      this.tick().catch(() => {});
+      this.tick().catch(err => {
+        console.error(`[CRON] Tick error: ${err?.message || err}`);
+      });
     }, 1000);
 
     const taskCount = this.activeTasks.size;
@@ -430,31 +468,54 @@ export class TaskScheduler {
 
   /**
    * Execute a task and display output in terminal
+   * Supports both command-based (bash) and prompt-based (LLM) tasks
    */
   private async executeTask(task: ScheduledTask): Promise<void> {
     const startTime = Date.now();
+    const isPromptTask = !!task.prompt && !task.command;
 
     // Display task start
     console.log('');
     console.log(`${colors.violet}┌─ CRON ${colors.reset}${c.bold(task.name)}`);
     console.log(`${colors.muted}│ ${describeCron(task.cron)}${colors.reset}`);
-    console.log(`${colors.muted}│ $ ${task.command}${colors.reset}`);
+    if (isPromptTask) {
+      console.log(`${colors.muted}│ 🤖 ${task.prompt}${colors.reset}`);
+    } else {
+      console.log(`${colors.muted}│ $ ${task.command}${colors.reset}`);
+    }
 
     let success = false;
     let output = '';
 
     try {
-      const { exec } = await import('child_process');
-      const { promisify } = await import('util');
-      const execAsync = promisify(exec);
+      if (isPromptTask) {
+        // Execute via LLM handler
+        if (!this.llmHandler) {
+          throw new Error('LLM handler not configured - cannot execute prompt-based task');
+        }
+        const result = await this.llmHandler(task.prompt!);
+        output = result.response;
+        success = true;
+      } else if (task.command) {
+        // Execute via bash (existing logic)
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
 
-      const { stdout, stderr } = await execAsync(task.command, {
-        timeout: 60000, // 1 minute timeout
-        cwd: process.cwd(),
-        env: { ...process.env },
-      });
+        // Wrap command in login shell to load user environment (nvm, pyenv, etc.)
+        const wrappedCommand = `bash -lc ${JSON.stringify(task.command)}`;
+        const { stdout, stderr } = await execAsync(wrappedCommand, {
+          timeout: 60000, // 1 minute timeout
+          cwd: process.cwd(),
+          env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1' },
+        });
 
-      output = (stdout || stderr || '').trim();
+        output = (stdout || stderr || '').trim();
+        success = true;
+      } else {
+        throw new Error('Task has neither command nor prompt defined');
+      }
+
       const duration = Date.now() - startTime;
 
       // Update task state
@@ -462,7 +523,6 @@ export class TaskScheduler {
       task.lastOutput = output.slice(0, 1000);
       task.lastSuccess = true;
       task.runCount++;
-      success = true;
 
       // Display output
       if (output) {
@@ -471,13 +531,16 @@ export class TaskScheduler {
           console.log(`${colors.muted}│${colors.reset} ${line}`);
         });
         if (output.split('\n').length > 10) {
-          console.log(`${colors.muted}│ ... (${output.split('\n').length - 10} more lines)${colors.reset}`);
+          console.log(
+            `${colors.muted}│ ... (${output.split('\n').length - 10} more lines)${colors.reset}`,
+          );
         }
       }
 
-      console.log(`${colors.violet}└─${colors.reset} ${c.success('✓')} ${colors.muted}${duration}ms${colors.reset}`);
+      console.log(
+        `${colors.violet}└─${colors.reset} ${c.success('✓')} ${colors.muted}${duration}ms${colors.reset}`,
+      );
       console.log('');
-
     } catch (error: any) {
       const duration = Date.now() - startTime;
       const errorMsg = error.stderr || error.message || String(error);
@@ -495,7 +558,9 @@ export class TaskScheduler {
         console.log(`${colors.muted}│${colors.reset} ${c.error(line)}`);
       });
 
-      console.log(`${colors.violet}└─${colors.reset} ${c.error('✗')} ${colors.muted}${duration}ms${colors.reset}`);
+      console.log(
+        `${colors.violet}└─${colors.reset} ${c.error('✗')} ${colors.muted}${duration}ms${colors.reset}`,
+      );
       console.log('');
     }
 

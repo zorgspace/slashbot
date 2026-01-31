@@ -1,10 +1,11 @@
 /**
  * Configuration Manager for Slashbot
  * Handles persistent storage of API keys and settings
+ *
+ * Credentials are stored in ~/.slashbot (home directory) for global access
  */
 
-import * as path from 'path';
-import * as os from 'os';
+import { HOME_SLASHBOT_DIR, HOME_CONFIG_FILE } from '../constants';
 
 export interface TelegramConfig {
   botToken: string;
@@ -24,9 +25,10 @@ export interface SlashbotConfig {
   discord?: DiscordConfig;
 }
 
-const CONFIG_DIR = path.join(process.cwd(), '.slashbot');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const CREDENTIALS_FILE = path.join(CONFIG_DIR, 'credentials.json');
+// Use home directory for credentials (shared across all projects)
+const CONFIG_DIR = HOME_SLASHBOT_DIR;
+const CONFIG_FILE = HOME_CONFIG_FILE;
+const CREDENTIALS_FILE = `${HOME_SLASHBOT_DIR}/credentials.json`;
 
 export class ConfigManager {
   private config: SlashbotConfig = {};
