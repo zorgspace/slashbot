@@ -527,6 +527,45 @@ class Slashbot {
             return { name: skill.name, path: skill.path };
           },
 
+          // Connector configuration
+          onTelegramConfig: async (botToken, chatId) => {
+            try {
+              let finalChatId = chatId;
+
+              // Auto-detect chat_id if not provided
+              if (!finalChatId) {
+                const response = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates`);
+                const data = await response.json() as { ok: boolean; result: Array<{ message?: { chat?: { id: number } } }> };
+
+                if (!data.ok) {
+                  return { success: false, message: 'Invalid bot token' };
+                }
+
+                const update = data.result?.find((u: any) => u.message?.chat?.id);
+                if (update?.message?.chat?.id) {
+                  finalChatId = String(update.message.chat.id);
+                } else {
+                  return { success: false, message: 'No messages found. Send a message to the bot first.' };
+                }
+              }
+
+              // Save configuration
+              await this.configManager.saveTelegramConfig(botToken, finalChatId);
+              return { success: true, message: `Telegram configured! Restart to connect.`, chatId: finalChatId };
+            } catch (error: any) {
+              return { success: false, message: error.message || 'Configuration failed' };
+            }
+          },
+
+          onDiscordConfig: async (botToken, channelId) => {
+            try {
+              await this.configManager.saveDiscordConfig(botToken, channelId);
+              return { success: true, message: `Discord configured! Restart to connect.` };
+            } catch (error: any) {
+              return { success: false, message: error.message || 'Configuration failed' };
+            }
+          },
+
         });
       } catch {
         this.grokClient = null;

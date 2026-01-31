@@ -185,6 +185,20 @@ export interface KillAction {
   target: string; // Process ID or PID
 }
 
+// ===== Connector Configuration =====
+
+export interface TelegramConfigAction {
+  type: 'telegram-config';
+  botToken: string;
+  chatId?: string; // Optional - auto-detect if not provided
+}
+
+export interface DiscordConfigAction {
+  type: 'discord-config';
+  botToken: string;
+  channelId: string;
+}
+
 // ===== Union Type =====
 
 export type Action =
@@ -208,7 +222,9 @@ export type Action =
   | SkillAction
   | SkillInstallAction
   | PsAction
-  | KillAction;
+  | KillAction
+  | TelegramConfigAction
+  | DiscordConfigAction;
 
 // ===== Results & Options =====
 
@@ -265,6 +281,9 @@ export interface ActionHandlers {
   // Process management
   onPs?: () => Promise<string>;
   onKill?: (target: string) => Promise<boolean>;
+  // Connector configuration
+  onTelegramConfig?: (botToken: string, chatId?: string) => Promise<{ success: boolean; message: string; chatId?: string }>;
+  onDiscordConfig?: (botToken: string, channelId: string) => Promise<{ success: boolean; message: string }>;
   // Legacy alias
   onExec?: (command: string) => Promise<string>;
 }

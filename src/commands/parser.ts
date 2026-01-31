@@ -1178,6 +1178,75 @@ commands.set('telegram', {
   },
 });
 
+// /discord - Configure Discord bot
+commands.set('discord', {
+  name: 'discord',
+  description: 'Configure Discord bot connection',
+  usage: '/discord <bot_token> <channel_id>',
+  execute: async (args, context) => {
+    const botToken = args[0];
+    const channelId = args[1];
+
+    if (!botToken) {
+      // Show current status and usage
+      const discordConfig = context.configManager.getDiscordConfig();
+      const connector = context.connectors.get('discord');
+
+      console.log(`\n${c.violet('Discord Configuration')}\n`);
+
+      if (discordConfig) {
+        console.log(
+          `  ${c.muted('Status:')}     ${connector?.isRunning() ? c.success('Connected') : c.warning('Configured but not running')}`,
+        );
+        console.log(`  ${c.muted('Bot:')}        ${discordConfig.botToken.slice(0, 20)}...`);
+        console.log(`  ${c.muted('Channel ID:')} ${discordConfig.channelId}`);
+      } else {
+        console.log(`  ${c.muted('Status:')}  ${c.warning('Not configured')}`);
+      }
+
+      console.log(`\n${c.muted('Usage:')}`);
+      console.log(`  ${c.violet('/discord <bot_token> <channel_id>')} - Configure bot`);
+      console.log(`  ${c.violet('/discord clear')}                    - Remove configuration`);
+      console.log(`\n${c.muted('Get bot token from Discord Developer Portal')}`);
+      console.log(`${c.muted('Channel ID: Right-click channel > Copy ID (enable Developer Mode)')}\n`);
+      return true;
+    }
+
+    // Handle clear command
+    if (botToken === 'clear') {
+      await context.configManager.clearDiscordConfig();
+      const connector = context.connectors.get('discord');
+      if (connector) {
+        connector.stop?.();
+        context.connectors.delete('discord');
+      }
+      console.log(c.success('Discord configuration cleared'));
+      return true;
+    }
+
+    // Require channel_id
+    if (!channelId) {
+      console.log(c.error('Channel ID required'));
+      console.log(c.muted('Usage: /discord <bot_token> <channel_id>'));
+      console.log(c.muted('Get Channel ID: Right-click channel > Copy ID'));
+      return true;
+    }
+
+    // Save configuration
+    try {
+      await context.configManager.saveDiscordConfig(botToken, channelId);
+      console.log(c.success('Discord configured!'));
+      console.log(c.muted(`Bot token: ${botToken.slice(0, 20)}...`));
+      console.log(c.muted(`Channel ID: ${channelId}`));
+      console.log(c.warning('\nRestart slashbot to connect to Discord'));
+    } catch (error) {
+      console.log(c.error(`Error saving config: ${error}`));
+    }
+
+    return true;
+  },
+});
+
 // /depressed - Depressed bot mode
 commands.set('depressed', {
   name: 'depressed',

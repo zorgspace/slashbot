@@ -222,7 +222,21 @@ Only use after SUCCESSFUL edits, never as busywork.
 
 # Platform [TELEGRAM/DISCORD]
 - Execute actions, end with 1-2 sentence summary
-- No raw file dumps - summarize instead`;
+- No raw file dumps - summarize instead
+
+# Connector Configuration (use these action tags)
+\`\`\`
+<telegram-config bot_token="123:ABC..." chat_id="987654321"/>
+<telegram-config bot_token="123:ABC..."/>  <!-- auto-detect chat_id -->
+<discord-config bot_token="MTk..." channel_id="123456789"/>
+\`\`\`
+- Telegram: Get bot token from @BotFather
+- Discord: Get token from Developer Portal, channel ID from right-click > Copy ID
+- After config, user must restart slashbot to connect
+
+# Process Management
+- /ps - List background processes
+- /kill <id> - Stop a background process`;
 
 
 export interface UsageStats {

@@ -165,6 +165,12 @@ const PATTERNS = {
   ps: /<ps\s*\/?>/gi,
   // <kill target="..."/> or <kill pid="..."/>
   kill: /<kill\s+[^>]*\/?>/gi,
+
+  // ===== Connector Configuration =====
+  // <telegram-config bot_token="..." chat_id="..."/>
+  telegramConfig: /<telegram-config\s+[^>]*\/?>/gi,
+  // <discord-config bot_token="..." channel_id="..."/>
+  discordConfig: /<discord-config\s+[^>]*\/?>/gi,
 };
 
 /**
@@ -529,6 +535,36 @@ export function parseActions(content: string): Action[] {
         type: 'kill',
         target,
       } as KillAction);
+    }
+  }
+
+  // Parse telegram-config actions
+  const telegramConfigRegex = new RegExp(PATTERNS.telegramConfig.source, 'gi');
+  while ((match = telegramConfigRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const botToken = extractAttr(fullTag, 'bot_token') || extractAttr(fullTag, 'token');
+    const chatId = extractAttr(fullTag, 'chat_id');
+    if (botToken) {
+      actions.push({
+        type: 'telegram-config',
+        botToken,
+        chatId: chatId || undefined,
+      } as any);
+    }
+  }
+
+  // Parse discord-config actions
+  const discordConfigRegex = new RegExp(PATTERNS.discordConfig.source, 'gi');
+  while ((match = discordConfigRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const botToken = extractAttr(fullTag, 'bot_token') || extractAttr(fullTag, 'token');
+    const channelId = extractAttr(fullTag, 'channel_id');
+    if (botToken && channelId) {
+      actions.push({
+        type: 'discord-config',
+        botToken,
+        channelId,
+      } as any);
     }
   }
 
