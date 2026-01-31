@@ -15,16 +15,16 @@ import { c } from './colors';
 
 // Shift+Enter sequences (varies by terminal)
 const SHIFT_ENTER_SEQUENCES = [
-  '\x1b[13;2u',     // Kitty keyboard protocol
-  '\x1b[27;2;13~',  // xterm modifyOtherKeys
-  '\x1bOM',         // Some terminals
+  '\x1b[13;2u', // Kitty keyboard protocol
+  '\x1b[27;2;13~', // xterm modifyOtherKeys
+  '\x1bOM', // Some terminals
 ];
 
 // Image paste sequences
 // Ctrl+Shift+V varies by terminal, Ctrl+P is more universal
 const IMAGE_PASTE_SEQUENCES = [
-  '\x10',           // Ctrl+P (universal - P for Paste image)
-  '\x1b[118;6u',    // Kitty keyboard protocol: Ctrl+Shift+V
+  '\x10', // Ctrl+P (universal - P for Paste image)
+  '\x1b[118;6u', // Kitty keyboard protocol: Ctrl+Shift+V
   '\x1b[27;6;118~', // xterm modifyOtherKeys: Ctrl+Shift+V
 ];
 
@@ -46,7 +46,7 @@ interface MultilineInputOptions {
  * - Paste is supported
  */
 export function readMultilineInput(options: MultilineInputOptions): Promise<string> {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const lines: string[] = [];
     let currentLine = '';
     let cursorPos = 0; // Position within currentLine
@@ -288,47 +288,53 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         if (str === seq || str.includes(seq)) {
           // Async clipboard read - need to handle carefully
           process.stdout.write(c.muted(' Reading clipboard...'));
-          readImageFromClipboard().then((dataUrl) => {
-            // Clear the "Reading clipboard..." message
-            process.stdout.write('\r\x1b[K');
-            if (lines.length > 0) {
-              process.stdout.write('   ');
-            } else {
-              process.stdout.write(options.prompt);
-            }
-            process.stdout.write(currentLine);
+          readImageFromClipboard()
+            .then(dataUrl => {
+              // Clear the "Reading clipboard..." message
+              process.stdout.write('\r\x1b[K');
+              if (lines.length > 0) {
+                process.stdout.write('   ');
+              } else {
+                process.stdout.write(options.prompt);
+              }
+              process.stdout.write(currentLine);
 
-            if (dataUrl) {
-              addImage(dataUrl);
-              const sizeKB = Math.round(dataUrl.length / 1024);
-              process.stdout.write(`\n${c.success('🖼️  Image pasted from clipboard')} (${sizeKB}KB)\n`);
-              process.stdout.write(c.muted('   Now ask a question about the image\n'));
-              // Redraw prompt
+              if (dataUrl) {
+                addImage(dataUrl);
+                const sizeKB = Math.round(dataUrl.length / 1024);
+                process.stdout.write(
+                  `\n${c.success('🖼️  Image pasted from clipboard')} (${sizeKB}KB)\n`,
+                );
+                process.stdout.write(c.muted('   Now ask a question about the image\n'));
+                // Redraw prompt
+                if (lines.length > 0) {
+                  process.stdout.write('   ');
+                } else {
+                  process.stdout.write(options.prompt);
+                }
+                process.stdout.write(currentLine);
+              } else {
+                process.stdout.write(
+                  `\n${c.warning('No image in clipboard')} (use xclip/wl-paste on Linux)\n`,
+                );
+                // Redraw prompt
+                if (lines.length > 0) {
+                  process.stdout.write('   ');
+                } else {
+                  process.stdout.write(options.prompt);
+                }
+                process.stdout.write(currentLine);
+              }
+            })
+            .catch(() => {
+              process.stdout.write('\r\x1b[K');
               if (lines.length > 0) {
                 process.stdout.write('   ');
               } else {
                 process.stdout.write(options.prompt);
               }
               process.stdout.write(currentLine);
-            } else {
-              process.stdout.write(`\n${c.warning('No image in clipboard')} (use xclip/wl-paste on Linux)\n`);
-              // Redraw prompt
-              if (lines.length > 0) {
-                process.stdout.write('   ');
-              } else {
-                process.stdout.write(options.prompt);
-              }
-              process.stdout.write(currentLine);
-            }
-          }).catch(() => {
-            process.stdout.write('\r\x1b[K');
-            if (lines.length > 0) {
-              process.stdout.write('   ');
-            } else {
-              process.stdout.write(options.prompt);
-            }
-            process.stdout.write(currentLine);
-          });
+            });
           return;
         }
       }
@@ -355,21 +361,24 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       }
 
       // Arrow keys
-      if (str === '\x1b[C') { // Right arrow
+      if (str === '\x1b[C') {
+        // Right arrow
         if (cursorPos < currentLine.length) {
           cursorPos++;
           process.stdout.write('\x1b[C');
         }
         return;
       }
-      if (str === '\x1b[D') { // Left arrow
+      if (str === '\x1b[D') {
+        // Left arrow
         if (cursorPos > 0) {
           cursorPos--;
           process.stdout.write('\x1b[D');
         }
         return;
       }
-      if (str === '\x1b[A') { // Up arrow - history
+      if (str === '\x1b[A') {
+        // Up arrow - history
         if (lines.length === 0 && history.length > 0) {
           if (historyIndex < history.length - 1) {
             historyIndex++;
@@ -380,7 +389,8 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         }
         return;
       }
-      if (str === '\x1b[B') { // Down arrow - history
+      if (str === '\x1b[B') {
+        // Down arrow - history
         if (lines.length === 0 && historyIndex >= 0) {
           historyIndex--;
           if (historyIndex >= 0) {
@@ -395,14 +405,16 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       }
 
       // Home key
-      if (str === '\x1b[H' || str === '\x01') { // Home or Ctrl+A
+      if (str === '\x1b[H' || str === '\x01') {
+        // Home or Ctrl+A
         cursorPos = 0;
         redrawCurrentLine();
         return;
       }
 
       // End key
-      if (str === '\x1b[F' || str === '\x05') { // End or Ctrl+E
+      if (str === '\x1b[F' || str === '\x05') {
+        // End or Ctrl+E
         cursorPos = currentLine.length;
         redrawCurrentLine();
         return;

@@ -47,7 +47,7 @@ export class SecureFileSystem {
   }
 
   private async askConfirmation(message: string): Promise<boolean> {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       // Create a new readline interface for this question
       const rl = readline.createInterface({
         input: process.stdin,
@@ -55,7 +55,7 @@ export class SecureFileSystem {
       });
 
       console.log(actionBlock(message));
-      rl.question(`${colors.warning}[y/n]${colors.reset} `, (answer) => {
+      rl.question(`${colors.warning}[y/n]${colors.reset} `, answer => {
         rl.close();
         resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
       });

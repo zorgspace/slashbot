@@ -190,6 +190,8 @@ Only use after SUCCESSFUL edits, never as busywork.
 <schedule cron="0 9 * * *" name="daily-backup">./backup.sh</schedule>
 <schedule cron="0 8 * * *" name="morning-news" prompt="true">Search latest tech news and notify me via Telegram</schedule>
 \`\`\`
+- IMPORTANT: Only use <notify> when user EXPLICITLY asks to be notified or for scheduled tasks
+- NEVER use <notify> for regular responses or confirmations - just respond in text
 - Without prompt: runs bash command
 - With prompt="true": AI processes the task (can search, fetch, notify, etc.)
 
@@ -206,6 +208,12 @@ Only use after SUCCESSFUL edits, never as busywork.
 - Command failed? Try alternative or install missing tool
 - After 2 failures: move on or ask user
 - Don't loop - try something different
+
+# CRITICAL: No Duplicate Actions
+- NEVER read the same file twice in one task - you already have the content
+- NEVER repeat failed actions with same parameters
+- If you already read a file, use that content - don't re-read
+- Track what you've done, don't repeat yourself
 
 # Autonomy (VM - safe environment)
 - Tool not found? Install it (apt, npm, curl|bash)
@@ -372,6 +380,11 @@ export class GrokClient {
     const MAX_VERIFICATION_ATTEMPTS = 3;
     const MAX_REPROMPT_ATTEMPTS = 3;
 
+    // Track files read in this conversation to prevent duplicate reads
+    const filesReadThisTurn = new Set<string>();
+    let duplicateReadCount = 0;
+    const MAX_DUPLICATE_READS = 3; // Stop if LLM keeps trying to read same file
+
     // Agentic loop: execute actions and feed results back (no iteration limit)
     while (true) {
 
@@ -385,7 +398,38 @@ export class GrokClient {
       finalResponse = responseContent;
 
       // Execute actions and collect results
-      const actions = parseActions(responseContent);
+      let actions = parseActions(responseContent);
+
+      // Filter out duplicate read actions (prevent reading same file multiple times)
+      const duplicateReads: string[] = [];
+      actions = actions.filter(action => {
+        if (action.type === 'read' && 'path' in action) {
+          const path = (action as any).path;
+          if (filesReadThisTurn.has(path)) {
+            duplicateReads.push(path);
+            return false; // Skip duplicate
+          }
+          filesReadThisTurn.add(path);
+        }
+        return true;
+      });
+
+      // If LLM keeps trying to read same files, inject correction and continue
+      if (duplicateReads.length > 0) {
+        duplicateReadCount += duplicateReads.length;
+        if (duplicateReadCount >= MAX_DUPLICATE_READS) {
+          // Inject strong correction and let LLM continue with what it has
+          this.conversationHistory.push({
+            role: 'assistant',
+            content: responseContent,
+          });
+          this.conversationHistory.push({
+            role: 'user',
+            content: `ERROR: You've already read these files - the content is in your context above. DO NOT read them again. Use the content you already have and complete the task. If you need to edit, use the exact text from your previous read.`,
+          });
+          continue; // Let LLM try again with the correction
+        }
+      }
 
       // Track if any code-modifying actions are present
       const codeActions = actions.filter(a =>
@@ -395,75 +439,31 @@ export class GrokClient {
         codeModified = true;
       }
 
-      // Debug: Show why no actions if response looks like it should have some
+      // Check for action tags inside code blocks (LLM mistake) - silently retry
       if (actions.length === 0) {
-        const actionTagRegex =
-          /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install)\b[^>]*\/?>/gi;
+        const actionTagRegex = /<(bash|read|edit|write|glob|grep)\b[^>]*>/gi;
         const foundTags = responseContent.match(actionTagRegex);
-        if (foundTags) {
+        if (foundTags && foundTags.length > 0) {
           // Check if tags are inside code blocks (backticks)
           const inCodeBlock = foundTags.some(tag => {
             const tagIndex = responseContent.indexOf(tag);
             if (tagIndex === -1) return false;
-            // Check wider window before tag for opening backtick
             const before = responseContent.slice(Math.max(0, tagIndex - 50), tagIndex);
-            // Check after tag for closing backtick
             const after = responseContent.slice(tagIndex + tag.length, tagIndex + tag.length + 10);
-            // Must have backticks on both sides for inline code, or triple backticks before for fenced block
-            const hasBacktickBefore = before.includes('`');
-            const hasBacktickAfter = after.includes('`');
-            return (hasBacktickBefore && hasBacktickAfter) || before.includes('```');
+            return (before.includes('`') && after.includes('`')) || before.includes('```');
           });
 
           if (inCodeBlock) {
-            // Tags are in code blocks - LLM made a mistake, inject correction
-            console.log(
-              `${colors.muted}⚠ Action tag inside backticks (not executed). Retrying...${colors.reset}`,
-            );
-            // Add a correction message to help the LLM
+            // Silently retry - LLM put tags in code blocks
             this.conversationHistory.push({
               role: 'assistant',
               content: responseContent,
             });
             this.conversationHistory.push({
               role: 'user',
-              content:
-                'ERROR: Your action tag was inside backticks/code block so it was NOT executed. Write action tags directly WITHOUT any backticks. Try again.',
+              content: 'ERROR: Action tag inside code block. Write action tags directly WITHOUT backticks.',
             });
-            continue; // Retry the loop
-          } else {
-            console.log(
-              `${colors.muted}⚠ Found ${foundTags.length} action tag(s) but parsing failed:${colors.reset}`,
-            );
-            foundTags.slice(0, 2).forEach((tag, i) => {
-              const preview = tag.length > 60 ? tag.slice(0, 60) + '...' : tag;
-              console.log(`${colors.muted}  ${i + 1}. ${preview}${colors.reset}`);
-            });
-            const firstTag = foundTags[0].toLowerCase().match(/<(\w+)/)?.[1] || '';
-            const tagPatterns: Record<string, string> = {
-              bash: '<bash>command</bash>',
-              read: '<read path="..."/>',
-              edit: '<edit path="..."><search>...</search><replace>...</replace></edit>',
-              'multi-edit': '<multi-edit path="..."><edit>...</edit></multi-edit>',
-              write: '<write path="...">content</write>',
-              create: '<create path="...">content</create>',
-              exec: '<exec>command</exec>',
-              glob: '<glob pattern="..."/>',
-              grep: '<grep pattern="..."/>',
-              ls: '<ls path="..."/>',
-              git: '<git command="status"/>',
-              fetch: '<fetch url="..."/>',
-              search: '<search query="..."/>',
-              format: '<format/>',
-              typecheck: '<typecheck/>',
-              schedule: '<schedule cron="...">command</schedule>',
-              notify: '<notify>message</notify>',
-              skill: '<skill name="..."/>',
-              'skill-install': '<skill-install url="..."/>',
-            };
-            if (tagPatterns[firstTag]) {
-              console.log(`${colors.muted}  Expected: ${tagPatterns[firstTag]}${colors.reset}`);
-            }
+            continue;
           }
         }
       }
@@ -746,9 +746,11 @@ export class GrokClient {
               // Progressive streaming: output content as it arrives
               // Stop thinking animation on first content chunk
               if (firstChunk) {
-                thinking.stop();
+                const duration = thinking.stop();
                 this.currentThinking = null;
                 firstChunk = false;
+                // Show timing with response
+                process.stdout.write(`${colors.muted}${duration}${colors.reset} `);
               }
 
               // Stream clean content (without XML action tags) to console
@@ -780,8 +782,9 @@ export class GrokClient {
     } finally {
       // Stop thinking animation if still running (no content received)
       if (this.currentThinking) {
-        thinking.stop();
+        const duration = thinking.stop();
         this.currentThinking = null;
+        process.stdout.write(`${colors.muted}${duration}${colors.reset} `);
       }
       this.abortController = null;
     }
@@ -922,6 +925,10 @@ export class GrokClient {
     let verificationAttempts = 0;
     const MAX_VERIFICATION_ATTEMPTS = 2; // Less attempts for remote connections
 
+    // Track files read to prevent duplicate reads
+    const filesReadThisTurn = new Set<string>();
+    let duplicateReadCount = 0;
+
     // Agentic loop for actions
     while (maxIterations > 0) {
       maxIterations--;
@@ -980,7 +987,35 @@ export class GrokClient {
       }
 
       // Parse and execute actions
-      const actions = parseActions(content);
+      let actions = parseActions(content);
+
+      // Filter out duplicate read actions
+      const duplicateReads: string[] = [];
+      actions = actions.filter(action => {
+        if (action.type === 'read' && 'path' in action) {
+          const readPath = (action as any).path;
+          if (filesReadThisTurn.has(readPath)) {
+            duplicateReads.push(readPath);
+            duplicateReadCount++;
+            return false;
+          }
+          filesReadThisTurn.add(readPath);
+        }
+        return true;
+      });
+
+      // If too many duplicates, inject correction
+      if (duplicateReadCount >= 3) {
+        this.conversationHistory.push({
+          role: 'assistant',
+          content: content,
+        });
+        this.conversationHistory.push({
+          role: 'user',
+          content: `ERROR: Stop re-reading files. Use the content already in your context. Complete the task with what you have.`,
+        });
+        continue;
+      }
 
       // Track code modifications
       const codeActions = actions.filter(a =>
@@ -1129,8 +1164,9 @@ export class GrokClient {
         body: JSON.stringify(requestBody),
       });
 
-      thinking.stop();
+      const duration = thinking.stop();
       this.currentThinking = null;
+      console.log(`${colors.muted}${duration}${colors.reset}`);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -1179,7 +1215,7 @@ export class GrokClient {
         citations,
       };
     } catch (error) {
-      thinking.stop();
+      thinking.stop(); // Ignore duration on error
       this.currentThinking = null;
       throw error;
     }

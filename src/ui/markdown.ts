@@ -61,7 +61,10 @@ export function renderMarkdown(text: string): string {
   result = result.replace(/~~([^~]+)~~/g, `${STRIKETHROUGH}$1${RESET}`);
 
   // Links [text](url) - show text with underline, url in dim
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, `${UNDERLINE}${CYAN}$1${RESET}${DIM} ($2)${RESET}`);
+  result = result.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    `${UNDERLINE}${CYAN}$1${RESET}${DIM} ($2)${RESET}`,
+  );
 
   // Bullet lists
   result = result.replace(/^(\s*)[-*] (.+)$/gm, `$1${GREEN}•${RESET} $2`);

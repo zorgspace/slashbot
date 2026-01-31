@@ -5,16 +5,18 @@
 **Slashbot** is a lightweight, blazing-fast CLI coding companion powered by the [Grok API](https://x.ai). Alternative to Claude Code—perfect for AI-assisted development, automation, and terminal magic. **v1.0.5**
 
 ## ✨ Key Features
-| Feature | Description |
-|---------|-------------|
-| **Agentic Loop** | Iterative AI actions: grep, edit, exec, notify—self-correcting workflows |
-| **Code Actions** | Precise file ops: `[[grep]]`, `[[edit]]`, `[[read]]` with verbatim matches |
+
+| Feature            | Description                                                                |
+| ------------------ | -------------------------------------------------------------------------- |
+| **Agentic Loop**   | Iterative AI actions: grep, edit, exec, notify—self-correcting workflows   |
+| **Code Actions**   | Precise file ops: `[[grep]]`, `[[edit]]`, `[[read]]` with verbatim matches |
 | **Streaming Chat** | Real-time Grok responses, vision support, personalities (normal/sarcastic) |
-| **Notifications** | Telegram/WhatsApp alerts, scheduled cron jobs |
-| **Secure FS** | No destructives without approval; token-efficient edits |
-| **Skills** | `[[skill name="init"]]` for codebase analysis, git context |
+| **Notifications**  | Telegram/WhatsApp alerts, scheduled cron jobs                              |
+| **Secure FS**      | No destructives without approval; token-efficient edits                    |
+| **Skills**         | `[[skill name="init"]]` for codebase analysis, git context                 |
 
 ## 🛠 Tech Stack
+
 ```mermaid
 graph TD
     A[TypeScript + Bun] --> B[Grok API]
@@ -29,6 +31,7 @@ graph TD
 - **Tools**: ESLint, Prettier, tsc
 
 ## 📁 Structure
+
 ```
 slashbot/
 ├── src/
@@ -43,6 +46,7 @@ slashbot/
 ```
 
 ## 🚀 Quick Start
+
 ```bash
 # Install & Dev
 bun install
@@ -58,11 +62,13 @@ bun run build  # dist/slashbot
 ```
 
 ## 🎨 Conventions
+
 - **Prettier**: 100-char lines, single quotes, semicolons
 - **ESLint**: No unused vars, nullish coalescing
 - **Rules**: One action/response, grep-first, minimal edits
 
 ## 🤖 Example Workflow
+
 ```
 User: fix bug in src/index.ts
 AI: [[grep pattern="bug" file="src/index.ts"]]

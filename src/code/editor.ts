@@ -7,6 +7,49 @@ import { c, colors, fileViewer } from '../ui/colors';
 import * as path from 'path';
 import type { EditResult, EditStatus, GrepOptions } from '../actions/types';
 
+// Directories to always exclude from searches
+const EXCLUDED_DIRS = [
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.nuxt',
+  '.output',
+  '.turbo',
+  '.cache',
+  '.parcel-cache',
+  'coverage',
+  '.coverage',
+  '.nyc_output',
+  'vendor',
+  'target',
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  '.venv',
+  'venv',
+  'env',
+  '.env',
+  '.idea',
+  '.vscode',
+  '.DS_Store',
+];
+
+// File patterns to exclude
+const EXCLUDED_FILES = [
+  '*.lock',
+  '*.min.js',
+  '*.min.css',
+  '*.map',
+  '*.chunk.js',
+  '*.bundle.js',
+  '*.d.ts',
+  '*.tsbuildinfo',
+];
+
 export interface SearchResult {
   file: string;
   line: number;
@@ -35,7 +78,11 @@ export class CodeEditor {
     return true; // Always authorized
   }
 
-  async grep(pattern: string, filePattern?: string, options?: GrepOptions): Promise<SearchResult[]> {
+  async grep(
+    pattern: string,
+    filePattern?: string,
+    options?: GrepOptions,
+  ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
     try {
@@ -43,8 +90,10 @@ export class CodeEditor {
       const { promisify } = await import('util');
       const execAsync = promisify(exec);
 
-      // Build grep command with options
-      const excludes = '--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude=*.lock';
+      // Build grep command with options - exclude build dirs and generated files
+      const dirExcludes = EXCLUDED_DIRS.map(d => `--exclude-dir=${d}`).join(' ');
+      const fileExcludes = EXCLUDED_FILES.map(f => `--exclude=${f}`).join(' ');
+      const excludes = `${dirExcludes} ${fileExcludes}`;
       const fileArg = filePattern ? `--include="${filePattern}"` : '';
 
       // Context options
@@ -59,7 +108,18 @@ export class CodeEditor {
       // Case insensitivity
       const caseArg = options?.caseInsensitive ? '-i' : '';
 
-      const cmd = `grep -rn ${caseArg} ${contextArg} ${excludes} ${fileArg} "${pattern}" ${this.workDir} 2>/dev/null | head -100`;
+      // Determine search path - can be a specific file or directory
+      let searchPath = this.workDir;
+      if (options?.path) {
+        searchPath = options.path.startsWith('/') ? options.path : `${this.workDir}/${options.path}`;
+      }
+
+      // Use -r only for directories, not files
+      const fs = await import('fs');
+      const isFile = fs.existsSync(searchPath) && fs.statSync(searchPath).isFile();
+      const recursiveArg = isFile ? '' : '-r';
+
+      const cmd = `grep ${recursiveArg} -n ${caseArg} ${contextArg} ${isFile ? '' : excludes} ${fileArg} "${pattern}" "${searchPath}" 2>/dev/null | head -100`;
 
       const { stdout } = await execAsync(cmd);
 
@@ -109,7 +169,7 @@ export class CodeEditor {
       const fullPath = path.isAbsolute(edit.path) ? edit.path : path.join(this.workDir, edit.path);
       const file = Bun.file(fullPath);
 
-      if (!await file.exists()) {
+      if (!(await file.exists())) {
         console.log(c.error(`File not found: ${edit.path}`));
         return { success: false, status: 'not_found', message: `File not found: ${edit.path}` };
       }
@@ -119,20 +179,30 @@ export class CodeEditor {
       if (!content.includes(edit.search)) {
         console.log(c.error(`Pattern not found in ${edit.path}`));
         console.log(c.muted(`Searching: "${edit.search.slice(0, 50)}..."`));
-        return { success: false, status: 'not_found', message: `Pattern not found in ${edit.path}` };
+        return {
+          success: false,
+          status: 'not_found',
+          message: `Pattern not found in ${edit.path}`,
+        };
       }
 
       // Count occurrences for uniqueness warning
       const occurrences = content.split(edit.search).length - 1;
       if (occurrences > 1) {
-        console.log(c.warning(`Warning: Pattern found ${occurrences} times, only first will be replaced`));
+        console.log(
+          c.warning(`Warning: Pattern found ${occurrences} times, only first will be replaced`),
+        );
       }
 
       // Idempotency check - is this edit already applied?
       const newContent = content.replace(edit.search, edit.replace);
       if (newContent === content) {
         console.log(c.muted(`Edit already applied: ${edit.path}`));
-        return { success: true, status: 'already_applied', message: 'Edit already applied (no change needed)' };
+        return {
+          success: true,
+          status: 'already_applied',
+          message: 'Edit already applied (no change needed)',
+        };
       }
 
       await Bun.write(fullPath, newContent);
@@ -175,12 +245,14 @@ export class CodeEditor {
       const { promisify } = await import('util');
       const execAsync = promisify(exec);
 
-      const excludes = '-not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*"';
+      // Build find excludes from constants
+      const excludes = EXCLUDED_DIRS.map(d => `-not -path "*/${d}/*"`).join(' ');
       const nameArg = pattern ? `-name "${pattern}"` : '-type f';
       const cmd = `find ${this.workDir} ${excludes} ${nameArg} 2>/dev/null | head -100`;
 
       const { stdout } = await execAsync(cmd);
-      return stdout.split('\n')
+      return stdout
+        .split('\n')
         .filter(l => l.trim())
         .map(f => f.replace(this.workDir + '/', ''));
     } catch {

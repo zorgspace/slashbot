@@ -6,7 +6,7 @@ export class SlashbotError extends Error {
   constructor(
     message: string,
     public code: string,
-    public recoverable: boolean = true
+    public recoverable: boolean = true,
   ) {
     super(message);
     this.name = 'SlashbotError';
@@ -14,14 +14,20 @@ export class SlashbotError extends Error {
 }
 
 export class ActionError extends SlashbotError {
-  constructor(message: string, public actionType: string) {
+  constructor(
+    message: string,
+    public actionType: string,
+  ) {
     super(message, 'ACTION_ERROR', true);
     this.name = 'ActionError';
   }
 }
 
 export class ApiError extends SlashbotError {
-  constructor(message: string, public statusCode?: number) {
+  constructor(
+    message: string,
+    public statusCode?: number,
+  ) {
     super(message, 'API_ERROR', true);
     this.name = 'ApiError';
   }

@@ -246,7 +246,18 @@ class Slashbot {
             if (options?.runInBackground) {
               const { processManager } = await import('./utils/processManager');
               const managed = processManager.spawn(command, workDir);
-              return `Started background process ${managed.id} (PID ${managed.pid})`;
+
+              // Wait a moment to capture initial output
+              await new Promise(resolve => setTimeout(resolve, 1500));
+              const output = processManager.getOutput(managed.id, 10);
+
+              // Return process info with initial output for LLM to analyze
+              let result = `Background process started:\n- ID: ${managed.id}\n- PID: ${managed.pid}\n- Command: ${command}`;
+              if (output.length > 0) {
+                result += `\n- Initial output:\n${output.join('\n')}`;
+              }
+              result += `\n\nUser can run /ps to list processes, /kill ${managed.id} to stop.`;
+              return result;
             }
 
             // Normal execution - use login shell to load user's bashrc/zshrc (nvm, pyenv, etc.)
@@ -465,12 +476,21 @@ class Slashbot {
                 }
               }
 
-              // Return content with prompt hint - agentic loop will process it
-              if (prompt) {
-                return `[Fetched from ${url}]\n\n${content}\n\n[User wants: ${prompt}]`;
+              // Truncate large content to avoid overwhelming context
+              const MAX_FETCH_CHARS = 15000; // ~3750 tokens
+              let truncated = false;
+              if (content.length > MAX_FETCH_CHARS) {
+                content = content.slice(0, MAX_FETCH_CHARS);
+                truncated = true;
               }
 
-              return `[Fetched from ${url}]\n\n${content}`;
+              // Return content with prompt hint - agentic loop will process it
+              const truncationNote = truncated ? `\n\n[Content truncated to ${MAX_FETCH_CHARS} chars]` : '';
+              if (prompt) {
+                return `[Fetched from ${url}]\n\n${content}${truncationNote}\n\n[User wants: ${prompt}]`;
+              }
+
+              return `[Fetched from ${url}]\n\n${content}${truncationNote}`;
             } catch (error: any) {
               throw new Error(`Fetch failed: ${error.message || error}`);
             }

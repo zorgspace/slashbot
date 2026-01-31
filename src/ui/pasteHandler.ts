@@ -19,16 +19,16 @@ const PASTE_END = '\x1b[201~';
 // Kitty keyboard protocol: ESC [ 13 ; 2 u
 // Some terminals: ESC O M or ESC [ M
 const SHIFT_ENTER_SEQUENCES = [
-  '\x1b[13;2u',  // Kitty keyboard protocol
+  '\x1b[13;2u', // Kitty keyboard protocol
   '\x1b[27;2;13~', // xterm modifyOtherKeys
-  '\x1bOM',      // Some terminals
+  '\x1bOM', // Some terminals
 ];
 
 // Shift+Ctrl+V sequences for image paste
 const SHIFT_CTRL_V_SEQUENCES = [
-  '\x1b[118;6u',   // Kitty keyboard protocol: Shift+Ctrl+v
+  '\x1b[118;6u', // Kitty keyboard protocol: Shift+Ctrl+v
   '\x1b[27;6;118~', // xterm modifyOtherKeys
-  '\x16',          // Ctrl+V raw (we check for shift separately)
+  '\x16', // Ctrl+V raw (we check for shift separately)
 ];
 
 // Visible newline marker that won't trigger readline submit
@@ -273,14 +273,16 @@ export function clearPasteBuffer(): void {
 export async function readImageFromClipboard(): Promise<string | null> {
   const platform = process.platform;
 
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     let cmd: string;
     let args: string[];
 
     if (platform === 'darwin') {
       // macOS - use osascript to get clipboard image
       cmd = 'osascript';
-      args = ['-e', `
+      args = [
+        '-e',
+        `
         use framework "AppKit"
         use scripting additions
         set pb to current application's NSPasteboard's generalPasteboard()
@@ -291,7 +293,8 @@ export async function readImageFromClipboard(): Promise<string | null> {
           set base64 to (imgData's base64EncodedStringWithOptions:0) as text
           return base64
         end if
-      `];
+      `,
+      ];
     } else {
       // Linux - try xclip first (X11), then wl-paste (Wayland)
       const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || process.env.WAYLAND_DISPLAY;
@@ -313,7 +316,7 @@ export async function readImageFromClipboard(): Promise<string | null> {
         chunks.push(chunk);
       });
 
-      proc.on('close', (code) => {
+      proc.on('close', code => {
         if (code !== 0 || chunks.length === 0) {
           resolve(null);
           return;

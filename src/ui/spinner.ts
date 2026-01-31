@@ -8,7 +8,9 @@ export async function withSpinner<T>(message: string, cb: () => Promise<T>): Pro
 
   const interval = setInterval(() => {
     const frame = frames[frameIndex % frames.length];
-    process.stdout.write(`\r${colors.violetLight}${colors.bold}${frame} ${message}...${colors.reset}`);
+    process.stdout.write(
+      `\r${colors.violetLight}${colors.bold}${frame} ${message}...${colors.reset}`,
+    );
     frameIndex++;
   }, 80);
 

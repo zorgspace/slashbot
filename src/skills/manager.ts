@@ -185,7 +185,18 @@ export function createSkillManager(_basePath?: string): SkillManager {
     async installSkill(url: string, name?: string): Promise<Skill> {
       const { mkdir } = await import('fs/promises');
 
-      // Fetch the skill content
+      // Check if this is a GitHub repository/directory URL
+      const githubMatch = url.match(
+        /github\.com\/([^/]+)\/([^/]+)(?:\/tree\/([^/]+))?(?:\/(.+))?$/
+      );
+
+      if (githubMatch) {
+        // GitHub repository - download all files including subfolders
+        const [, owner, repo, branch = 'main', subpath = ''] = githubMatch;
+        return await this.installFromGitHub(owner, repo, branch, subpath, name);
+      }
+
+      // Single file URL - original behavior
       const response = await fetch(url, {
         headers: {
           'User-Agent': 'Slashbot/1.0 (Skill Installer)',
@@ -217,6 +228,111 @@ export function createSkillManager(_basePath?: string): SkillManager {
         path: skillPath,
         content,
         metadata,
+      };
+    },
+
+    async installFromGitHub(
+      owner: string,
+      repo: string,
+      branch: string,
+      subpath: string,
+      name?: string
+    ): Promise<Skill> {
+      const { mkdir } = await import('fs/promises');
+
+      // Get repository tree from GitHub API
+      const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
+      const response = await fetch(apiUrl, {
+        headers: {
+          'User-Agent': 'Slashbot/1.0 (Skill Installer)',
+          Accept: 'application/vnd.github.v3+json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch GitHub tree: HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const tree = data.tree as Array<{ path: string; type: string; url?: string }>;
+
+      // Filter files that match the subpath
+      const prefix = subpath ? `${subpath}/` : '';
+      const files = tree.filter(
+        item => item.type === 'blob' && (subpath ? item.path.startsWith(prefix) : true)
+      );
+
+      if (files.length === 0) {
+        throw new Error(`No files found in ${owner}/${repo}/${subpath || ''}`);
+      }
+
+      // Determine skill name from repo name or subpath
+      const skillName = name || (subpath ? path.basename(subpath) : repo)
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-');
+
+      const skillDir = path.join(skillsDir, skillName);
+      await mkdir(skillDir, { recursive: true });
+
+      // Download all files
+      let skillContent = '';
+      let skillMetadata: Skill['metadata'] = {};
+
+      for (const file of files) {
+        // Calculate relative path within skill directory
+        const relativePath = subpath ? file.path.slice(prefix.length) : file.path;
+        const targetPath = path.join(skillDir, relativePath);
+
+        // Create subdirectories if needed
+        const targetDir = path.dirname(targetPath);
+        await mkdir(targetDir, { recursive: true });
+
+        // Download file content
+        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${file.path}`;
+        const fileResponse = await fetch(rawUrl, {
+          headers: { 'User-Agent': 'Slashbot/1.0 (Skill Installer)' },
+        });
+
+        if (fileResponse.ok) {
+          const content = await fileResponse.arrayBuffer();
+          await Bun.write(targetPath, new Uint8Array(content));
+
+          // If this is skill.md, parse its metadata
+          if (relativePath === 'skill.md' || relativePath.endsWith('/skill.md')) {
+            skillContent = new TextDecoder().decode(content);
+            const parsed = parseSkillMetadata(skillContent);
+            skillMetadata = parsed.metadata;
+          }
+        }
+      }
+
+      // If no skill.md found, look for README.md or any .md file
+      if (!skillContent) {
+        const mdFile = files.find(f =>
+          f.path.endsWith('skill.md') ||
+          f.path.endsWith('README.md') ||
+          f.path.endsWith('.md')
+        );
+        if (mdFile) {
+          const relativePath = subpath ? mdFile.path.slice(prefix.length) : mdFile.path;
+          const mdPath = path.join(skillDir, relativePath);
+          try {
+            skillContent = await Bun.file(mdPath).text();
+            const parsed = parseSkillMetadata(skillContent);
+            skillMetadata = parsed.metadata;
+          } catch {
+            // Ignore
+          }
+        }
+      }
+
+      const skillPath = path.join(skillDir, 'skill.md');
+
+      return {
+        name: skillName,
+        path: skillPath,
+        content: skillContent,
+        metadata: skillMetadata,
       };
     },
 

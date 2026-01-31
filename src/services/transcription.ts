@@ -52,7 +52,7 @@ export class TranscriptionService {
       const response = await fetch(`${this.baseUrl}/audio/transcriptions`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${this.apiKey}`,
         },
         body: formData,
       });

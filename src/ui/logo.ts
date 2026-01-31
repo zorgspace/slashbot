@@ -4,12 +4,7 @@ export function getLogo(): string {
   const width = process.stdout.columns || 80;
   let logo = `${colors.violet}▄`.repeat(width) + '\n';
 
-  const innerLines = [
-    '░░░░░░░',
-    '░▀░░░▀░',
-    '░░░▄░░░',
-    '░░▀▀▀░░'
-  ];
+  const innerLines = ['░░░░░░░', '░▀░░░▀░', '░░░▄░░░', '░░▀▀▀░░'];
 
   const boxInnerWidth = 9;
   const leftPad = Math.floor((width - boxInnerWidth) / 2);

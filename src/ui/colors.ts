@@ -274,7 +274,7 @@ export class ThinkingAnimation {
     this.text = text.slice(0, 60);
   }
 
-  stop(): void {
+  stop(): string {
     // Only output if animation was actually running (interval exists)
     const wasRunning = this.interval !== null;
 
@@ -283,13 +283,13 @@ export class ThinkingAnimation {
       this.interval = null;
     }
 
-    // Only write output if we were actually running
+    // Clear the line
     if (wasRunning) {
-      const duration = this.formatDuration(Date.now() - this.startTime);
-      const shortPath = this.contextPath.replace(process.env.HOME || '', '~');
-      const location = shortPath ? ` · ${shortPath}` : '';
-      process.stdout.write(`\r\x1b[K${colors.muted}${duration}${location}${colors.reset}\n`);
+      process.stdout.write(`\r\x1b[K`);
     }
+
+    // Return duration for caller to display with response
+    return this.formatDuration(Date.now() - this.startTime);
   }
 
   private formatDuration(ms: number): string {
