@@ -1,6 +1,6 @@
 # Adding Telegram Notifications to Slashbot
 
-Slashbot supports Telegram notifications via the `telegraf` library and `TELEGRAM_BOT_TOKEN` env var. Use in-app `/notify` command or action syntax.
+Slashbot supports Telegram notifications via the `telegraf` library. You can configure it using natural language prompts.
 
 ## Prerequisites
 
@@ -14,33 +14,23 @@ Slashbot supports Telegram notifications via the `telegraf` library and `TELEGRA
 3. Choose name (e.g., Slashbot Notifier) and username (e.g., slashbot_notifier_bot).
 4. Copy the **API token** (e.g., `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`).
 
-## Step 2: Configure Environment
-
-Add to `.env` (create if missing, copy from `.env.example`):
-
-```
-TELEGRAM_BOT_TOKEN=your_token_here
-```
-
-Reload Slashbot or restart.
-
-## Step 3: Get Your Chat ID
+## Step 2: Get Your Chat ID
 
 1. Start a chat with your bot (search username, send `/start`).
 2. Visit: `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`
 3. Find `"chat":{"id":123456789` – note the ID (integer).
 
-## Step 4: Configure Notifications
+## Step 3: Configure Telegram
 
-In Slashbot CLI:
+In Slashbot CLI, use a natural language prompt:
 
 ```
-/notify telegram 123456789
+slashbot > Connect Telegram bot with token 123456:ABC-xyz on chat 987654321
 ```
 
-(Replace `123456789` with your chat ID. Use `/notify help` for options.)
+Slashbot will configure the bot token and chat ID for you.
 
-## Step 5: Test
+## Step 4: Test
 
 Send a notification:
 
