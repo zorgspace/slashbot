@@ -228,7 +228,9 @@ export class TelegramConnector implements Connector {
     // Try to acquire lock - only one instance can run Telegram
     const lock = await acquireLock('telegram');
     if (!lock.acquired) {
-      console.log(c.warning(`[Telegram] Another instance is already running (PID ${lock.existingPid})`));
+      console.log(
+        c.warning(`[Telegram] Another instance is already running (PID ${lock.existingPid})`),
+      );
       if (lock.existingWorkDir) {
         console.log(c.muted(`  Running in: ${lock.existingWorkDir}`));
       }

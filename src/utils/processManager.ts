@@ -53,7 +53,10 @@ class ProcessManager {
 
     // Capture output
     proc.stdout?.on('data', (data: Buffer) => {
-      const lines = data.toString().split('\n').filter(l => l.trim());
+      const lines = data
+        .toString()
+        .split('\n')
+        .filter(l => l.trim());
       managed.output.push(...lines);
       // Keep only last 100 lines
       if (managed.output.length > 100) {
@@ -62,7 +65,10 @@ class ProcessManager {
     });
 
     proc.stderr?.on('data', (data: Buffer) => {
-      const lines = data.toString().split('\n').filter(l => l.trim());
+      const lines = data
+        .toString()
+        .split('\n')
+        .filter(l => l.trim());
       managed.output.push(...lines.map(l => `[stderr] ${l}`));
       if (managed.output.length > 100) {
         managed.output = managed.output.slice(-100);
@@ -70,7 +76,7 @@ class ProcessManager {
     });
 
     // Clean up when process exits
-    proc.on('exit', (code) => {
+    proc.on('exit', code => {
       managed.output.push(`[exited with code ${code}]`);
     });
 

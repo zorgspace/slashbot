@@ -4,7 +4,17 @@
  * A Claude Code-inspired terminal assistant using X.AI's Grok API.
  */
 
-import { banner, inputPrompt, inputClose, responseStart, c, errorBlock, colors, connectorMessage, connectorResponse } from './ui/colors';
+import {
+  banner,
+  inputPrompt,
+  inputClose,
+  responseStart,
+  c,
+  errorBlock,
+  colors,
+  connectorMessage,
+  connectorResponse,
+} from './ui/colors';
 
 // Handle update commands before anything else
 if (process.argv[2] === 'update-check' || process.argv.includes('--check-update')) {
@@ -63,13 +73,13 @@ process.on('exit', () => {
 });
 
 // Prevent uncaught exceptions from crashing
-process.on('uncaughtException', (err) => {
+process.on('uncaughtException', err => {
   console.log(c.error(`\nError: ${err.message}`));
   // Don't exit - keep running
 });
 
 // Prevent unhandled promise rejections from crashing
-process.on('unhandledRejection', (reason) => {
+process.on('unhandledRejection', reason => {
   console.log(c.error(`\nError: ${reason}`));
   // Don't exit - keep running
 });
@@ -82,8 +92,6 @@ if (process.argv.some(arg => arg === '--version' || arg === '-v')) {
   console.log(`slashbot v${VERSION}`);
   process.exit(0);
 }
-
-
 
 import { createGrokClient, GrokClient } from './api/grok';
 import { parseInput, executeCommand, CommandContext, completer } from './commands/parser';
@@ -102,8 +110,6 @@ import { readMultilineInput } from './ui/multilineInput';
 import { createSkillManager, SkillManager } from './skills/manager';
 import { getLocalSlashbotDir, getLocalHistoryFile } from './constants';
 
-
-
 interface SlashbotConfig {
   basePath?: string;
 }
@@ -116,7 +122,15 @@ class Slashbot {
   private codeEditor: CodeEditor;
   private commandPermissions: CommandPermissions;
   private skillManager: SkillManager;
-  private connectors: Map<string, { connector: any; isRunning: () => boolean; sendMessage: (msg: string) => Promise<void>; stop?: () => void }> = new Map();
+  private connectors: Map<
+    string,
+    {
+      connector: any;
+      isRunning: () => boolean;
+      sendMessage: (msg: string) => Promise<void>;
+      stop?: () => void;
+    }
+  > = new Map();
   private running = false;
   private history: string[] = [];
   private historyIndex = -1;
@@ -184,7 +198,7 @@ class Slashbot {
           }
         }
 
-        if (!contextLoaded && await this.codeEditor.isAuthorized()) {
+        if (!contextLoaded && (await this.codeEditor.isAuthorized())) {
           // Fallback: inject basic project context if authorized but no SLASHBOT.md
           const files = await this.codeEditor.listFiles();
           const context = `Directory: ${workDir}\nFiles:\n${files.slice(0, 50).join('\n')}`;
@@ -194,14 +208,16 @@ class Slashbot {
         // Add available skills to system prompt
         const skillsPrompt = await this.skillManager.getSkillsForSystemPrompt();
         if (skillsPrompt) {
-          const currentContext = this.grokClient.getHistory()[0]?.content as string || '';
+          const currentContext = (this.grokClient.getHistory()[0]?.content as string) || '';
           this.grokClient.setProjectContext(currentContext + skillsPrompt, workDir);
         }
 
         // Wire up action handlers
         this.grokClient.setActionHandlers({
           onSchedule: async (cron, commandOrPrompt, name, options) => {
-            await this.scheduler.addTask(name, cron, commandOrPrompt, { isPrompt: options?.isPrompt });
+            await this.scheduler.addTask(name, cron, commandOrPrompt, {
+              isPrompt: options?.isPrompt,
+            });
           },
 
           onFile: async (path, content) => {
@@ -217,7 +233,7 @@ class Slashbot {
             return results.map(r => `${r.file}:${r.line}: ${r.content}`).join('\n');
           },
 
-          onRead: async (path) => {
+          onRead: async path => {
             return await this.codeEditor.readFile(path);
           },
 
@@ -266,16 +282,16 @@ class Slashbot {
             if (needsInteractive) {
               // Use spawn with inherited stdio for interactive commands
               const { spawn } = await import('child_process');
-              return new Promise<string>((resolve) => {
+              return new Promise<string>(resolve => {
                 const child = spawn('bash', ['-lc', command], {
                   cwd: workDir,
                   stdio: 'inherit', // Pass through stdin/stdout/stderr
                   env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1' },
                 });
-                child.on('close', (code) => {
+                child.on('close', code => {
                   resolve(code === 0 ? 'Command completed' : `Command exited with code ${code}`);
                 });
-                child.on('error', (err) => {
+                child.on('error', err => {
                   resolve(`Error: ${err.message}`);
                 });
               });
@@ -283,25 +299,56 @@ class Slashbot {
 
             // Normal execution - use login shell to load user's bashrc/zshrc (nvm, pyenv, etc.)
             try {
-              const { exec } = await import('child_process');
-              const { promisify } = await import('util');
-              const execAsync = promisify(exec);
+              const { spawn } = await import('child_process');
               const timeout = options?.timeout || 30000;
-              // Wrap command in login shell to load user environment
-              const wrappedCommand = `bash -lc ${JSON.stringify(command)}`;
-              const { stdout, stderr } = await execAsync(wrappedCommand, {
-                cwd: workDir,
-                timeout,
-                maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large outputs
-                env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1' },
+
+              return new Promise<string>(resolve => {
+                let stdout = '';
+                let stderr = '';
+                let killed = false;
+
+                // Use spawn with shell:true to properly handle all bash syntax including heredocs
+                const child = spawn(command, {
+                  shell: '/bin/bash',
+                  cwd: workDir,
+                  env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1' },
+                });
+
+                const timer = setTimeout(() => {
+                  killed = true;
+                  child.kill('SIGTERM');
+                }, timeout);
+
+                child.stdout?.on('data', data => {
+                  stdout += data.toString();
+                  // Limit output to prevent memory issues
+                  if (stdout.length > 1024 * 1024) {
+                    stdout = stdout.slice(0, 1024 * 1024) + '\n... (output truncated)';
+                    child.kill('SIGTERM');
+                  }
+                });
+
+                child.stderr?.on('data', data => {
+                  stderr += data.toString();
+                });
+
+                child.on('close', code => {
+                  clearTimeout(timer);
+                  if (killed) {
+                    resolve(`Error: Command timed out after ${timeout}ms`);
+                  } else if (code !== 0) {
+                    resolve(`Error: Command failed: ${command}\n${stderr || stdout}`);
+                  } else {
+                    resolve(stdout || stderr || 'Command executed');
+                  }
+                });
+
+                child.on('error', err => {
+                  clearTimeout(timer);
+                  resolve(`Error: ${err.message}`);
+                });
               });
-              return stdout || stderr || 'Command executed';
             } catch (error: any) {
-              // Capture actual output from failed commands (e.g. curl with non-zero exit)
-              const output = error.stdout || error.stderr || '';
-              if (output) {
-                return `Error: Command failed: ${command}\n${output}`;
-              }
               return `Error: ${error.message || error}`;
             }
           },
@@ -343,7 +390,11 @@ class Slashbot {
                 dot: false, // Exclude hidden files
               })) {
                 // Exclude common non-code directories
-                if (!file.includes('node_modules/') && !file.includes('.git/') && !file.includes('dist/')) {
+                if (
+                  !file.includes('node_modules/') &&
+                  !file.includes('.git/') &&
+                  !file.includes('dist/')
+                ) {
                   files.push(basePath ? `${basePath}/${file}` : file);
                 }
                 // Limit results
@@ -382,7 +433,16 @@ class Slashbot {
           // Git operations
           onGit: async (command, args) => {
             const workDir = this.codeEditor.getWorkDir();
-            const allowedCommands = ['status', 'diff', 'log', 'branch', 'add', 'commit', 'checkout', 'stash'];
+            const allowedCommands = [
+              'status',
+              'diff',
+              'log',
+              'branch',
+              'add',
+              'commit',
+              'checkout',
+              'stash',
+            ];
 
             if (!allowedCommands.includes(command)) {
               return `Error: Git command '${command}' not allowed`;
@@ -414,7 +474,7 @@ class Slashbot {
           },
 
           // Format code
-          onFormat: async (path) => {
+          onFormat: async path => {
             const workDir = this.codeEditor.getWorkDir();
             try {
               const { exec } = await import('child_process');
@@ -459,7 +519,7 @@ class Slashbot {
               const response = await fetch(url, {
                 headers: {
                   'User-Agent': 'Slashbot/1.0 (CLI Assistant)',
-                  'Accept': 'text/html,application/json,text/plain,*/*',
+                  Accept: 'text/html,application/json,text/plain,*/*',
                 },
                 redirect: 'follow',
                 signal: controller.signal,
@@ -506,7 +566,9 @@ class Slashbot {
               }
 
               // Return content with prompt hint - agentic loop will process it
-              const truncationNote = truncated ? `\n\n[Content truncated to ${MAX_FETCH_CHARS} chars]` : '';
+              const truncationNote = truncated
+                ? `\n\n[Content truncated to ${MAX_FETCH_CHARS} chars]`
+                : '';
               if (prompt) {
                 return `[Fetched from ${url}]\n\n${content}${truncationNote}\n\n[User wants: ${prompt}]`;
               }
@@ -556,7 +618,10 @@ class Slashbot {
               // Auto-detect chat_id if not provided
               if (!finalChatId) {
                 const response = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates`);
-                const data = await response.json() as { ok: boolean; result: Array<{ message?: { chat?: { id: number } } }> };
+                const data = (await response.json()) as {
+                  ok: boolean;
+                  result: Array<{ message?: { chat?: { id: number } } }>;
+                };
 
                 if (!data.ok) {
                   return { success: false, message: 'Invalid bot token' };
@@ -566,13 +631,20 @@ class Slashbot {
                 if (update?.message?.chat?.id) {
                   finalChatId = String(update.message.chat.id);
                 } else {
-                  return { success: false, message: 'No messages found. Send a message to the bot first.' };
+                  return {
+                    success: false,
+                    message: 'No messages found. Send a message to the bot first.',
+                  };
                 }
               }
 
               // Save configuration
               await this.configManager.saveTelegramConfig(botToken, finalChatId);
-              return { success: true, message: `Telegram configured! Restart to connect.`, chatId: finalChatId };
+              return {
+                success: true,
+                message: `Telegram configured! Restart to connect.`,
+                chatId: finalChatId,
+              };
             } catch (error: any) {
               return { success: false, message: error.message || 'Configuration failed' };
             }
@@ -586,7 +658,6 @@ class Slashbot {
               return { success: false, message: error.message || 'Configuration failed' };
             }
           },
-
         });
       } catch {
         this.grokClient = null;
@@ -596,7 +667,10 @@ class Slashbot {
     }
   }
 
-  private async handleInput(input: string, source: ConnectorSource = 'cli'): Promise<string | void> {
+  private async handleInput(
+    input: string,
+    source: ConnectorSource = 'cli',
+  ): Promise<string | void> {
     // Expand any paste placeholders back to original content (CLI only)
     const expanded = source === 'cli' ? expandPaste(input) : input;
     const trimmed = expanded.trim();
@@ -639,18 +713,20 @@ class Slashbot {
             const imageData = fs.readFileSync(filePath);
             const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
             const mimeTypes: Record<string, string> = {
-              'png': 'image/png',
-              'jpg': 'image/jpeg',
-              'jpeg': 'image/jpeg',
-              'gif': 'image/gif',
-              'webp': 'image/webp',
-              'bmp': 'image/bmp',
+              png: 'image/png',
+              jpg: 'image/jpeg',
+              jpeg: 'image/jpeg',
+              gif: 'image/gif',
+              webp: 'image/webp',
+              bmp: 'image/bmp',
             };
             const mimeType = mimeTypes[ext] || 'image/png';
             const base64 = imageData.toString('base64');
             const dataUrl = `data:${mimeType};base64,${base64}`;
             addImage(dataUrl);
-            console.log(`${c.success('🖼️  Image loaded: ')}${filePath.split('/').pop()} (${Math.round(base64.length / 1024)}KB)`);
+            console.log(
+              `${c.success('🖼️  Image loaded: ')}${filePath.split('/').pop()} (${Math.round(base64.length / 1024)}KB)`,
+            );
             console.log(c.muted('   Now ask a question about the image'));
             return;
           }
@@ -681,7 +757,10 @@ class Slashbot {
     try {
       // For external connectors (Telegram, Discord), collect the response
       if (source !== 'cli') {
-        const response = await this.grokClient.chatWithResponse(trimmed, source as 'telegram' | 'discord');
+        const response = await this.grokClient.chatWithResponse(
+          trimmed,
+          source as 'telegram' | 'discord',
+        );
         return response;
       }
 
@@ -801,7 +880,7 @@ class Slashbot {
         this.connectors.set('telegram', {
           connector,
           isRunning: () => connector.isRunning(),
-          sendMessage: (msg) => connector.sendMessage(msg),
+          sendMessage: msg => connector.sendMessage(msg),
           stop: () => connector.stop(),
         });
       } catch (error) {
@@ -832,7 +911,7 @@ class Slashbot {
         this.connectors.set('discord', {
           connector,
           isRunning: () => connector.isRunning(),
-          sendMessage: (msg) => connector.sendMessage(msg),
+          sendMessage: msg => connector.sendMessage(msg),
           stop: () => connector.stop(),
         });
       } catch (error) {
@@ -842,15 +921,17 @@ class Slashbot {
 
     // Display banner with all info
     const tasks = this.scheduler.listTasks();
-    console.log(banner({
-      version: VERSION,
-      workingDir: this.codeEditor.getWorkDir(),
-      contextFile: this.loadedContextFile,
-      tasksCount: tasks.length,
-      telegram: this.connectors.has('telegram'),
-      discord: this.connectors.has('discord'),
-      voice: voiceEnabled,
-    }));
+    console.log(
+      banner({
+        version: VERSION,
+        workingDir: this.codeEditor.getWorkDir(),
+        contextFile: this.loadedContextFile,
+        tasksCount: tasks.length,
+        telegram: this.connectors.has('telegram'),
+        discord: this.connectors.has('discord'),
+        voice: voiceEnabled,
+      }),
+    );
 
     // Enable bracketed paste mode to detect pastes
     enableBracketedPaste();
@@ -999,7 +1080,7 @@ ${c.bold('Commands:')}
 }
 
 // Run
-main().catch((error) => {
+main().catch(error => {
   console.error(errorBlock(error.message));
   process.exit(1);
 });

@@ -9,19 +9,24 @@ import * as os from 'os';
 // === Directory Paths ===
 // Home directory: credentials, skills, connector locks (shared across all projects)
 export const HOME_SLASHBOT_DIR = path.join(os.homedir(), '.slashbot');
-export const HOME_CONFIG_FILE = path.join(HOME_SLASHBOT_DIR, 'config.json');
+export const HOME_CONFIG_FILE = path.join(HOME_SLASHBOT_DIR, 'config', 'config.json');
+export const PROMPTS_DIR = path.join(HOME_SLASHBOT_DIR, 'prompts');
 export const HOME_SKILLS_DIR = path.join(HOME_SLASHBOT_DIR, 'skills');
 export const HOME_LOCKS_DIR = path.join(HOME_SLASHBOT_DIR, 'locks');
 
 // Local directory: project-specific data (history, tasks)
-export const getLocalSlashbotDir = (workDir?: string) => path.join(workDir || process.cwd(), '.slashbot');
-export const getLocalHistoryFile = (workDir?: string) => path.join(getLocalSlashbotDir(workDir), 'history');
-export const getLocalTasksFile = (workDir?: string) => path.join(getLocalSlashbotDir(workDir), 'tasks.json');
-export const getLocalPermissionsFile = (workDir?: string) => path.join(getLocalSlashbotDir(workDir), 'permissions.json');
+export const getLocalSlashbotDir = (workDir?: string) =>
+  path.join(workDir || process.cwd(), '.slashbot');
+export const getLocalHistoryFile = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'history');
+export const getLocalTasksFile = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'tasks.json');
+export const getLocalPermissionsFile = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'permissions.json');
 
 // === Model Configuration ===
 export const MODELS = {
-  DEFAULT: 'grok-code-fast-1',
+  DEFAULT: 'grok-4-1-fast-reasoning',
   IMAGE: 'grok-4-1-fast-non-reasoning',
   SEARCH: 'grok-4-1-fast-non-reasoning',
   SUMMARY: 'grok-3-mini-fast',
@@ -131,5 +136,5 @@ export const MIME_TYPES: Record<string, string> = {
 } as const;
 
 // === Type exports ===
-export type ActionTag = typeof ACTION_TAGS[number];
-export type GitCommand = typeof ALLOWED_GIT_COMMANDS[number];
+export type ActionTag = (typeof ACTION_TAGS)[number];
+export type GitCommand = (typeof ALLOWED_GIT_COMMANDS)[number];

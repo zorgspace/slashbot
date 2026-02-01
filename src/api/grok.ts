@@ -4,12 +4,43 @@
  */
 
 import { colors, c, ThinkingAnimation, buildStatus, step } from '../ui/colors';
+
 import { renderMarkdown } from '../ui/markdown';
-import { imageBuffer, getRecentImages, hasImages as hasImagesInBuffer, clearImages } from '../code/imageBuffer';
+
+import {
+  imageBuffer,
+  getRecentImages,
+  hasImages as hasImagesInBuffer,
+  clearImages,
+} from '../code/imageBuffer';
+
 import { parseActions, executeActions, type ActionHandlers } from '../actions';
+
 import { cleanXmlTags, cleanSelfDialogue } from '../utils/xml';
 
 export type { ActionHandlers } from '../actions';
+
+/**
+ * Format action results for LLM context
+ * 256k context available - keep full results, only truncate extremely large outputs
+ */
+function compressActionResults(
+  results: Array<{ action: string; result: string; success: boolean; error?: string }>,
+): string {
+  return results
+    .map(r => {
+      const status = r.success ? '✓' : '✗';
+      const errorNote = r.error ? ` (${r.error})` : '';
+      const maxLen = 50000; // 50k chars per result, plenty of room with 256k context
+
+      const output = r.result.length > maxLen
+        ? r.result.slice(0, maxLen) + '\n...(truncated)'
+        : r.result;
+
+      return `[${status}] ${r.action}${errorNote}\n${output}`;
+    })
+    .join('\n\n');
+}
 
 export interface Message {
   role: 'system' | 'user' | 'assistant';
@@ -28,8 +59,8 @@ export interface GrokConfig {
 }
 
 const DEFAULT_CONFIG: Partial<GrokConfig> = {
-  model: 'grok-code-fast-1',
-  modelImage: 'grok-4-1-fast-non-reasoning',
+  model: 'grok-4-1-fast-reasoning',
+  modelImage: 'grok-4-1-fast-reasoning',
   baseUrl: 'https://api.x.ai/v1',
   maxTokens: 4096,
   temperature: 0.7,
@@ -61,19 +92,39 @@ Today's date: ${today}
 
 const SYSTEM_PROMPT = `You are Slashbot, an autonomous AI agent. Respond in user's language.
 
-# Tone & Style
-- Be concise, direct, to the point
-- Answer with fewer than 4 lines unless asked for detail
-- Minimize output tokens while maintaining helpfulness
-- No preamble/postamble unless requested
-- NEVER add comments to code unless asked
-- Install additional/temporary files or programs in /tmp (not in project)
+# CRITICAL: NO HALLUCINATION
+- NEVER invent or create content the user didn't ask for
+- NEVER write files with made-up content
+- If reorganizing: ONLY move existing files, don't create new ones
+- If unclear what user wants: ASK, don't guess
 
-# Output Format (STRICT)
-- Response = ONLY action tag, nothing else
-- NO explanations, NO "let me...", NO "I need to...", NO thinking out loud
-- NO comments before/after actions - just the action
-- If no action needed, answer in 1-2 sentences max
+# CRITICAL: INVESTIGATE BEFORE ACTING
+- ALWAYS read relevant files before making changes
+- Use glob/grep to find files, then read them to understand context
+- Understand existing code patterns before editing
+- Don't assume file contents - verify first
+- For bug fixes: read the code, understand the issue, then fix
+
+# CRITICAL: ANSWER PROMPTLY - NO THINKING OUT LOUD
+You MUST respond with ONLY:
+1. An action tag (to execute something), OR
+2. A brief 1-2 sentence answer
+
+FORBIDDEN outputs (NEVER write these):
+- "Yes.", "No.", "Done.", "Good.", "Perfect."
+- "Then...", "So...", "But...", "Now...", "First...", "Next..."
+- "I think...", "I will...", "I need to...", "Let me..."
+- "The response is...", "The answer is...", "To do this..."
+- Any reasoning, planning, or self-dialogue
+- Any confirmation of your own thoughts
+
+Just DO the action or ANSWER the question. Nothing else.
+
+# Tone & Style
+- Concise, direct, to the point
+- Max 2 sentences unless user asks for detail
+- No preamble/postamble
+- NEVER add comments to code unless asked
 
 # Security
 - Assist with DEFENSIVE security only
@@ -183,6 +234,8 @@ Only use after SUCCESSFUL edits, never as busywork.
 <skill name="docker"/>
 <skill-install url="https://example.com/skill.md"/>
 \`\`\`
+IMPORTANT: Skills MUST be installed via <skill-install url="..."/> from a URL.
+NEVER manually create skill files. Always use the skill-install system.
 
 ## Notify & Schedule - Communication
 \`\`\`
@@ -237,8 +290,16 @@ Only use after SUCCESSFUL edits, never as busywork.
 
 # Process Management
 - /ps - List background processes
-- /kill <id> - Stop a background process`;
+- /kill <id> - Stop a background process
 
+# Context Persistence
+- Make intensive use of saving discussion context in markdown files
+- Organize context files in subfolders under .slashbot/context
+- Save summaries, key decisions, and progress after each significant task or interaction
+- Use date-based (e.g., 2024-02-01) or topic-based subfolders for organization
+- Reference saved context in future interactions when relevant
+
+Maintain .slashbot directory well organized in folders and subfolders.`;
 
 export interface UsageStats {
   promptTokens: number;
@@ -278,16 +339,22 @@ export class GrokClient {
   }
 
   /**
-   * Get the appropriate model based on whether NEW images are being sent
-   * Only use image model if there are images in the buffer (not yet consumed)
-   * This ensures text-only messages use the fast code model
+   * Get the appropriate model based on whether images exist in conversation
+   * Must use vision model if ANY message in history contains images
    */
   private getModel(): string {
-    // Only use image model if there are NEW images to process
-    // Images in conversation history don't require the image model for new messages
-    return hasImagesInBuffer()
-      ? (this.config.modelImage || 'grok-4-1-fast-non-reasoning')
-      : (this.config.model || 'grok-code-fast-1');
+    // Check if any message in conversation history contains images
+    const hasImagesInHistory = this.conversationHistory.some(msg => {
+      if (Array.isArray(msg.content)) {
+        return msg.content.some(part => part.type === 'image_url');
+      }
+      return false;
+    });
+
+    // Use vision model if images in buffer OR in conversation history
+    return hasImagesInBuffer() || hasImagesInHistory
+      ? this.config.modelImage || 'grok-4-1-fast-reasoning'
+      : this.config.model || 'grok-4-1-fast-reasoning';
   }
 
   private rebuildSystemPrompt(): void {
@@ -380,20 +447,13 @@ export class GrokClient {
       content: userContent,
     });
 
-    // Clear images after adding to message (they're now in conversation history)
-    if (recentImages.length > 0) {
-      clearImages();
-    }
-
     // Compress context if enabled
     this.compressContext();
 
+    // Track if this message has images (for model selection)
+    const messageHasImages = recentImages.length > 0;
+
     let finalResponse = '';
-    let codeModified = false; // Track if code files were modified
-    let verificationAttempts = 0;
-    let rePromptAttempts = 0;
-    const MAX_VERIFICATION_ATTEMPTS = 3;
-    const MAX_REPROMPT_ATTEMPTS = 3;
 
     // Track files read in this conversation to prevent duplicate reads
     const filesReadThisTurn = new Set<string>();
@@ -402,7 +462,6 @@ export class GrokClient {
 
     // Agentic loop: execute actions and feed results back (no iteration limit)
     while (true) {
-
       let responseContent: string;
       try {
         responseContent = await this.streamResponse();
@@ -411,6 +470,11 @@ export class GrokClient {
         throw error;
       }
       finalResponse = responseContent;
+
+      // Clear images after first API call (they've been sent, don't need image model anymore)
+      if (messageHasImages && hasImagesInBuffer()) {
+        clearImages();
+      }
 
       // Execute actions and collect results
       let actions = parseActions(responseContent);
@@ -446,14 +510,6 @@ export class GrokClient {
         }
       }
 
-      // Track if any code-modifying actions are present
-      const codeActions = actions.filter(a =>
-        ['edit', 'multi-edit', 'write', 'create'].includes(a.type)
-      );
-      if (codeActions.length > 0) {
-        codeModified = true;
-      }
-
       // Check for action tags inside code blocks (LLM mistake) - silently retry
       if (actions.length === 0) {
         const actionTagRegex = /<(bash|read|edit|write|glob|grep)\b[^>]*>/gi;
@@ -476,7 +532,8 @@ export class GrokClient {
             });
             this.conversationHistory.push({
               role: 'user',
-              content: 'ERROR: Action tag inside code block. Write action tags directly WITHOUT backticks.',
+              content:
+                'ERROR: Action tag inside code block. Write action tags directly WITHOUT backticks.',
             });
             continue;
           }
@@ -485,79 +542,23 @@ export class GrokClient {
 
       const actionResults = await executeActions(actions, this.actionHandlers);
 
-      // If no actions were executed, check if we should continue or stop
+      // If no actions were executed, task is complete - break out of loop
       if (actionResults.length === 0) {
-        // Check if response looks like LLM is still working (not a final summary)
-        const looksIncomplete = responseContent.length < 200 && (
-          /\b(let me|I('ll| will)|now I|next|going to|need to)\b/i.test(responseContent) ||
-          /\b(read|edit|search|find|check|look)\b/i.test(responseContent)
-        );
-
-        // Re-prompt if LLM outputted explanation instead of action
-        if (looksIncomplete && rePromptAttempts < MAX_REPROMPT_ATTEMPTS) {
-          rePromptAttempts++;
-          console.log(`${colors.muted}⚠ No action in response, re-prompting...${colors.reset}`);
-          this.conversationHistory.push({
-            role: 'assistant',
-            content: responseContent,
-          });
-          this.conversationHistory.push({
-            role: 'user',
-            content: 'Output the action tag NOW. No text, no explanation - ONLY the action tag.',
-          });
-          continue;
-        }
-
-        // Auto-verify: if code was modified, run build to check for errors
-        if (codeModified && verificationAttempts < MAX_VERIFICATION_ATTEMPTS && this.actionHandlers.onBash) {
-          verificationAttempts++;
-          codeModified = false; // Reset for next round
-
-          // Detect build command based on project files
-          const buildResult = await this.runBuildVerification();
-
-          if (buildResult.hasErrors) {
-            console.log(`${colors.muted}[Auto-verify] Build errors detected, asking LLM to fix...${colors.reset}`);
-
-            // Store current response
-            this.conversationHistory.push({
-              role: 'assistant',
-              content: responseContent,
-            });
-
-            // Inject build errors for LLM to fix
-            this.conversationHistory.push({
-              role: 'user',
-              content: `BUILD FAILED! Fix these errors:\n\n${buildResult.output}\n\nOutput ONLY the action tag to fix the error. No explanation.`,
-            });
-
-            continue; // Continue the loop to let LLM fix
-          }
-        }
         break;
       }
 
-      // Reset re-prompt counter when actions execute successfully
-      rePromptAttempts = 0;
-
-      // Feed results back to continue the conversation
-      const resultsMessage = actionResults
-        .map(r => {
-          const status = r.success ? '✓' : '✗ FAILED';
-          const errorNote = r.error ? ` - ${r.error}` : '';
-          return `[${status}] ${r.action}${errorNote}\n${r.result}`;
-        })
-        .join('\n\n');
+      // Feed compressed results back to continue the conversation
+      const compressedResults = compressActionResults(actionResults);
 
       this.conversationHistory.push({
         role: 'assistant',
         content: responseContent,
       });
-      // Build a more action-oriented continuation prompt
+      // Build continuation prompt - be directive to keep LLM working
       const hasErrors = actionResults.some(r => !r.success);
       const continuationPrompt = hasErrors
-        ? `Action results:\n${resultsMessage}\n\nFix the error and continue with the task. Output ONLY the next action tag, no explanation.`
-        : `Action results:\n${resultsMessage}\n\nContinue with the next step. Output ONLY the next action tag. If task is complete, output a 1-line summary.`;
+        ? `${compressedResults}\n\nFix the error and continue.`
+        : `${compressedResults}\n\nContinue with the next step.`;
 
       this.conversationHistory.push({
         role: 'user',
@@ -574,106 +575,13 @@ export class GrokClient {
       });
     }
 
-    // Clean and return final response
-    const cleanResponse = cleanXmlTags(finalResponse);
+    // Clean and return final response (remove action tags and internal monologue)
+    const cleanResponse = cleanSelfDialogue(cleanXmlTags(finalResponse));
 
     return {
       response: cleanResponse,
       thinking: '',
     };
-  }
-
-  /**
-   * Run build verification and return results
-   */
-  private async runBuildVerification(): Promise<{ hasErrors: boolean; output: string }> {
-    if (!this.actionHandlers.onBash) {
-      return { hasErrors: false, output: '' };
-    }
-
-    const fs = require('fs');
-    const path = require('path');
-    const workDir = this.workDir || process.cwd();
-
-    // Detect project type and appropriate build command
-    let buildCmd = '';
-    let checkCmd = '';
-
-    // Check for TypeScript/JavaScript projects
-    if (fs.existsSync(path.join(workDir, 'package.json'))) {
-      const pkgJson = JSON.parse(fs.readFileSync(path.join(workDir, 'package.json'), 'utf8'));
-      const scripts = pkgJson.scripts || {};
-
-      // Prefer typecheck over build (faster, catches type errors)
-      if (scripts.typecheck) {
-        checkCmd = 'npm run typecheck';
-      } else if (scripts['type-check']) {
-        checkCmd = 'npm run type-check';
-      } else if (fs.existsSync(path.join(workDir, 'tsconfig.json'))) {
-        // Has TypeScript but no typecheck script - use tsc directly
-        checkCmd = 'npx tsc --noEmit';
-      }
-
-      // Also check build if available
-      if (scripts.build) {
-        buildCmd = 'npm run build';
-      }
-
-      // Use bun if bun.lockb exists
-      if (fs.existsSync(path.join(workDir, 'bun.lockb'))) {
-        checkCmd = checkCmd.replace('npm run', 'bun run').replace('npx ', 'bunx ');
-        buildCmd = buildCmd.replace('npm run', 'bun run');
-      }
-    }
-
-    // Check for Rust projects
-    if (fs.existsSync(path.join(workDir, 'Cargo.toml'))) {
-      checkCmd = 'cargo check';
-      buildCmd = 'cargo build';
-    }
-
-    // Check for Go projects
-    if (fs.existsSync(path.join(workDir, 'go.mod'))) {
-      checkCmd = 'go build ./...';
-    }
-
-    // Check for Python projects
-    if (fs.existsSync(path.join(workDir, 'pyproject.toml')) || fs.existsSync(path.join(workDir, 'setup.py'))) {
-      // Use mypy if available for type checking
-      checkCmd = 'python -m py_compile $(find . -name "*.py" -not -path "./venv/*" | head -20)';
-    }
-
-    // Prefer check command (faster), fallback to build
-    const cmd = checkCmd || buildCmd;
-    if (!cmd) {
-      return { hasErrors: false, output: '' };
-    }
-
-    console.log(`${colors.muted}[Auto-verify] Running: ${cmd}${colors.reset}`);
-
-    try {
-      const output = await this.actionHandlers.onBash(cmd, { timeout: 60000 });
-
-      // Check for common error patterns
-      const hasErrors = output ? (
-        output.includes('error') ||
-        output.includes('Error') ||
-        output.includes('ERROR') ||
-        output.includes('failed') ||
-        output.includes('FAILED') ||
-        /TS\d{4}:/.test(output) || // TypeScript errors
-        /error\[E\d+\]/.test(output) // Rust errors
-      ) : false;
-
-      if (!hasErrors) {
-        console.log(`${colors.muted}[Auto-verify] ✓ Build passed${colors.reset}`);
-      }
-
-      return { hasErrors, output: output || '' };
-    } catch (error: any) {
-      const errorOutput = error.message || String(error);
-      return { hasErrors: true, output: errorOutput };
-    }
   }
 
   private async streamResponse(): Promise<string> {
@@ -770,8 +678,16 @@ export class GrokClient {
 
               // Stream clean content (without XML action tags) to console
               // But wait if we're in the middle of an action tag (incomplete <...>)
-              const openTags = (responseContent.match(/<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install)\b/gi) || []).length;
-              const closeTags = (responseContent.match(/<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install)>|\/>/gi) || []).length;
+              const openTags = (
+                responseContent.match(
+                  /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install)\b/gi,
+                ) || []
+              ).length;
+              const closeTags = (
+                responseContent.match(
+                  /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install)>|\/>/gi,
+                ) || []
+              ).length;
               const hasUnclosedTag = openTags > closeTags;
 
               // Also check for potential partial tag at end (e.g., "<" or "<re" that might become "<read")
@@ -779,7 +695,8 @@ export class GrokClient {
               const hasPartialTag = partialTagMatch !== null;
 
               if (!hasUnclosedTag && !hasPartialTag) {
-                const cleanFull = cleanXmlTags(responseContent);
+                // Clean action tags and internal monologue/thinking
+                const cleanFull = cleanSelfDialogue(cleanXmlTags(responseContent));
                 // Collapse multiple consecutive newlines to max 2
                 const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
                 const newContent = normalized.slice(displayedContent.length);
@@ -805,7 +722,7 @@ export class GrokClient {
     }
 
     // Output any remaining content that was buffered
-    const cleanFull = cleanXmlTags(responseContent);
+    const cleanFull = cleanSelfDialogue(cleanXmlTags(responseContent));
     const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
     const remainingContent = normalized.slice(displayedContent.length);
     if (remainingContent) {
@@ -909,7 +826,8 @@ export class GrokClient {
 
     // Include recent images from imageBuffer (same as chat method)
     const recentImages = getRecentImages();
-    if (recentImages.length > 0) {
+    const messageHasImages = recentImages.length > 0;
+    if (messageHasImages) {
       const userContent: Array<{
         type: 'text' | 'image_url';
         text?: string;
@@ -922,8 +840,6 @@ export class GrokClient {
         role: 'user',
         content: userContent,
       });
-      // Clear images after adding to message (they're now in conversation history)
-      clearImages();
     } else {
       this.conversationHistory.push({
         role: 'user',
@@ -936,9 +852,6 @@ export class GrokClient {
     const actionsSummary: string[] = [];
     let maxIterations = 15; // More iterations for multi-step tasks
     let finalResponse = '';
-    let codeModified = false;
-    let verificationAttempts = 0;
-    const MAX_VERIFICATION_ATTEMPTS = 2; // Less attempts for remote connections
 
     // Track files read to prevent duplicate reads
     const filesReadThisTurn = new Set<string>();
@@ -994,6 +907,11 @@ export class GrokClient {
       const content = data.choices?.[0]?.message?.content || '';
       finalResponse = content;
 
+      // Clear images after first API call (they've been sent, don't need image model anymore)
+      if (messageHasImages && hasImagesInBuffer()) {
+        clearImages();
+      }
+
       // Track usage
       if (data.usage) {
         this.usage.promptTokens += data.usage.prompt_tokens || 0;
@@ -1032,31 +950,7 @@ export class GrokClient {
         continue;
       }
 
-      // Track code modifications
-      const codeActions = actions.filter(a =>
-        ['edit', 'multi-edit', 'write', 'create'].includes(a.type)
-      );
-      if (codeActions.length > 0) {
-        codeModified = true;
-      }
-
       if (actions.length === 0) {
-        // Auto-verify: if code was modified, run build to check for errors
-        if (codeModified && verificationAttempts < MAX_VERIFICATION_ATTEMPTS && this.actionHandlers.onBash) {
-          verificationAttempts++;
-          codeModified = false;
-
-          const buildResult = await this.runBuildVerification();
-
-          if (buildResult.hasErrors) {
-            this.conversationHistory.push({ role: 'assistant', content });
-            this.conversationHistory.push({
-              role: 'user',
-              content: `BUILD FAILED! Fix these errors:\n\n${buildResult.output.slice(0, 2000)}\n\nOutput ONLY the action tag to fix. No explanation.`,
-            });
-            continue;
-          }
-        }
         // No more actions, we're done
         this.conversationHistory.push({ role: 'assistant', content });
         break;
@@ -1083,22 +977,16 @@ export class GrokClient {
         actionsSummary.push(`${status} ${r.action}`);
       }
 
-      // Feed results back
-      const resultsMessage = actionResults
-        .map(r => {
-          const status = r.success ? '✓' : '✗ FAILED';
-          const errorNote = r.error ? ` - ${r.error}` : '';
-          return `[${status}] ${r.action}${errorNote}\n${r.result}`;
-        })
-        .join('\n\n');
+      // Feed compressed results back
+      const compressedResults = compressActionResults(actionResults);
 
       this.conversationHistory.push({ role: 'assistant', content });
 
-      // Build a more action-oriented continuation prompt
+      // Build continuation prompt - be directive to keep LLM working
       const hasErrors = actionResults.some(r => !r.success);
       const continuationPrompt = hasErrors
-        ? `Action results:\n${resultsMessage}\n\nFix the error and continue. Output ONLY the next action tag.`
-        : `Action results:\n${resultsMessage}\n\nContinue with the next step. Output ONLY the next action tag. If complete, output a 1-sentence summary.`;
+        ? `${compressedResults}\n\nFix the error and continue.`
+        : `${compressedResults}\n\nContinue with the next step.`;
 
       this.conversationHistory.push({
         role: 'user',
@@ -1158,7 +1046,7 @@ export class GrokClient {
     ];
 
     const requestBody = {
-      model: 'grok-4-1-fast-non-reasoning',
+      model: 'grok-4-1-fast-reasoning',
       input,
       tools,
     };

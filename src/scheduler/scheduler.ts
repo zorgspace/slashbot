@@ -60,8 +60,8 @@ export interface ScheduledTask {
   id: string;
   name: string;
   cron: string;
-  command?: string;  // Bash command to execute (mutually exclusive with prompt)
-  prompt?: string;   // LLM prompt to process (can search, fetch, notify, etc.)
+  command?: string; // Bash command to execute (mutually exclusive with prompt)
+  prompt?: string; // LLM prompt to process (can search, fetch, notify, etc.)
   enabled: boolean;
   createdAt: string;
   lastRun?: string;
@@ -183,7 +183,7 @@ export class TaskScheduler {
     name: string,
     cron: string,
     commandOrPrompt: string,
-    options?: { isPrompt?: boolean }
+    options?: { isPrompt?: boolean },
   ): Promise<string | null> {
     const isPrompt = options?.isPrompt ?? false;
 

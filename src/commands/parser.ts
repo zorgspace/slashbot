@@ -1050,7 +1050,7 @@ commands.set('kill', {
   name: 'kill',
   description: 'Kill a background process',
   usage: '/kill <id|pid>',
-  execute: async (args) => {
+  execute: async args => {
     const target = args[0];
     if (!target) {
       console.log(c.error('Usage: /kill <id|pid>'));
@@ -1208,7 +1208,9 @@ commands.set('discord', {
       console.log(`  ${c.violet('/discord <bot_token> <channel_id>')} - Configure bot`);
       console.log(`  ${c.violet('/discord clear')}                    - Remove configuration`);
       console.log(`\n${c.muted('Get bot token from Discord Developer Portal')}`);
-      console.log(`${c.muted('Channel ID: Right-click channel > Copy ID (enable Developer Mode)')}\n`);
+      console.log(
+        `${c.muted('Channel ID: Right-click channel > Copy ID (enable Developer Mode)')}\n`,
+      );
       return true;
     }
 

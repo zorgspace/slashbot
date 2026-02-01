@@ -106,9 +106,9 @@ function getAssetName(): string {
 
   // Map architecture names
   let archName: string;
-  if (arch === 'x64' || arch === 'amd64') {
+  if (arch === 'x64') {
     archName = 'x64';
-  } else if (arch === 'arm64' || arch === 'aarch64') {
+  } else if (arch === 'arm64') {
     archName = 'arm64';
   } else {
     archName = arch;
@@ -167,7 +167,9 @@ export async function downloadAndInstall(release: GitHubRelease): Promise<boolea
 
   try {
     // Download the new binary
-    console.log(c.violet(`Downloading ${asset.name} (${(asset.size / 1024 / 1024).toFixed(1)} MB)...`));
+    console.log(
+      c.violet(`Downloading ${asset.name} (${(asset.size / 1024 / 1024).toFixed(1)} MB)...`),
+    );
 
     const dlRes = await fetch(asset.browser_download_url, {
       headers: { 'User-Agent': USER_AGENT },
@@ -337,11 +339,15 @@ export async function startupUpdateCheck(): Promise<void> {
   if (!shouldCheck) return;
 
   // Run check in background (don't block startup)
-  checkUpdateAvailable().then(({ available, latestVersion }) => {
-    if (available) {
-      console.log(c.info(`\nUpdate available: v${latestVersion} - run 'slashbot --update' to install\n`));
-    }
-  }).catch(() => {
-    // Silently ignore errors during background check
-  });
+  checkUpdateAvailable()
+    .then(({ available, latestVersion }) => {
+      if (available) {
+        console.log(
+          c.info(`\nUpdate available: v${latestVersion} - run 'slashbot --update' to install\n`),
+        );
+      }
+    })
+    .catch(() => {
+      // Silently ignore errors during background check
+    });
 }

@@ -59,8 +59,14 @@ export function cleanXmlTags(content: string | unknown): string {
     result = result.replace(new RegExp(pattern.source, 'g'), '');
   }
   // Catch any remaining action-like XML tags (opening and closing)
-  result = result.replace(/<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|replace)[^>]*\/?>/gi, '');
-  result = result.replace(/<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|replace)>/gi, '');
+  result = result.replace(
+    /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|replace)[^>]*\/?>/gi,
+    '',
+  );
+  result = result.replace(
+    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|replace)>/gi,
+    '',
+  );
   return result.trim();
 }
 
@@ -77,10 +83,7 @@ export function extractXmlAttribute(tag: string, attr: string): string | null {
  * Extract content between opening and closing tags (<tag>content</tag>)
  */
 export function extractTagContent(tag: string, tagName: string): string | null {
-  const regex = new RegExp(
-    `<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`,
-    'i',
-  );
+  const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i');
   const match = tag.match(regex);
   return match ? match[1] : null;
 }
@@ -91,24 +94,66 @@ export function extractTagContent(tag: string, tagName: string): string | null {
 export function cleanSelfDialogue(content: string): string {
   if (typeof content !== 'string') return '';
 
-  let result = content;
+  // Split into lines and filter aggressively
+  const lines = content.split('\n');
+  const cleanLines = lines.filter(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
 
-  // Remove verbose explanation patterns
-  result = result.replace(/^(Let me|Let's|I need to|I should|I will|I'll|Now I|Next,?\s|First,?\s|Reading|Checking|Looking|Trying|Installing|Running|Executing|Building|The build|This suggests|This might|This is|After this|If it|Perhaps|Maybe|Alternative|Since|Because|However|Therefore|Let's check|Let's try|Let's see|Let's do|Action:|### Action).*/gim, '');
+    // Skip very short lines (single chars, just "I", etc.)
+    if (trimmed.length <= 2) return false;
 
-  // Remove repeated "Yes.", "Done.", "Good.", etc. patterns
-  result = result.replace(/\b(Yes|Done|Good|Perfect|Correct|Right|OK|Okay|Indeed|Exactly|Acknowledged?)\.\s*/gi, '');
+    // Skip short confirmation lines
+    if (
+      /^(Yes|No|Done|Good|Perfect|Correct|Right|OK|Okay|Indeed|Exactly|Then|So|But|Now|And|First|Next|I)\.?\s*$/i.test(
+        trimmed,
+      )
+    ) {
+      return false;
+    }
 
-  // Remove self-questioning patterns
-  result = result.replace(/^(So,?\s|But\s|I think\s|To be\s|The\s(answer|response|output|result)\s(is|would be)\s).*/gim, '');
+    // Skip internal monologue patterns
+    if (
+      /^(Then,?|But\s|So,?|Now,?|And\s|First,?|Next,?|Since\s|Because\s|However,?|Therefore,?|Perhaps\s|Maybe\s|Let me|Let's|I think|I will|I can|I need|I should|To (do|see|check|follow|complete|implement|wrap|end|fix)|The (response|answer|result|output|idea|plan|task|final|summary|conversation)|This (will|is|might|shows|suggests)|If (it|the|we)|For example)/i.test(
+        trimmed,
+      )
+    ) {
+      return false;
+    }
 
-  // Remove lines that are just confirmations
-  result = result.replace(/^\s*(Yes|No|Done|Good|Perfect|Correct|OK|Okay|End|Final|Acknowledged?)\.?\s*$/gim, '');
+    // Skip lines about grep/sed/actions
+    if (
+      /\b(grep|sed|awk|the sed|the grep|output the|do the|will show|the current|in the next|didn't match|didn't change|with hyphen|with colon|with space)\b/i.test(
+        trimmed,
+      )
+    ) {
+      return false;
+    }
 
-  // Remove "... successfully" standalone lines
-  result = result.replace(/^.*successfully[.;]?\s*$/gim, '');
+    // Skip LaTeX boxed answers
+    if (/\\boxed\{|^\*\*Final Answer\*\*$/i.test(trimmed)) {
+      return false;
+    }
 
-  // Remove excessive newlines left behind
+    // Skip lines that are just about the format/response
+    if (
+      /^(The format is|Just the summary|So the output|The boxed is|But in the response)/i.test(
+        trimmed,
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  // Join and clean up
+  let result = cleanLines.join('\n');
+
+  // Remove any remaining inline "Yes." patterns
+  result = result.replace(/\bYes\.\s*/gi, '');
+
+  // Remove excessive newlines
   result = result.replace(/\n{3,}/g, '\n\n');
 
   return result.trim();

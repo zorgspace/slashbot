@@ -49,6 +49,7 @@ export async function executeActions(
     const result = await executeAction(action, handlers);
     if (result) {
       results.push(result);
+      console.log('');
     }
   }
 
@@ -144,7 +145,10 @@ async function executeShellCommand(
 
   // Execute using available handler
   const output = await (handlers.onBash
-    ? handlers.onBash(command, { timeout: options?.timeout, runInBackground: options?.runInBackground })
+    ? handlers.onBash(command, {
+        timeout: options?.timeout,
+        runInBackground: options?.runInBackground,
+      })
     : handlers.onExec!(command));
 
   const isError = output?.startsWith('Error:') || output?.includes('Command blocked');
@@ -188,9 +192,10 @@ async function executeRead(
   if (!handlers.onRead) return null;
 
   // Display action in Claude Code style
-  const rangeInfo = action.offset || action.limit
-    ? ` (offset: ${action.offset || 0}, limit: ${action.limit || 'all'})`
-    : '';
+  const rangeInfo =
+    action.offset || action.limit
+      ? ` (offset: ${action.offset || 0}, limit: ${action.limit || 'all'})`
+      : '';
   step.read(action.path + rangeInfo);
 
   const fileContent = await handlers.onRead(action.path, {
@@ -222,7 +227,12 @@ async function executeEdit(
 
   step.update(action.path);
 
-  const result = await handlers.onEdit(action.path, action.search, action.replace, action.replaceAll);
+  const result = await handlers.onEdit(
+    action.path,
+    action.search,
+    action.replace,
+    action.replaceAll,
+  );
 
   const searchLines = action.search.split('\n');
   const replaceLines = action.replace.split('\n');
@@ -235,9 +245,13 @@ async function executeEdit(
   } else if (result.status === 'not_found') {
     step.updateResult(false, 0, 0);
     if (result.message?.includes('File not found')) {
-      step.error(`File not found: ${action.path}. Use <read> to check if file exists, or <write> to make a new file.`);
+      step.error(
+        `File not found: ${action.path}. Use <read> to check if file exists, or <write> to make a new file.`,
+      );
     } else {
-      step.error(`Pattern not found. Use <read path="${action.path}"/> first to see the actual content.`);
+      step.error(
+        `Pattern not found. Use <read path="${action.path}"/> first to see the actual content.`,
+      );
     }
   } else {
     step.updateResult(false, 0, 0);
@@ -253,7 +267,12 @@ async function executeEdit(
   return {
     action: `Edit: ${action.path}`,
     success: result.success,
-    result: result.status === 'already_applied' ? 'Skipped (already applied)' : result.success ? 'OK' : 'Failed',
+    result:
+      result.status === 'already_applied'
+        ? 'Skipped (already applied)'
+        : result.success
+          ? 'OK'
+          : 'Failed',
     error: result.success ? undefined : errorMsg,
   };
 }
@@ -425,10 +444,7 @@ async function executeGrep(
   };
 }
 
-async function executeLS(
-  action: LSAction,
-  handlers: ActionHandlers,
-): Promise<ActionResult | null> {
+async function executeLS(action: LSAction, handlers: ActionHandlers): Promise<ActionResult | null> {
   if (!handlers.onLS) return null;
 
   const ignoreInfo = action.ignore?.length ? ` (ignore: ${action.ignore.join(', ')})` : '';

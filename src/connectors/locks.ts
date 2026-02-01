@@ -40,7 +40,9 @@ function isProcessRunning(pid: number): boolean {
  * Try to acquire a lock for a connector
  * Returns true if lock acquired, false if another instance is running
  */
-export async function acquireLock(connector: ConnectorType): Promise<{ acquired: boolean; existingPid?: number; existingWorkDir?: string }> {
+export async function acquireLock(
+  connector: ConnectorType,
+): Promise<{ acquired: boolean; existingPid?: number; existingWorkDir?: string }> {
   const { mkdir, readFile, writeFile, unlink } = await import('fs/promises');
   const lockFile = getLockFile(connector);
 
@@ -134,7 +136,9 @@ export async function releaseLock(connector: ConnectorType): Promise<void> {
 /**
  * Check if a connector is locked by another instance
  */
-export async function isLocked(connector: ConnectorType): Promise<{ locked: boolean; pid?: number; workDir?: string }> {
+export async function isLocked(
+  connector: ConnectorType,
+): Promise<{ locked: boolean; pid?: number; workDir?: string }> {
   const { readFile } = await import('fs/promises');
   const lockFile = getLockFile(connector);
 

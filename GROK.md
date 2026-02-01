@@ -100,6 +100,7 @@ Slashbot follows a modular architecture designed for CLI AI interactions:
   - **Environment Variables:** Required for operation; set XAI_API_KEY or GROK_API_KEY for API access. Optional ones include TELEGRAM_BOT_TOKEN for notifications and WHATSAPP_ACCESS_TOKEN for WhatsApp integration. Use dotenv to load them.
   - **Setup and Running:** Install dependencies with `bun install`, then use `npm run dev` for development. Ensure Bun is installed as it's the runtime.
   - **Testing and Debugging:** Run `npm run typecheck` for TypeScript errors. The agentic loop in GrokClient allows for iterative fixes, e.g., handle build failures automatically.
+  - **IMPORTANT:** If typecheck fails, fix the errors immediately before continuing. Do not leave type errors unresolved.
   - **Security Considerations:** Commands are vetted via CommandPermissions; avoid running destructive actions without user confirmation.
   - **Extending the Codebase:** Add new skills in src/skills/ or actions in src/actions/. Follow existing patterns for async operations and error handling.
   - **Performance Tips:** The system is token-conscious; keep responses minimal. Use context compression in GrokClient for long conversations.

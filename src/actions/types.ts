@@ -150,8 +150,8 @@ export interface ScheduleAction {
   type: 'schedule';
   cron: string;
   name: string;
-  command?: string;  // Bash command (mutually exclusive with prompt)
-  prompt?: string;   // LLM prompt for AI-powered tasks (search, fetch, notify, etc.)
+  command?: string; // Bash command (mutually exclusive with prompt)
+  prompt?: string; // LLM prompt for AI-powered tasks (search, fetch, notify, etc.)
 }
 
 export interface NotifyAction {
@@ -259,10 +259,21 @@ export interface GrepOptions {
 // ===== Handler Interface =====
 
 export interface ActionHandlers {
-  onBash?: (command: string, options?: { timeout?: number; runInBackground?: boolean }) => Promise<string>;
+  onBash?: (
+    command: string,
+    options?: { timeout?: number; runInBackground?: boolean },
+  ) => Promise<string>;
   onRead?: (path: string, options?: { offset?: number; limit?: number }) => Promise<string | null>;
-  onEdit?: (path: string, search: string, replace: string, replaceAll?: boolean) => Promise<EditResult>;
-  onMultiEdit?: (path: string, edits: Array<{ search: string; replace: string; replaceAll?: boolean }>) => Promise<EditResult>;
+  onEdit?: (
+    path: string,
+    search: string,
+    replace: string,
+    replaceAll?: boolean,
+  ) => Promise<EditResult>;
+  onMultiEdit?: (
+    path: string,
+    edits: Array<{ search: string; replace: string; replaceAll?: boolean }>,
+  ) => Promise<EditResult>;
   onWrite?: (path: string, content: string) => Promise<boolean>;
   onCreate?: (path: string, content: string) => Promise<boolean>; // Alias
   onFile?: (path: string, content: string) => Promise<boolean>; // Alias
@@ -271,10 +282,18 @@ export interface ActionHandlers {
   onLS?: (path: string, ignore?: string[]) => Promise<string[]>;
   onGit?: (command: string, args?: string) => Promise<string>;
   onFetch?: (url: string, prompt?: string) => Promise<string>;
-  onSearch?: (query: string, options?: { allowedDomains?: string[]; blockedDomains?: string[] }) => Promise<{ response: string; citations: string[] }>;
+  onSearch?: (
+    query: string,
+    options?: { allowedDomains?: string[]; blockedDomains?: string[] },
+  ) => Promise<{ response: string; citations: string[] }>;
   onFormat?: (path?: string) => Promise<string>;
   onTypecheck?: () => Promise<string>;
-  onSchedule?: (cron: string, commandOrPrompt: string, name: string, options?: { isPrompt?: boolean }) => Promise<void>;
+  onSchedule?: (
+    cron: string,
+    commandOrPrompt: string,
+    name: string,
+    options?: { isPrompt?: boolean },
+  ) => Promise<void>;
   onNotify?: (message: string, target?: string) => Promise<{ sent: string[]; failed: string[] }>;
   onSkill?: (name: string, args?: string) => Promise<string>;
   onSkillInstall?: (url: string, name?: string) => Promise<{ name: string; path: string }>;
@@ -282,8 +301,14 @@ export interface ActionHandlers {
   onPs?: () => Promise<string>;
   onKill?: (target: string) => Promise<boolean>;
   // Connector configuration
-  onTelegramConfig?: (botToken: string, chatId?: string) => Promise<{ success: boolean; message: string; chatId?: string }>;
-  onDiscordConfig?: (botToken: string, channelId: string) => Promise<{ success: boolean; message: string }>;
+  onTelegramConfig?: (
+    botToken: string,
+    chatId?: string,
+  ) => Promise<{ success: boolean; message: string; chatId?: string }>;
+  onDiscordConfig?: (
+    botToken: string,
+    channelId: string,
+  ) => Promise<{ success: boolean; message: string }>;
   // Legacy alias
   onExec?: (command: string) => Promise<string>;
 }

@@ -15,8 +15,8 @@ export const colors = {
   violetDark: `${ESC}38;5;93m`, // Dark violet
 
   // Semantic colors
-  success: `${ESC}38;5;34m`, // Darker green
-  green: `${ESC}38;5;34m`, // Darker green
+  success: `${ESC}38;5;34m`, // Green
+  green: `${ESC}38;5;34m`, // Green
   error: `${ESC}38;5;124m`, // Darker red
   red: `${ESC}38;5;124m`, // Darker red
   warning: `${ESC}38;5;214m`, // Orange
@@ -60,6 +60,7 @@ export const c = {
   violetLight: (text: string) => `${colors.violetLight}${text}${RESET}`,
   violetDark: (text: string) => `${colors.violetDark}${text}${RESET}`,
   success: (text: string) => `${colors.success}${text}${RESET}`,
+  green: (text: string) => `${colors.green}${text}${RESET}`,
   error: (text: string) => `${colors.error}${text}${RESET}`,
   warning: (text: string) => `${colors.warning}${text}${RESET}`,
   info: (text: string) => `${colors.info}${text}${RESET}`,
@@ -314,146 +315,168 @@ export class ThinkingAnimation {
 
 // Claude Code-style output formatting
 export const step = {
-  // Assistant message/thought (white bullet)
+  // Assistant message/thought (violet bullet)
   message: (text: string) => {
-    console.log(`${colors.white}●${colors.reset} ${text}`);
+    console.log(`${colors.violet}●${colors.reset} ${text}`);
   },
 
-  // Tool call: ● ToolName(args)
+  // Tool call: ● ToolName(args) - violet bullet and name
   tool: (toolName: string, args?: string) => {
     const argsStr = args ? `(${args})` : '';
     console.log(
-      `${colors.white}●${colors.reset} ${colors.bold}${toolName}${colors.reset}${argsStr}`,
+      `${colors.violet}●${colors.reset} ${colors.violet}${toolName}${colors.reset}${argsStr}`,
     );
   },
 
-  // Tool result: ⎿  Result text (indented, supports multiline)
+  // Tool result: ⎿  Result text (indented, white for reads, green for success messages)
   result: (text: string, isError = false) => {
     const lines = text.split('\n');
-    const color = isError ? colors.error : colors.muted;
+    // Use green for success indicators, red for errors, white for general info
+    const isSuccess =
+      text.includes('No errors') ||
+      text.includes('success') ||
+      text.includes('Created') ||
+      text.includes('Updated');
+    const color = isError ? colors.error : isSuccess ? colors.green : colors.white;
     lines.forEach((line, i) => {
-      const prefix = i === 0 ? '⎿ ' : '  ';
-      console.log(`  ${color}${prefix}${line}${colors.reset}`);
+      // Add checkmark for success messages
+      const checkmark = i === 0 && isSuccess && !isError ? '✓ ' : '';
+      const prefix = i === 0 ? '⎿  ' : '   ';
+      console.log(`  ${color}${prefix}${checkmark}${line}${colors.reset}`);
     });
   },
 
-  // Read action: ● Read(file_path) - green bullet
+  // Read action: ● Read(file_path) - violet bullet and name
   read: (filePath: string) => {
-    console.log(`${colors.success}●${colors.reset} ${colors.bold}Read${colors.reset}(${filePath})`);
+    console.log(
+      `${colors.violet}●${colors.reset} ${colors.violet}Read${colors.reset}(${filePath})`,
+    );
   },
 
-  // Read result: ⎿  Read N lines - grey/muted
+  // Read result: ⎿  Read N lines - white
   readResult: (lineCount: number) => {
-    console.log(`  ${colors.muted}⎿  Read ${lineCount} lines${colors.reset}`);
+    console.log(`  ${colors.white}⎿  Read ${lineCount} lines${colors.reset}`);
   },
 
-  // Grep action: ● Grep(pattern, file)
+  // Grep action: ● Grep(pattern, file) - violet bullet and name
   grep: (pattern: string, filePattern?: string) => {
     const args = filePattern ? `"${pattern}", "${filePattern}"` : `"${pattern}"`;
-    console.log(`${colors.white}●${colors.reset} ${colors.bold}Grep${colors.reset}(${args})`);
+    console.log(`${colors.violet}●${colors.reset} ${colors.violet}Grep${colors.reset}(${args})`);
   },
 
-  // Grep result: ⎿  Found N matches
+  // Grep result: ⎿  Found N matches - white (read operation)
   grepResult: (matches: number, preview?: string) => {
     if (matches === 0) {
-      console.log(`  ${colors.muted}⎿  No matches found${colors.reset}`);
+      console.log(`  ${colors.white}⎿  No matches found${colors.reset}`);
     } else {
       console.log(
-        `  ${colors.muted}⎿  Found ${matches} match${matches > 1 ? 'es' : ''}${colors.reset}`,
+        `  ${colors.white}⎿  Found ${matches} match${matches > 1 ? 'es' : ''}${colors.reset}`,
       );
       if (preview) {
         preview
           .split('\n')
           .slice(0, 5)
           .forEach(line => {
-            console.log(`     ${colors.muted}${line}${colors.reset}`);
+            console.log(`     ${colors.white}${line}${colors.reset}`);
           });
       }
     }
   },
 
-  // Bash/Exec action: ● Bash(command)
+  // Bash/Exec action: ● Exec(command) - violet bullet and name
   bash: (command: string) => {
     // Truncate long commands
     const displayCmd = command.length > 60 ? command.slice(0, 57) + '...' : command;
-    console.log(`${colors.white}●${colors.reset} ${colors.bold}Bash${colors.reset}(${displayCmd})`);
+    console.log(
+      `${colors.violet}●${colors.reset} ${colors.violet}Exec${colors.reset}(${displayCmd})`,
+    );
   },
 
-  // Bash result: ⎿  $ command \n output
+  // Bash result: ⎿  output - white for general, green for success, red for errors
   bashResult: (command: string, output: string, exitCode = 0) => {
     const isError = exitCode !== 0 || output.startsWith('Error:');
+    const isSuccess =
+      output.includes('No errors') || output.includes('success') || output.includes('✓');
     if (isError) {
       console.log(`  ${colors.error}⎿  Error: Exit code ${exitCode}${colors.reset}`);
       console.log(`     ${colors.muted}$ ${command}${colors.reset}`);
+    } else if (isSuccess) {
+      console.log(`  ${colors.green}⎿  ✓ ${output.trim().split('\n')[0]}${colors.reset}`);
+      return; // Don't show full output for simple success
     } else {
-      console.log(`  ${colors.muted}⎿  $ ${command}${colors.reset}`);
+      console.log(`  ${colors.white}⎿  $ ${command}${colors.reset}`);
     }
     if (output) {
       const lines = output.split('\n');
-      const maxLines = isError ? 30 : 15; // Show more lines for errors
+      const maxLines = isError ? 30 : 15;
       lines.slice(0, maxLines).forEach(line => {
-        const lineColor = isError ? colors.error : colors.muted;
+        const lineColor = isError ? colors.error : colors.white;
         console.log(`     ${lineColor}${line}${colors.reset}`);
       });
       if (lines.length > maxLines) {
         console.log(
-          `     ${colors.muted}... (${lines.length - maxLines} more lines)${colors.reset}`,
+          `     ${colors.white}... (${lines.length - maxLines} more lines)${colors.reset}`,
         );
       }
     }
   },
 
-  // Edit/Update action: ● Update(file_path)
+  // Edit/Update action: ● Edit(file_path) - violet bullet
   update: (filePath: string) => {
-    console.log(`${colors.white}●${colors.reset} ${colors.bold}Update${colors.reset}(${filePath})`);
+    console.log(
+      `${colors.violet}●${colors.reset} ${colors.violet}Edit${colors.reset}(${filePath})`,
+    );
   },
 
-  // Edit result indicator (summary shown by diff function)
+  // Edit result indicator - golf green
   updateResult: (
     success: boolean,
     _linesRemoved: number,
     _linesAdded: number,
     _context?: { before?: string[]; after?: string[]; lineStart?: number },
   ) => {
-    if (!success) {
+    if (success) {
+      console.log(`  ${colors.green}⎿  Updated${colors.reset}`);
+    } else {
       console.log(`  ${colors.error}⎿  Failed - pattern not found${colors.reset}`);
     }
-    // Summary is now shown by step.diff() function
   },
 
-  // Create action: ● Write(file_path)
+  // Create action: ● Create(file_path) - violet bullet
   write: (filePath: string) => {
-    console.log(`${colors.white}●${colors.reset} ${colors.bold}Write${colors.reset}(${filePath})`);
+    console.log(
+      `${colors.violet}●${colors.reset} ${colors.violet}Create${colors.reset}(${filePath})`,
+    );
   },
 
-  // Create result
+  // Create result - golf green
   writeResult: (success: boolean, lineCount?: number) => {
     if (success) {
       const info = lineCount ? ` (${lineCount} lines)` : '';
-      console.log(`  ${colors.muted}⎿  Created${info}${colors.reset}`);
+      console.log(`  ${colors.green}⎿  Created${info}${colors.reset}`);
     } else {
       console.log(`  ${colors.error}⎿  Failed to create file${colors.reset}`);
     }
   },
 
-  // Schedule action
+  // Schedule action - violet bullet
   schedule: (name: string, cron: string) => {
     console.log(
-      `${colors.white}●${colors.reset} ${colors.bold}Schedule${colors.reset}(${name}, "${cron}")`,
+      `${colors.violet}●${colors.reset} ${colors.violet}Schedule${colors.reset}(${name}, "${cron}")`,
     );
   },
 
-  // Skill action
+  // Skill action - violet bullet
   skill: (name: string) => {
-    console.log(`${colors.white}●${colors.reset} ${colors.bold}Skill${colors.reset}(${name})`);
+    console.log(`${colors.violet}●${colors.reset} ${colors.violet}Skill${colors.reset}(${name})`);
   },
 
-  // Success result (green checkmark style)
+  // Success result - golf green with checkmark
   success: (message: string) => {
-    console.log(`  ${colors.success}⎿  ${message}${colors.reset}`);
+    console.log(`  ${colors.green}⎿  ✓ ${message}${colors.reset}`);
   },
 
-  // Error result - red bullet and text
+  // Error result - red
   error: (message: string) => {
     console.log(`  ${colors.error}⎿  Error: ${message}${colors.reset}`);
   },

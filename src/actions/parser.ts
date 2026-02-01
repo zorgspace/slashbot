@@ -41,10 +41,30 @@ function fixTruncatedTags(content: string): string {
   let result = content;
 
   // List of action tags that might be truncated
-  const tags = ['bash', 'read', 'edit', 'multi-edit', 'write', 'create', 'exec',
-                'glob', 'grep', 'ls', 'git', 'fetch', 'search', 'format',
-                'typecheck', 'schedule', 'notify', 'skill', 'skill-install',
-                'ps', 'kill', 'replace']; // include inner tags too
+  const tags = [
+    'bash',
+    'read',
+    'edit',
+    'multi-edit',
+    'write',
+    'create',
+    'exec',
+    'glob',
+    'grep',
+    'ls',
+    'git',
+    'fetch',
+    'search',
+    'format',
+    'typecheck',
+    'schedule',
+    'notify',
+    'skill',
+    'skill-install',
+    'ps',
+    'kill',
+    'replace',
+  ]; // include inner tags too
 
   // Fix malformed inner tags like <search"> or <replace"> (stray quotes)
   result = result.replace(/<search["'\s]*>/gi, '<search>');
@@ -189,13 +209,17 @@ function stripCodeBlocks(content: string): string {
 /**
  * Parse inner edit blocks from multi-edit content
  */
-function parseInnerEdits(content: string): Array<{ search: string; replace: string; replaceAll?: boolean }> {
+function parseInnerEdits(
+  content: string,
+): Array<{ search: string; replace: string; replaceAll?: boolean }> {
   const edits: Array<{ search: string; replace: string; replaceAll?: boolean }> = [];
-  const innerEditRegex = /<edit(?:\s+[^>]*)?>[\s\S]*?<search>([\s\S]*?)<\/search>\s*<replace>([\s\S]*?)<\/replace>\s*<\/edit>/gi;
+  const innerEditRegex =
+    /<edit(?:\s+[^>]*)?>[\s\S]*?<search>([\s\S]*?)<\/search>\s*<replace>([\s\S]*?)<\/replace>\s*<\/edit>/gi;
   let match;
   while ((match = innerEditRegex.exec(content)) !== null) {
     const [fullMatch, search, replace] = match;
-    const replaceAll = extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
+    const replaceAll =
+      extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
     edits.push({
       search: search.trim(),
       replace: replace.trim(),
@@ -273,7 +297,8 @@ export function parseActions(content: string): Action[] {
   while ((match = editRegex.exec(safeContent)) !== null) {
     const fullMatch = match[0];
     const [, path, search, replace] = match;
-    const replaceAll = extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
+    const replaceAll =
+      extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
     actions.push({
       type: 'edit',
       path,
@@ -348,7 +373,8 @@ export function parseActions(content: string): Action[] {
       const context = extractAttr(fullTag, 'context') || extractAttr(fullTag, 'C');
       const contextBefore = extractAttr(fullTag, 'before') || extractAttr(fullTag, 'B');
       const contextAfter = extractAttr(fullTag, 'after') || extractAttr(fullTag, 'A');
-      const caseInsensitive = extractBoolAttr(fullTag, 'i') || extractAttr(fullTag, 'case') === 'insensitive';
+      const caseInsensitive =
+        extractBoolAttr(fullTag, 'i') || extractAttr(fullTag, 'case') === 'insensitive';
       const lineNumbers = extractBoolAttr(fullTag, 'n') || extractBoolAttr(fullTag, 'lines');
       const headLimit = extractAttr(fullTag, 'limit') || extractAttr(fullTag, 'head');
       const multiline = extractBoolAttr(fullTag, 'multiline');
@@ -427,14 +453,20 @@ export function parseActions(content: string): Action[] {
   while ((match = searchRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const query = extractAttr(fullTag, 'query');
-    const allowedDomainsStr = extractAttr(fullTag, 'allowed_domains') || extractAttr(fullTag, 'domains');
-    const blockedDomainsStr = extractAttr(fullTag, 'blocked_domains') || extractAttr(fullTag, 'exclude');
+    const allowedDomainsStr =
+      extractAttr(fullTag, 'allowed_domains') || extractAttr(fullTag, 'domains');
+    const blockedDomainsStr =
+      extractAttr(fullTag, 'blocked_domains') || extractAttr(fullTag, 'exclude');
     if (query) {
       actions.push({
         type: 'search',
         query,
-        allowedDomains: allowedDomainsStr ? allowedDomainsStr.split(',').map(s => s.trim()) : undefined,
-        blockedDomains: blockedDomainsStr ? blockedDomainsStr.split(',').map(s => s.trim()) : undefined,
+        allowedDomains: allowedDomainsStr
+          ? allowedDomainsStr.split(',').map(s => s.trim())
+          : undefined,
+        blockedDomains: blockedDomainsStr
+          ? blockedDomainsStr.split(',').map(s => s.trim())
+          : undefined,
       } as SearchAction);
     }
   }
@@ -529,7 +561,8 @@ export function parseActions(content: string): Action[] {
   const killRegex = new RegExp(PATTERNS.kill.source, 'gi');
   while ((match = killRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
-    const target = extractAttr(fullTag, 'target') || extractAttr(fullTag, 'pid') || extractAttr(fullTag, 'id');
+    const target =
+      extractAttr(fullTag, 'target') || extractAttr(fullTag, 'pid') || extractAttr(fullTag, 'id');
     if (target) {
       actions.push({
         type: 'kill',

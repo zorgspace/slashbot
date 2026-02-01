@@ -111,7 +111,9 @@ export class CodeEditor {
       // Determine search path - can be a specific file or directory
       let searchPath = this.workDir;
       if (options?.path) {
-        searchPath = options.path.startsWith('/') ? options.path : `${this.workDir}/${options.path}`;
+        searchPath = options.path.startsWith('/')
+          ? options.path
+          : `${this.workDir}/${options.path}`;
       }
 
       // Use -r only for directories, not files

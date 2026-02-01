@@ -27,6 +27,13 @@ export interface SkillManager {
   listSkills(): Promise<Skill[]>;
   getSkill(name: string): Promise<Skill | null>;
   installSkill(url: string, name?: string): Promise<Skill>;
+  installFromGitHub(
+    owner: string,
+    repo: string,
+    branch: string,
+    subpath: string,
+    name?: string,
+  ): Promise<Skill>;
   removeSkill(name: string): Promise<boolean>;
   getSkillsDir(): string;
   getSkillsForSystemPrompt(): Promise<string>;
@@ -187,7 +194,7 @@ export function createSkillManager(_basePath?: string): SkillManager {
 
       // Check if this is a GitHub repository/directory URL
       const githubMatch = url.match(
-        /github\.com\/([^/]+)\/([^/]+)(?:\/tree\/([^/]+))?(?:\/(.+))?$/
+        /github\.com\/([^/]+)\/([^/]+)(?:\/tree\/([^/]+))?(?:\/(.+))?$/,
       );
 
       if (githubMatch) {
@@ -236,7 +243,7 @@ export function createSkillManager(_basePath?: string): SkillManager {
       repo: string,
       branch: string,
       subpath: string,
-      name?: string
+      name?: string,
     ): Promise<Skill> {
       const { mkdir } = await import('fs/promises');
 
@@ -259,7 +266,7 @@ export function createSkillManager(_basePath?: string): SkillManager {
       // Filter files that match the subpath
       const prefix = subpath ? `${subpath}/` : '';
       const files = tree.filter(
-        item => item.type === 'blob' && (subpath ? item.path.startsWith(prefix) : true)
+        item => item.type === 'blob' && (subpath ? item.path.startsWith(prefix) : true),
       );
 
       if (files.length === 0) {
@@ -267,9 +274,8 @@ export function createSkillManager(_basePath?: string): SkillManager {
       }
 
       // Determine skill name from repo name or subpath
-      const skillName = name || (subpath ? path.basename(subpath) : repo)
-        .toLowerCase()
-        .replace(/[^a-z0-9-]/g, '-');
+      const skillName =
+        name || (subpath ? path.basename(subpath) : repo).toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
       const skillDir = path.join(skillsDir, skillName);
       await mkdir(skillDir, { recursive: true });
@@ -308,10 +314,9 @@ export function createSkillManager(_basePath?: string): SkillManager {
 
       // If no skill.md found, look for README.md or any .md file
       if (!skillContent) {
-        const mdFile = files.find(f =>
-          f.path.endsWith('skill.md') ||
-          f.path.endsWith('README.md') ||
-          f.path.endsWith('.md')
+        const mdFile = files.find(
+          f =>
+            f.path.endsWith('skill.md') || f.path.endsWith('README.md') || f.path.endsWith('.md'),
         );
         if (mdFile) {
           const relativePath = subpath ? mdFile.path.slice(prefix.length) : mdFile.path;

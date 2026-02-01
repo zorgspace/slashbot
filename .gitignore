@@ -5,3 +5,4 @@ bun.lockb
 .env
 .slashbot/
 dev.pid
+~/

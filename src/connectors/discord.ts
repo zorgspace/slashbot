@@ -176,7 +176,9 @@ export class DiscordConnector implements Connector {
     // Try to acquire lock - only one instance can run Discord
     const lock = await acquireLock('discord');
     if (!lock.acquired) {
-      console.log(c.warning(`[Discord] Another instance is already running (PID ${lock.existingPid})`));
+      console.log(
+        c.warning(`[Discord] Another instance is already running (PID ${lock.existingPid})`),
+      );
       if (lock.existingWorkDir) {
         console.log(c.muted(`  Running in: ${lock.existingWorkDir}`));
       }
