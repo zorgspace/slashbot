@@ -198,11 +198,12 @@ export interface PlanItem {
 
 export interface PlanAction {
   type: 'plan';
-  operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear';
+  operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear' | 'ask';
   id?: string; // For update/complete/remove operations
   content?: string; // For add operation
   description?: string; // Optional description for the task
   status?: PlanItemStatus; // For update operation
+  question?: string; // For ask operation - question to ask the user
 }
 
 // ===== Process Management =====
@@ -334,9 +335,9 @@ export interface ActionHandlers {
   onTask?: (prompt: string, description?: string) => Promise<string>;
   // Plan management
   onPlan?: (
-    operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear',
-    options?: { id?: string; content?: string; description?: string; status?: PlanItemStatus },
-  ) => Promise<{ success: boolean; message: string; plan?: PlanItem[] }>;
+    operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear' | 'ask',
+    options?: { id?: string; content?: string; description?: string; status?: PlanItemStatus; question?: string },
+  ) => Promise<{ success: boolean; message: string; plan?: PlanItem[]; question?: string }>;
   // Process management
   onPs?: () => Promise<string>;
   onKill?: (target: string) => Promise<boolean>;

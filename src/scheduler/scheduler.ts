@@ -7,19 +7,6 @@
  */
 
 import { c, colors } from '../ui/colors';
-
-const formatDuration = (ms: number): string => {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  if (hours > 0) {
-    return ;
-  } else if (minutes > 0) {
-    return ;
-  } else {
-    return ;
-  }
-};
 import {
   parseCron,
   matchesCron,
@@ -29,19 +16,6 @@ import {
   type ParsedCron,
 } from './cron';
 import { getLocalSlashbotDir, getLocalTasksFile } from '../constants';
-
-const formatDuration = (ms: number): string => {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  if (hours > 0) {
-    return ;
-  } else if (minutes > 0) {
-    return ;
-  } else {
-    return ;
-  }
-};
 
 const SLASHBOT_DIR = getLocalSlashbotDir();
 const TASKS_FILE = getLocalTasksFile();
@@ -542,7 +516,7 @@ export class TaskScheduler {
         throw new Error('Task has neither command nor prompt defined');
       }
 
-      const duration = formatDuration(Date.now() - startTime);
+      const duration = Date.now() - startTime;
 
       // Update task state
       task.lastRun = new Date().toISOString();
@@ -564,7 +538,7 @@ export class TaskScheduler {
       }
 
       console.log(
-        `${colors.violet}└─${colors.reset} ${c.success('✓')} ${colors.muted}${duration}${colors.reset}`,
+        `${colors.violet}└─${colors.reset} ${c.success('✓')} ${colors.muted}${duration}ms${colors.reset}`,
       );
       console.log('');
     } catch (error: any) {

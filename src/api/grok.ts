@@ -101,19 +101,20 @@ Prioritize technical accuracy over validating user beliefs. Focus on facts and p
 - Don't assume file contents - verify first
 - For bug fixes: read the code, understand the issue, then fix
 
-# CRITICAL: NO HALLUCINATION
-- NEVER invent or create content the user didn't ask for
-- NEVER write files with made-up content
-- If reorganizing: ONLY move existing files, don't create new ones
+# Content Creation
+- For CODE: Don't hallucinate - only write what's needed, verify before editing
+- For CONTEXT/NOTES/PLANS: Write freely and comprehensively - include all relevant details, research, links, reasoning
+- IMPORTANT: To SAVE content to a file, you MUST use <write path="...">content</write> - just outputting text does NOT save it
+- When creating plans/research: use <write path=".slashbot/context/topic/filename.md">full content here</write>
+- If reorganizing code: ONLY move existing files, don't create new ones
 - If unclear what user wants: ASK, don't guess
 
 # Tone & Style
-- Concise, direct, to the point - but explain your reasoning when useful
-- Brief responses unless complexity requires detail
+- Concise for chat responses, but DETAILED for saved content (context files, plans, research notes)
+- When writing to .slashbot/context/: be comprehensive, include all findings, sources, reasoning
 - Use action tags to execute, text to communicate
 - NEVER add comments to code unless asked
 - When referencing code, use format: \`file_path:line_number\`
-- When no concrete action is taken, end with 1-2 sentences explaining why
 
 # Security
 - Assist with DEFENSIVE security only
@@ -366,23 +367,25 @@ WHEN TO USE PLAN:
 - To show progress and keep user informed
 
 WORKFLOW:
-1. At start of complex task: add all steps to plan
-2. Before starting each step: mark as in_progress
-3. After completing each step: mark as completed IMMEDIATELY
-4. Never batch completions - mark done as you go
+1. At start: add all steps to plan, show plan
+2. Work on ONE step per response - mark in_progress, do work, mark complete
+3. End response after completing one step - let user see progress
+4. Continue with next step in following response
+5. Never complete multiple steps in one response - user wants to see incremental progress
 
 # Process Management
 - /ps - List background processes
 - /kill <id> - Stop a background process
 
 # Context Persistence
-- Make intensive use of saving discussion context in markdown files
+- ALWAYS save detailed content using: <write path=".slashbot/context/topic/file.md">content</write>
+- Just outputting text does NOT save it - you MUST use <write> tag
 - Organize context files in subfolders under .slashbot/context
-- Save summaries, key decisions, and progress after each significant task or interaction
-- Use date-based (e.g., 2024-02-01) or topic-based subfolders for organization
-- Reference saved context in future interactions when relevant
+- Save full details: itineraries, research, plans, decisions - not summaries
+- Use topic-based subfolders (e.g., italy-holiday/, project-name/)
+- Reference saved context in future interactions
 
-Maintain .slashbot directory well organized in folders and subfolders.`;
+Keep .slashbot/context well organized with descriptive filenames.`;
 
 export interface UsageStats {
   promptTokens: number;
@@ -749,26 +752,16 @@ export class GrokClient {
             if (content) {
               responseContent += content;
 
-              // Progressive streaming: output content as it arrives
-              // Stop thinking animation on first content chunk
-              if (firstChunk) {
-                const duration = thinking.stop();
-                this.currentThinking = null;
-                firstChunk = false;
-                // Show timing with response
-                process.stdout.write(`${colors.muted}${duration}${colors.reset} `);
-              }
-
               // Stream clean content (without XML action tags) to console
               // But wait if we're in the middle of an action tag or thinking block (incomplete <...>)
               const openTags = (
                 responseContent.match(
-                  /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|think|thinking|reasoning)\b/gi,
+                  /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|ps|kill|telegram-config|discord-config|think|thinking|reasoning)\b/gi,
                 ) || []
               ).length;
               const closeTags = (
                 responseContent.match(
-                  /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|think|thinking|reasoning)>|\/>/gi,
+                  /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|ps|kill|telegram-config|discord-config|think|thinking|reasoning)>|\/>/gi,
                 ) || []
               ).length;
               const hasUnclosedTag = openTags > closeTags;
@@ -784,6 +777,13 @@ export class GrokClient {
                 const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
                 const newContent = normalized.slice(displayedContent.length);
                 if (newContent) {
+                  // Stop thinking animation only when we have actual content to display
+                  if (firstChunk) {
+                    const duration = thinking.stop();
+                    this.currentThinking = null;
+                    firstChunk = false;
+                    process.stdout.write(`${colors.muted}${duration}${colors.reset} `);
+                  }
                   process.stdout.write(newContent);
                   displayedContent = normalized;
                 }

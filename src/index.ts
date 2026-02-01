@@ -14,6 +14,7 @@ import {
   colors,
   connectorMessage,
   connectorResponse,
+  stickyPlan,
 } from './ui/colors';
 
 // Handle update commands before anything else
@@ -764,6 +765,19 @@ ${prompt.replace(/"""/g, "'''")}`;
                   success: true,
                   message: 'Plan cleared',
                   plan: [],
+                };
+              }
+
+              case 'ask': {
+                if (!options?.question) {
+                  return { success: false, message: 'Question required for ask operation' };
+                }
+                // Return the question to be displayed - user will respond naturally
+                return {
+                  success: true,
+                  message: 'Question asked',
+                  plan: this.planItems,
+                  question: options.question,
                 };
               }
 

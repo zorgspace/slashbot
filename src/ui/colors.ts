@@ -51,19 +51,6 @@ export const divider = (title = '') => {
   if (title) {
     output += `${colors.bold}${colors.violetLight} ${title.padEnd(width - 2, '─')}${colors.reset}\n`;
   }
-
-  export function private formatDuration(ms: number): string {
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    if (hours > 0) {
-      return;
-    } else if (minutes > 0) {
-      return;
-    } else {
-      return;
-    }
-  }
   output += `${colors.bgViolet}${colors.white}${line}${colors.reset}\n`;
   return output;
 };
@@ -226,7 +213,21 @@ export function banner(options: BannerOptions = {}): string {
   return result;
 }
 
+// Sticky plan reference (set later to avoid circular dependency)
+let _stickyPlanRef: { render: () => string } | null = null;
+
+export function setStickyPlanRef(ref: { render: () => string }): void {
+  _stickyPlanRef = ref;
+}
+
 export function inputPrompt(): string {
+  // Include sticky plan if visible
+  if (_stickyPlanRef) {
+    const planLine = _stickyPlanRef.render();
+    if (planLine) {
+      return `${planLine}${colors.violet}╰─${colors.reset} `;
+    }
+  }
   return `${colors.violet}╭─${colors.reset} `;
 }
 
@@ -306,7 +307,7 @@ export class ThinkingAnimation {
     return this.formatDuration(Date.now() - this.startTime);
   }
 
-  formatDuration(ms: number): string {
+  private formatDuration(ms: number): string {
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);
@@ -977,3 +978,83 @@ export const planStep = {
   complete: (item: PlanDisplayItem) => planDisplay.displayUpdate(item, 'completed'),
   remove: (item: PlanDisplayItem) => planDisplay.displayUpdate(item, 'removed'),
 };
+
+// ===== Sticky Plan - Compact inline display near prompt =====
+
+/**
+ * Sticky plan display - compact one-liner that stays near the prompt
+ * Shows: progress bar, counts, and current task
+ */
+export class StickyPlan {
+  private items: PlanDisplayItem[] = [];
+  private visible = false;
+
+  /**
+   * Update the plan items
+   */
+  setItems(items: PlanDisplayItem[]): void {
+    this.items = items;
+    this.visible = items.length > 0;
+  }
+
+  /**
+   * Clear the plan
+   */
+  clear(): void {
+    this.items = [];
+    this.visible = false;
+  }
+
+  /**
+   * Check if plan is visible
+   */
+  isVisible(): boolean {
+    return this.visible && this.items.length > 0;
+  }
+
+  /**
+   * Render the sticky plan line (to be displayed above prompt)
+   */
+  render(): string {
+    if (!this.visible || this.items.length === 0) {
+      return '';
+    }
+
+    const completed = this.items.filter(i => i.status === 'completed').length;
+    const inProgress = this.items.find(i => i.status === 'in_progress');
+    const total = this.items.length;
+
+    // Compact progress: ██░░░
+    const progressWidth = 5;
+    const filled = Math.round((completed / total) * progressWidth);
+    const bar = `${colors.success}${'█'.repeat(filled)}${colors.muted}${'░'.repeat(progressWidth - filled)}${colors.reset}`;
+
+    // Current task (short)
+    let task = '';
+    if (inProgress) {
+      const text = inProgress.content.length > 35 ? inProgress.content.slice(0, 34) + '…' : inProgress.content;
+      task = ` ${colors.warning}◉${colors.reset} ${text}`;
+    } else if (completed === total) {
+      task = ` ${colors.success}✓${colors.reset}`;
+    }
+
+    // Compact: ╭─ ██░░░ 2/6 ◉ Task name
+    return `${colors.violet}╭─${colors.reset} ${bar} ${colors.muted}${completed}/${total}${colors.reset}${task}\n`;
+  }
+
+  /**
+   * Print the sticky plan line
+   */
+  print(): void {
+    const line = this.render();
+    if (line) {
+      process.stdout.write(line);
+    }
+  }
+}
+
+// Global sticky plan instance
+export const stickyPlan = new StickyPlan();
+
+// Initialize the sticky plan reference for inputPrompt
+setStickyPlanRef(stickyPlan);

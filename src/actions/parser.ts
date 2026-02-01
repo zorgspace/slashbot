@@ -194,6 +194,7 @@ const PATTERNS = {
   // <plan operation="remove" id="..."/>
   // <plan operation="show"/>
   // <plan operation="clear"/>
+  // <plan operation="ask" question="What is your budget?"/>
   plan: /<plan\s+[^>]*\/?>/gi,
 
   // ===== Process Management =====
@@ -258,10 +259,32 @@ export function parseActions(content: string): Action[] {
   // Fix truncated tags first (LLM sometimes cuts off at end)
   const fixedContent = fixTruncatedTags(content);
 
-  // Strip code blocks to prevent parsing actions inside them
-  const safeContent = stripCodeBlocks(fixedContent);
-
   let match;
+
+  // ===== FIRST: Parse write/create actions from RAW content (before stripping) =====
+  // This preserves code blocks inside write tags
+  const writeRegex = new RegExp(PATTERNS.write.source, 'gi');
+  while ((match = writeRegex.exec(fixedContent)) !== null) {
+    const [, path, fileContent] = match;
+    actions.push({
+      type: 'write',
+      path,
+      content: fileContent.trim(),
+    } as WriteAction);
+  }
+
+  const createRegex = new RegExp(PATTERNS.create.source, 'gi');
+  while ((match = createRegex.exec(fixedContent)) !== null) {
+    const [, path, fileContent] = match;
+    actions.push({
+      type: 'create',
+      path,
+      content: fileContent.trim(),
+    } as CreateAction);
+  }
+
+  // Strip code blocks for OTHER actions (prevents executing actions in code examples)
+  const safeContent = stripCodeBlocks(fixedContent);
 
   // ===== Shell Commands =====
 
@@ -344,27 +367,7 @@ export function parseActions(content: string): Action[] {
     }
   }
 
-  // Parse write actions
-  const writeRegex = new RegExp(PATTERNS.write.source, 'gi');
-  while ((match = writeRegex.exec(safeContent)) !== null) {
-    const [, path, fileContent] = match;
-    actions.push({
-      type: 'write',
-      path,
-      content: fileContent.trim(),
-    } as WriteAction);
-  }
-
-  // Parse create actions (legacy alias)
-  const createRegex = new RegExp(PATTERNS.create.source, 'gi');
-  while ((match = createRegex.exec(safeContent)) !== null) {
-    const [, path, fileContent] = match;
-    actions.push({
-      type: 'create',
-      path,
-      content: fileContent.trim(),
-    } as CreateAction);
-  }
+  // NOTE: write/create already parsed above from raw content (preserves code blocks)
 
   // ===== Search & Navigation =====
 
@@ -605,11 +608,12 @@ export function parseActions(content: string): Action[] {
   while ((match = planRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const operation = extractAttr(fullTag, 'operation') || extractAttr(fullTag, 'op');
-    if (operation && ['add', 'update', 'complete', 'remove', 'show', 'clear'].includes(operation)) {
+    if (operation && ['add', 'update', 'complete', 'remove', 'show', 'clear', 'ask'].includes(operation)) {
       const id = extractAttr(fullTag, 'id');
       const content = extractAttr(fullTag, 'content') || extractAttr(fullTag, 'task');
       const description = extractAttr(fullTag, 'description') || extractAttr(fullTag, 'desc');
       const status = extractAttr(fullTag, 'status') as PlanItemStatus | undefined;
+      const question = extractAttr(fullTag, 'question') || extractAttr(fullTag, 'q');
 
       actions.push({
         type: 'plan',
@@ -618,6 +622,7 @@ export function parseActions(content: string): Action[] {
         content: content || undefined,
         description: description || undefined,
         status: status || undefined,
+        question: question || undefined,
       } as PlanAction);
     }
   }
