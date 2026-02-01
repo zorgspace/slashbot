@@ -26,11 +26,13 @@ import type {
   NotifyAction,
   SkillAction,
   SkillInstallAction,
+  TaskAction,
+  PlanAction,
   ExecAction,
   PsAction,
   KillAction,
 } from './types';
-import { step } from '../ui/colors';
+import { step, planStep } from '../ui/colors';
 
 /**
  * Execute a list of actions and return results
@@ -114,6 +116,14 @@ async function executeAction(
       return executeSkill(action, handlers);
     case 'skill-install':
       return executeSkillInstall(action, handlers);
+
+    // Sub-task Spawning
+    case 'task':
+      return executeTask(action, handlers);
+
+    // Plan Management
+    case 'plan':
+      return executePlan(action, handlers);
 
     // Connector Configuration
     case 'telegram-config':
@@ -645,7 +655,11 @@ async function executeTypecheck(
 
   try {
     const output = await handlers.onTypecheck();
-    const hasErrors = output.includes('error') || output.includes('Error');
+    // Check for actual errors (not "No errors" success message)
+    const hasErrors =
+      (output.includes('error') || output.includes('Error')) &&
+      !output.includes('No errors') &&
+      output.trim() !== '';
 
     if (hasErrors) {
       step.result(output, true);
@@ -807,6 +821,40 @@ async function executeSkillInstall(
   }
 }
 
+// ===== Sub-task Spawning =====
+
+async function executeTask(
+  action: TaskAction,
+  handlers: ActionHandlers,
+): Promise<ActionResult | null> {
+  if (!handlers.onTask) return null;
+
+  const desc =
+    action.description || action.prompt.slice(0, 50) + (action.prompt.length > 50 ? '...' : '');
+  step.tool('Task', desc);
+
+  try {
+    const result = await handlers.onTask(action.prompt, action.description);
+
+    step.result(`Sub-task completed`);
+
+    return {
+      action: `Task: ${desc}`,
+      success: true,
+      result,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Task failed: ${errorMsg}`);
+    return {
+      action: `Task: ${desc}`,
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
 // ===== Connector Configuration =====
 
 async function executeTelegramConfig(
@@ -872,6 +920,73 @@ async function executeDiscordConfig(
     step.error(`Discord config failed: ${errorMsg}`);
     return {
       action: 'DiscordConfig',
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+// ===== Plan Management =====
+
+async function executePlan(
+  action: PlanAction,
+  handlers: ActionHandlers,
+): Promise<ActionResult | null> {
+  if (!handlers.onPlan) return null;
+
+  const opInfo =
+    action.operation === 'add'
+      ? `add: "${action.content?.slice(0, 40) || ''}..."`
+      : action.operation === 'update'
+        ? `update: ${action.id} → ${action.status || 'in_progress'}`
+        : action.operation === 'complete'
+          ? `complete: ${action.id}`
+          : action.operation === 'remove'
+            ? `remove: ${action.id}`
+            : action.operation;
+
+  step.tool('Plan', opInfo);
+
+  try {
+    const result = await handlers.onPlan(action.operation, {
+      id: action.id,
+      content: action.content,
+      description: action.description,
+      status: action.status,
+    });
+
+    if (result.success && result.plan) {
+      // Display plan based on operation
+      if (action.operation === 'show') {
+        planStep.show(result.plan);
+      } else if (action.operation === 'add' && action.content) {
+        const newItem = result.plan.find(i => i.content === action.content);
+        if (newItem) planStep.add(newItem);
+      } else if (action.operation === 'complete' && action.id) {
+        const item = result.plan.find(i => i.id === action.id);
+        if (item) planStep.complete(item);
+      } else if (action.operation === 'update' && action.id) {
+        const item = result.plan.find(i => i.id === action.id);
+        if (item) planStep.update(item);
+      } else if (action.operation === 'clear') {
+        step.success('Plan cleared');
+      }
+    } else if (!result.success) {
+      step.error(result.message);
+    }
+
+    return {
+      action: `Plan: ${action.operation}`,
+      success: result.success,
+      result: result.message,
+      error: result.success ? undefined : result.message,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Plan failed: ${errorMsg}`);
+    return {
+      action: `Plan: ${action.operation}`,
       success: false,
       result: 'Failed',
       error: errorMsg,

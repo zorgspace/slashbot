@@ -26,6 +26,9 @@ import type {
   NotifyAction,
   SkillAction,
   SkillInstallAction,
+  TaskAction,
+  PlanAction,
+  PlanItemStatus,
   ExecAction,
   PsAction,
   KillAction,
@@ -61,6 +64,8 @@ function fixTruncatedTags(content: string): string {
     'notify',
     'skill',
     'skill-install',
+    'task',
+    'plan',
     'ps',
     'kill',
     'replace',
@@ -166,11 +171,9 @@ const PATTERNS = {
 
   // ===== Scheduling & Notifications =====
   // <schedule cron="..." name="...">command</schedule>
-  // <schedule cron="..." name="..." prompt="true">LLM prompt</schedule>
-  schedule: new RegExp(
-    `<schedule\\s+cron=${Q}(${NQR})${Q}(?:\\s+name=${Q}(${NQ})${Q})?(?:\\s+prompt=${Q}(true|false)?${Q})?\\s*>([\\s\\S]+?)</schedule>`,
-    'gi',
-  ),
+  // <schedule cron="..." name="..." type="prompt">LLM prompt</schedule>
+  // <schedule cron="..." name="..." type="llm">LLM prompt</schedule>
+  schedule: /<schedule\s+[^>]*>([\s\S]+?)<\/schedule>/gi,
   // <notify>message</notify> or <notify to="telegram">message</notify>
   notify: /<notify(?:\s+to=["']([^"']+)["'])?\s*>([\s\S]+?)<\/notify>/gi,
 
@@ -179,6 +182,19 @@ const PATTERNS = {
   skill: /<skill\s+[^>]*\/?>/gi,
   // <skill-install url="..."/> or <skill-install url="..." name="..."/>
   skillInstall: /<skill-install\s+[^>]*\/?>/gi,
+
+  // ===== Sub-task Spawning =====
+  // <task description="...">prompt</task>
+  task: /<task(?:\s+[^>]*)?\s*>([\s\S]+?)<\/task>/gi,
+
+  // ===== Plan Management =====
+  // <plan operation="add" content="..." description="..."/>
+  // <plan operation="update" id="..." status="in_progress"/>
+  // <plan operation="complete" id="..."/>
+  // <plan operation="remove" id="..."/>
+  // <plan operation="show"/>
+  // <plan operation="clear"/>
+  plan: /<plan\s+[^>]*\/?>/gi,
 
   // ===== Process Management =====
   // <ps/> - list running processes
@@ -220,9 +236,12 @@ function parseInnerEdits(
     const [fullMatch, search, replace] = match;
     const replaceAll =
       extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
+    // Only strip leading/trailing newlines from XML formatting, preserve indentation
+    const cleanSearch = search.replace(/^\n+|\n+$/g, '');
+    const cleanReplace = replace.replace(/^\n+|\n+$/g, '');
     edits.push({
-      search: search.trim(),
-      replace: replace.trim(),
+      search: cleanSearch,
+      replace: cleanReplace,
       replaceAll: replaceAll || undefined,
     });
   }
@@ -299,11 +318,14 @@ export function parseActions(content: string): Action[] {
     const [, path, search, replace] = match;
     const replaceAll =
       extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
+    // Only strip leading/trailing newlines from XML formatting, preserve indentation
+    const cleanSearch = search.replace(/^\n+|\n+$/g, '');
+    const cleanReplace = replace.replace(/^\n+|\n+$/g, '');
     actions.push({
       type: 'edit',
       path,
-      search: search.trim(),
-      replace: replace.trim(),
+      search: cleanSearch,
+      replace: cleanReplace,
       replaceAll: replaceAll || undefined,
     } as EditAction);
   }
@@ -497,15 +519,27 @@ export function parseActions(content: string): Action[] {
   // Parse schedule actions
   const scheduleRegex = new RegExp(PATTERNS.schedule.source, 'gi');
   while ((match = scheduleRegex.exec(safeContent)) !== null) {
-    const [, cron, name, isPrompt, content] = match;
-    const isPromptTask = isPrompt === 'true';
-    actions.push({
-      type: 'schedule',
-      cron,
-      name: name || 'Scheduled Task',
-      command: isPromptTask ? undefined : content.trim(),
-      prompt: isPromptTask ? content.trim() : undefined,
-    } as ScheduleAction);
+    const fullTag = match[0];
+    const content = match[1].trim();
+    const cron = extractAttr(fullTag, 'cron');
+    const name = extractAttr(fullTag, 'name');
+    const typeAttr = extractAttr(fullTag, 'type');
+
+    // Detect if this is an LLM prompt task:
+    // - explicit type="prompt" or type="llm"
+    // - or legacy prompt="true"
+    const isPromptTask =
+      typeAttr === 'prompt' || typeAttr === 'llm' || extractBoolAttr(fullTag, 'prompt');
+
+    if (cron) {
+      actions.push({
+        type: 'schedule',
+        cron,
+        name: name || 'Scheduled Task',
+        command: isPromptTask ? undefined : content,
+        prompt: isPromptTask ? content : undefined,
+      } as ScheduleAction);
+    }
   }
 
   // Parse notify actions
@@ -548,6 +582,43 @@ export function parseActions(content: string): Action[] {
         url,
         name: name || undefined,
       } as SkillInstallAction);
+    }
+  }
+
+  // Parse task actions (sub-task spawning)
+  const taskRegex = new RegExp(PATTERNS.task.source, 'gi');
+  while ((match = taskRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const prompt = match[1].trim();
+    const description = extractAttr(fullTag, 'description');
+    if (prompt) {
+      actions.push({
+        type: 'task',
+        prompt,
+        description: description || undefined,
+      } as TaskAction);
+    }
+  }
+
+  // Parse plan actions (task planning & tracking)
+  const planRegex = new RegExp(PATTERNS.plan.source, 'gi');
+  while ((match = planRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const operation = extractAttr(fullTag, 'operation') || extractAttr(fullTag, 'op');
+    if (operation && ['add', 'update', 'complete', 'remove', 'show', 'clear'].includes(operation)) {
+      const id = extractAttr(fullTag, 'id');
+      const content = extractAttr(fullTag, 'content') || extractAttr(fullTag, 'task');
+      const description = extractAttr(fullTag, 'description') || extractAttr(fullTag, 'desc');
+      const status = extractAttr(fullTag, 'status') as PlanItemStatus | undefined;
+
+      actions.push({
+        type: 'plan',
+        operation: operation as PlanAction['operation'],
+        id: id || undefined,
+        content: content || undefined,
+        description: description || undefined,
+        status: status || undefined,
+      } as PlanAction);
     }
   }
 

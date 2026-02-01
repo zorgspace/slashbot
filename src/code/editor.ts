@@ -179,12 +179,26 @@ export class CodeEditor {
       const content = await file.text();
 
       if (!content.includes(edit.search)) {
-        console.log(c.error(`Pattern not found in ${edit.path}`));
-        console.log(c.muted(`Searching: "${edit.search.slice(0, 50)}..."`));
+        console.log(c.warning(`Pattern not found in ${edit.path}`));
+        // Show more of the search pattern for debugging
+        const searchPreview =
+          edit.search.length > 100 ? edit.search.slice(0, 100) + '...' : edit.search;
+        console.log(c.muted(`Searching: "${searchPreview}"`));
+
+        // Try to find a partial match to help LLM understand what went wrong
+        const firstLine = edit.search.split('\n')[0].trim();
+        if (firstLine.length > 10 && content.includes(firstLine.slice(0, 20))) {
+          const idx = content.indexOf(firstLine.slice(0, 20));
+          const contextStart = Math.max(0, idx - 10);
+          const contextEnd = Math.min(content.length, idx + 100);
+          const actualContent = content.slice(contextStart, contextEnd).replace(/\n/g, '\\n');
+          console.log(c.muted(`Similar text found: "${actualContent}"`));
+        }
+
         return {
           success: false,
           status: 'not_found',
-          message: `Pattern not found in ${edit.path}`,
+          message: `Pattern not found in ${edit.path}. Use <read path="${edit.path}"/> to see actual content.`,
         };
       }
 

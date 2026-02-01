@@ -4,6 +4,11 @@
  */
 
 const ACTION_TAG_PATTERNS = [
+  // Thinking/reasoning (should never be shown to user)
+  /<think>[\s\S]*?<\/think>/g,
+  /<thinking>[\s\S]*?<\/thinking>/g,
+  /<reasoning>[\s\S]*?<\/reasoning>/g,
+  /<inner_monologue>[\s\S]*?<\/inner_monologue>/g,
   // Shell commands
   /<bash[^>]*>[\s\S]*?<\/bash>/g,
   /<exec\s*>[\s\S]*?<\/exec>/g,

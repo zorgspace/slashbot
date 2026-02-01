@@ -21,6 +21,9 @@ export type ActionType =
   | 'notify'
   | 'skill'
   | 'skill-install'
+  | 'task'
+  // Plan management
+  | 'plan'
   // Aliases for backwards compatibility
   | 'exec'
   | 'create';
@@ -174,6 +177,34 @@ export interface SkillInstallAction {
   name?: string;
 }
 
+// ===== Sub-task Spawning =====
+
+export interface TaskAction {
+  type: 'task';
+  prompt: string;
+  description?: string;
+}
+
+// ===== Plan Management =====
+
+export type PlanItemStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface PlanItem {
+  id: string;
+  content: string;
+  status: PlanItemStatus;
+  description?: string;
+}
+
+export interface PlanAction {
+  type: 'plan';
+  operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear';
+  id?: string; // For update/complete/remove operations
+  content?: string; // For add operation
+  description?: string; // Optional description for the task
+  status?: PlanItemStatus; // For update operation
+}
+
 // ===== Process Management =====
 
 export interface PsAction {
@@ -221,6 +252,8 @@ export type Action =
   | NotifyAction
   | SkillAction
   | SkillInstallAction
+  | TaskAction
+  | PlanAction
   | PsAction
   | KillAction
   | TelegramConfigAction
@@ -297,6 +330,13 @@ export interface ActionHandlers {
   onNotify?: (message: string, target?: string) => Promise<{ sent: string[]; failed: string[] }>;
   onSkill?: (name: string, args?: string) => Promise<string>;
   onSkillInstall?: (url: string, name?: string) => Promise<{ name: string; path: string }>;
+  // Sub-task spawning
+  onTask?: (prompt: string, description?: string) => Promise<string>;
+  // Plan management
+  onPlan?: (
+    operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear',
+    options?: { id?: string; content?: string; description?: string; status?: PlanItemStatus },
+  ) => Promise<{ success: boolean; message: string; plan?: PlanItem[] }>;
   // Process management
   onPs?: () => Promise<string>;
   onKill?: (target: string) => Promise<boolean>;
