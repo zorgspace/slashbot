@@ -2,12 +2,12 @@
 
 This document provides a complete, actionable guide to understanding, using, developing, and extending **Slashbot**. It is designed for developers, AI assistants (e.g., Slashbot, Claude, GPT), and contributors to immediately onboard and contribute. All explanations include real code examples from the codebase, rationale for patterns, and step-by-step workflows.
 
-Slashbot is a production-ready (v1.1.0) autonomous CLI AI agent inspired by Claude Code, powered by xAI's Grok API. It enables agentic workflows in the terminal: read/edit files, run shell commands, git ops, web search, scheduling, skills, and multi-platform connectors (Telegram/Discord).
+Slashbot is a production-ready (v1.2.0) autonomous CLI AI agent inspired by Claude Code, powered by xAI's Grok API. It enables agentic workflows in the terminal: read/edit files, run shell commands, git ops, web search, scheduling, skills, and multi-platform connectors (Telegram/Discord).
 
 ## 1. PROJECT OVERVIEW
 
 **Project Name**: Slashbot  
-**Version**: 1.1.0 (stable, with recent enhancements like sticky plan display, auto-updates, image support, and process management).  
+**Version**: 1.2.0 (stable, with recent enhancements like sticky plan display, auto-updates, image support, and process management).  
 **Purpose**: A lightweight, autonomous CLI coding assistant that executes real file/system operations via an "agentic loop." Unlike chat-only AIs, Slashbot parses LLM responses for XML action tags (e.g., `<read path="file.ts"/>`), executes them iteratively, and feeds results back until tasks complete. It solves the problem of bridging LLMs with real-world code editing/automation without heavy setups like VS Code extensions.  
 **Key Features**:
 - **Agentic Execution**: LLM plans → actions (read/edit/bash/git) → results → iterate.
@@ -295,7 +295,7 @@ export function banner(info: BannerInfo): string {
   return c.banner(`Slashbot v${info.version} | ${info.workingDir}`);
 }
 ```
-Use: `console.log(banner({version: '1.1.0', ...}))`.
+Use: `console.log(banner({version: '1.2.0', ...}))`.
 
 **CLI Commands** (in REPL):
 - `/help`: All commands.
@@ -348,7 +348,7 @@ compressActionResults([{action: 'bash ls', result: 'file1\nfile2', success: true
 - FS: WorkDir-bound, authorize via `/authorize`.
 - No eval/exec injection (parsed XML).
 
-**Breaking Changes**: v1.1.0: Enhanced UX/stability. Check commits.
+**Breaking Changes**: v1.2.0: Enhanced UX/stability. Check commits.
 **Known Issues**:
 - Linux images: xclip/wl-paste required.
 - Telegram: Restart after config.
@@ -383,7 +383,7 @@ compressActionResults([{action: 'bash ls', result: 'file1\nfile2', success: true
 - `/telegram-config`, `/discord-config`.
 
 **CLI Args** (`slashbot --help`):
-- `--version`: Print v1.1.0.
+- `--version`: Print v1.2.0.
 - `--login`: Interactive key.
 
 **Common Dev**:
