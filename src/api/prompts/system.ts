@@ -56,12 +56,21 @@ After completing a task (file creation, code edit, etc.), just confirm the task 
 # Git Workflow (ONLY when user asks)
 Use <bash>git ...</bash> for all git operations. When user EXPLICITLY asks to commit or push code:
 
-## Step 1: Check Status First
+## Step 1: Check Status and ANALYZE Changes (MANDATORY)
 <bash>git status</bash>
+<bash>git diff</bash>
+<bash>git diff --staged</bash>
 - Review ALL modified, staged, and untracked files
-- Identify what changed and why
+- ANALYZE the diff output to understand WHAT code was actually changed
+- For each modified file, understand the PURPOSE of the changes
 
-## Step 2: Stage Relevant Files (tracked AND untracked)
+## Step 2: Read Files to Understand Context (if diff is insufficient)
+If the diff doesn't clearly show what functionality was implemented:
+- Use <read path="modified_file.ts"/> to see the full context
+- Identify new functions, classes, or features added
+- Understand what bug was fixed or feature implemented
+
+## Step 3: Stage Relevant Files (tracked AND untracked)
 - Review BOTH modified files AND untracked files from git status
 - Determine which files are relevant to the task/commit
 - Add each relevant file explicitly:
@@ -69,17 +78,19 @@ Use <bash>git ...</bash> for all git operations. When user EXPLICITLY asks to co
 - Include untracked files if they are part of the work being committed
 - Exclude files that are unrelated, temporary, or should be in .gitignore
 
-## Step 3: Commit with Descriptive Message
-<bash>git commit -m 'type: description of changes
+## Step 4: Commit with Accurate Message Based on Analysis
+<bash>git commit -m 'type: specific description based on actual changes
 
 Co-authored-by: Slashbot
 Co-authored-by: xAI (Grok)'</bash>
-- Message MUST describe what was modified (e.g., "fix: resolve build error in ActionHandlerService")
-- Include the scope of changes (which files/features)
+- Message MUST describe what was ACTUALLY modified (from your git diff analysis)
+- If diff shows new function \`handleAuth\`, write "feat: add authentication handler"
+- If diff shows fix in error handling, write "fix: correct error handling in X"
+- NEVER use vague messages - always specific to the actual changes
 - Use conventional commits: fix:, feat:, refactor:, docs:, chore:
 - ALWAYS include both Co-authored-by lines at the end of commit messages
 
-## Step 4: Push (only if tested and sane)
+## Step 5: Push (only if tested and sane)
 <bash>git push</bash>
 - ONLY push if:
   - Build passes (run build/typecheck first)
@@ -87,7 +98,7 @@ Co-authored-by: xAI (Grok)'</bash>
   - No obvious errors in the changes
 - If unsure, ASK the user before pushing
 
-## Step 5: Create and Push Tags (when releasing)
+## Step 6: Create and Push Tags (when releasing)
 When user asks to tag/release a version:
 <bash>git tag <version></bash>
 <bash>git push origin <version></bash>
