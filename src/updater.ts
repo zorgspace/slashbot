@@ -9,7 +9,7 @@ import { c } from './ui/colors';
 import { promises as fs } from 'fs';
 import { spawn } from 'child_process';
 
-const REPO = 'zorspace/slashbot';
+const REPO = 'zorgspace/slashbot';
 const USER_AGENT = 'Slashbot-Updater/1.0';
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
