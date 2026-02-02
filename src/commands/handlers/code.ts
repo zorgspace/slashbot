@@ -66,59 +66,7 @@ export const filesCommand: CommandHandler = {
   },
 };
 
-export const readCommand: CommandHandler = {
-  name: 'read',
-  description: 'Read a local file',
-  usage: '/read <path>',
-  execute: async (args, context) => {
-    const filePath = args[0];
-    if (!filePath) {
-      console.log(c.error('File path required'));
-      return true;
-    }
-
-    try {
-      const content = await context.fileSystem?.readFile(filePath);
-      console.log(`\n${c.violet(`─── ${filePath} ───`)}\n`);
-      console.log(content);
-      console.log(`\n${c.violet('─── end ───')}\n`);
-    } catch (error) {
-      console.log(c.error(`Could not read file: ${error}`));
-    }
-    return true;
-  },
-};
-
-export const writeCommand: CommandHandler = {
-  name: 'write',
-  description: 'Write to a file',
-  usage: '/write <path> <content>',
-  execute: async (args, context) => {
-    const filePath = args[0];
-    const content = args.slice(1).join(' ');
-
-    if (!filePath) {
-      console.log(c.error('Usage: /write <path> <content>'));
-      return true;
-    }
-
-    if (!content) {
-      console.log(c.error('Content missing'));
-      console.log(c.muted('Usage: /write <path> <content>'));
-      return true;
-    }
-
-    const result = await context.fileSystem?.writeFile(filePath, content);
-    if (result) {
-      console.log(c.success(`File written: ${filePath}`));
-    }
-    return true;
-  },
-};
-
 export const codeHandlers: CommandHandler[] = [
   grepCommand,
   filesCommand,
-  readCommand,
-  writeCommand,
 ];

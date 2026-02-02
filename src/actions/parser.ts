@@ -22,12 +22,11 @@ import type {
   FormatAction,
   ScheduleAction,
   NotifyAction,
+  SayAction,
   SkillAction,
   SkillInstallAction,
   TaskAction,
   ExploreAction,
-  PlanAction,
-  PlanItemStatus,
   ExecAction,
   PsAction,
   KillAction,
@@ -54,6 +53,7 @@ function fixTruncatedTags(content: string): string {
     'glob',
     'grep',
     'ls',
+    'list',
     'fetch',
     'search',
     'format',
@@ -63,7 +63,6 @@ function fixTruncatedTags(content: string): string {
     'skill-install',
     'task',
     'explore',
-    'plan',
     'ps',
     'kill',
     'replace',
@@ -74,6 +73,27 @@ function fixTruncatedTags(content: string): string {
   result = result.replace(/<replace["'\s]*>/gi, '<replace>');
   result = result.replace(/<\/search["'\s]*>/gi, '</search>');
   result = result.replace(/<\/replace["'\s]*>/gi, '</replace>');
+
+  // Fix extra </search> after </replace> (common LLM mistake)
+  // Pattern: </replace></search></edit -> </replace></edit>
+  result = result.replace(/<\/replace>\s*<\/search>\s*<\/edit/gi, '</replace></edit');
+
+  // Fix </search> used instead of </replace> at end of replace block
+  // Pattern: <replace>...</search></replace> -> <replace>...</replace></edit>
+  // or: <replace>...</search></edit -> <replace>...</replace></edit>
+  // or: <replace>...</search> at end -> <replace>...</replace>
+  result = result.replace(/<replace>([\s\S]*?)<\/search>\s*<\/replace>/gi, '<replace>$1</replace></edit>');
+  result = result.replace(/<replace>([\s\S]*?)<\/search>\s*<\/edit/gi, '<replace>$1</replace></edit');
+  // Fix <search></search><replace></search> -> <search></search><replace></replace>
+  // Common LLM mistake: using </search> to close <replace>
+  // Only match when content doesn't contain </replace> or </edit> (to avoid breaking multi-edit)
+  result = result.replace(/<replace>((?:(?!<\/replace>|<\/edit>)[\s\S])*?)<\/search>/gi, '<replace>$1</replace>');
+
+  // Fix variations of edit tag: <edit file="..."> -> <edit path="...">
+  result = result.replace(/<edit\s+file\s*=/gi, '<edit path=');
+
+  // Fix unquoted paths in edit: <edit path=src/file.ts> -> <edit path="src/file.ts">
+  result = result.replace(/<edit\s+path\s*=\s*([^"'\s>][^\s>]*)/gi, '<edit path="$1"');
 
   // Fix truncated closing tags like </edit (missing >) - ANYWHERE in content, not just end
   for (const tag of tags) {
@@ -89,6 +109,15 @@ function fixTruncatedTags(content: string): string {
 
   // Fix </ at very end (incomplete closing tag)
   result = result.replace(/<\/\s*$/, '');
+
+  // Remove orphan closing tags on their own line (LLM mistakes like just "</grep" or "</read")
+  // These self-closing actions should never have closing tags
+  const selfClosingTags = ['read', 'grep', 'glob', 'ls', 'list', 'explore', 'ps', 'kill', 'format'];
+  for (const tag of selfClosingTags) {
+    // Remove </tag> or </tag on its own or at start of content
+    result = result.replace(new RegExp(`^\\s*</${tag}>?\\s*$`, 'gim'), '');
+    result = result.replace(new RegExp(`^\\s*</${tag}>?\\s*\\n`, 'gim'), '');
+  }
 
   // Fix truncated self-closing tags like <read path="x" or <read path="x"/
   for (const tag of tags) {
@@ -156,8 +185,9 @@ const PATTERNS = {
   glob: /<glob\s+[^>]*\/?>/gi,
   // <grep pattern="..."/> with many optional attributes
   grep: /<grep\s+[^>]*(?:\/>|>[\s\S]*?<\/grep>)/gi,
-  // <ls path="/dir"/> or <ls path="/dir" ignore="node_modules,dist"/>
+  // <ls path="/dir"/> or <ls path="/dir" ignore="node_modules,dist"/> or <list .../>
   ls: /<ls\s+[^>]*\/?>/gi,
+  list: /<list\s+[^>]*\/?>/gi,
 
   // ===== Web Operations =====
   // <fetch url="..."/> or <fetch url="..." prompt="..."/>
@@ -177,6 +207,10 @@ const PATTERNS = {
   // <notify>message</notify> or <notify to="telegram">message</notify>
   notify: /<notify(?:\s+to=["']([^"']+)["'])?\s*>([\s\S]+?)<\/notify>/gi,
 
+  // ===== User Communication =====
+  // <say>message to user</say>
+  say: /<say\s*>([\s\S]+?)<\/say>/gi,
+
   // ===== Skills =====
   // <skill name="..."/> or <skill name="..." args="..."/>
   skill: /<skill\s+[^>]*\/?>/gi,
@@ -190,16 +224,6 @@ const PATTERNS = {
   // ===== Parallel Exploration =====
   // <explore query="..." path="src/" depth="medium"/>
   explore: /<explore\s+[^>]*\/?>/gi,
-
-  // ===== Plan Management =====
-  // <plan operation="add" content="..." description="..."/>
-  // <plan operation="update" id="..." status="in_progress"/>
-  // <plan operation="complete" id="..."/>
-  // <plan operation="remove" id="..."/>
-  // <plan operation="show"/>
-  // <plan operation="clear"/>
-  // <plan operation="ask" question="What is your budget?"/>
-  plan: /<plan\s+[^>]*\/?>/gi,
 
   // ===== Process Management =====
   // <ps/> - list running processes
@@ -216,14 +240,31 @@ const PATTERNS = {
 
 /**
  * Remove code blocks from content to prevent parsing actions inside them
+ * BUT preserve edit tags and their content (they may contain backticks)
  */
 function stripCodeBlocks(content: string): string {
+  // First, protect edit and multi-edit tags by replacing them with placeholders
+  const editPlaceholders: string[] = [];
+  let result = content.replace(
+    /<(?:edit|multi-edit)\s+[^>]*>[\s\S]*?<\/(?:edit|multi-edit)>/gi,
+    match => {
+      editPlaceholders.push(match);
+      return `__EDIT_PLACEHOLDER_${editPlaceholders.length - 1}__`;
+    }
+  );
+
   // Remove fenced code blocks (```...```)
-  let result = content.replace(/```[\s\S]*?```/g, '');
-  // Remove inline code (`...`)
-  result = result.replace(/`[^`]+`/g, '');
+  result = result.replace(/```[\s\S]*?```/g, '');
+  // Remove inline code (`...`) - but only short ones (max 100 chars) to avoid matching across tags
+  result = result.replace(/`[^`\n]{1,100}`/g, '');
   // Remove <literal>...</literal> blocks (explicit no-execute)
   result = result.replace(/<literal>[\s\S]*?<\/literal>/gi, '');
+
+  // Restore edit tags
+  for (let i = 0; i < editPlaceholders.length; i++) {
+    result = result.replace(`__EDIT_PLACEHOLDER_${i}__`, editPlaceholders[i]);
+  }
+
   return result;
 }
 
@@ -254,6 +295,51 @@ function parseInnerEdits(
 }
 
 /**
+ * Try to reconstruct malformed edit tags that LLM might produce
+ * Handles cases like: code directly followed by </edit> without proper structure
+ */
+function tryReconstructMalformedEdits(content: string): string {
+  let result = content;
+
+  // Pattern 1: LLM outputs <edit path="..."> then code directly then </edit>
+  // Try to wrap the code content in <search></search><replace>CODE</replace>
+  // This is a heuristic - assumes empty search means "replace entire content"
+  const brokenEditPattern = /<edit\s+path\s*=\s*["']([^"']+)["'][^>]*>(?![\s\S]*?<search>)([\s\S]*?)<\/edit>/gi;
+  result = result.replace(brokenEditPattern, (match, path, codeContent) => {
+    // If there's actual code content without search/replace tags, wrap it
+    const trimmed = codeContent.trim();
+    if (trimmed && !trimmed.includes('<search>') && !trimmed.includes('<replace>')) {
+      // This is likely meant to be a replacement - but we can't know what to search for
+      // Return the original match - the error handling will catch this
+      return match;
+    }
+    return match;
+  });
+
+  // Pattern 2: Missing opening <edit> - just has </edit> at end
+  // Look for content that looks like it should be an edit
+  // e.g., "path/to/file.ts\n<search>...</search><replace>...</replace></edit>"
+  const missingOpenPattern = /(?<!<edit[^>]*>)((?:^|\n)[\w/.]+\.(?:ts|js|tsx|jsx|py|go|rs|java|cpp|c|h|md|json|yaml|yml)\s*\n\s*<search>[\s\S]*?<\/search>\s*<replace>[\s\S]*?<\/replace>\s*<\/edit>)/gi;
+  result = result.replace(missingOpenPattern, (match, content) => {
+    // Try to extract the path from the content
+    const pathMatch = content.match(/^[\s\n]*([\w/.]+\.(?:ts|js|tsx|jsx|py|go|rs|java|cpp|c|h|md|json|yaml|yml))/i);
+    if (pathMatch) {
+      const path = pathMatch[1];
+      const rest = content.slice(pathMatch[0].length);
+      return `<edit path="${path}">${rest}`;
+    }
+    return match;
+  });
+
+  // Pattern 3: <edit> without path attribute but path mentioned in content
+  // e.g., "<edit>src/file.ts<search>...</search><replace>...</replace></edit>"
+  const editWithoutPathPattern = /<edit\s*>[\s\n]*([\w/.]+\.(?:ts|js|tsx|jsx|py|go|rs|java|cpp|c|h|md|json|yaml|yml))[\s\n]*<search>/gi;
+  result = result.replace(editWithoutPathPattern, '<edit path="$1"><search>');
+
+  return result;
+}
+
+/**
  * Parse all actions from content
  * Actions inside code blocks are ignored to prevent injection
  */
@@ -261,7 +347,10 @@ export function parseActions(content: string): Action[] {
   const actions: Action[] = [];
 
   // Fix truncated tags first (LLM sometimes cuts off at end)
-  const fixedContent = fixTruncatedTags(content);
+  let fixedContent = fixTruncatedTags(content);
+
+  // Try to reconstruct malformed edit tags
+  fixedContent = tryReconstructMalformedEdits(fixedContent);
 
   let match;
 
@@ -338,23 +427,47 @@ export function parseActions(content: string): Action[] {
     }
   }
 
-  // Parse edit actions with replaceAll support
-  const editRegex = new RegExp(PATTERNS.edit.source, 'gi');
-  while ((match = editRegex.exec(safeContent)) !== null) {
-    const fullMatch = match[0];
-    const [, path, search, replace] = match;
-    const replaceAll =
-      extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
-    // Only strip leading/trailing newlines from XML formatting, preserve indentation
-    const cleanSearch = search.replace(/^\n+|\n+$/g, '');
-    const cleanReplace = replace.replace(/^\n+|\n+$/g, '');
-    actions.push({
-      type: 'edit',
-      path,
-      search: cleanSearch,
-      replace: cleanReplace,
-      replaceAll: replaceAll || undefined,
-    } as EditAction);
+  // Parse edit actions with replaceAll support - try multiple patterns for robustness
+  const editPatterns = [
+    // Standard: <edit path="..."><search>...</search><replace>...</replace></edit>
+    new RegExp(PATTERNS.edit.source, 'gi'),
+    // Empty search/replace tags (common LLM output) - explicit empty match
+    /<edit\s+path\s*=\s*["']([^"']+)["'][^>]*>\s*<search>((?:[\s\S]*?))<\/search>\s*<replace>((?:[\s\S]*?))<\/replace>\s*<\/edit>/gi,
+    // Flexible whitespace: allow any content between tags
+    /<edit\s+path\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?<search>([\s\S]*?)<\/search>[\s\S]*?<replace>([\s\S]*?)<\/replace>[\s\S]*?<\/edit>/gi,
+    // Allow file= instead of path=
+    /<edit\s+file\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?<search>([\s\S]*?)<\/search>[\s\S]*?<replace>([\s\S]*?)<\/replace>[\s\S]*?<\/edit>/gi,
+    // Unquoted path: <edit path=src/file.ts>
+    /<edit\s+path\s*=\s*([^\s>"']+)[^>]*>[\s\S]*?<search>([\s\S]*?)<\/search>[\s\S]*?<replace>([\s\S]*?)<\/replace>[\s\S]*?<\/edit>/gi,
+    // Inline format without newlines
+    /<edit\s+path\s*=\s*["']?([^"'\s>]+)["']?[^>]*><search>([\s\S]*?)<\/search><replace>([\s\S]*?)<\/replace><\/edit>/gi,
+  ];
+
+  const parsedEditPaths = new Set<string>(); // Track to avoid duplicates
+  for (const editRegex of editPatterns) {
+    editRegex.lastIndex = 0; // Reset regex state
+    while ((match = editRegex.exec(safeContent)) !== null) {
+      const fullMatch = match[0];
+      const [, path, search, replace] = match;
+
+      // Skip if we already parsed an edit for this exact match
+      const matchKey = `${path}:${search.slice(0, 50)}`;
+      if (parsedEditPaths.has(matchKey)) continue;
+      parsedEditPaths.add(matchKey);
+
+      const replaceAll =
+        extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
+      // Only strip leading/trailing newlines from XML formatting, preserve indentation
+      const cleanSearch = search.replace(/^\n+|\n+$/g, '');
+      const cleanReplace = replace.replace(/^\n+|\n+$/g, '');
+      actions.push({
+        type: 'edit',
+        path,
+        search: cleanSearch,
+        replace: cleanReplace,
+        replaceAll: replaceAll || undefined,
+      } as EditAction);
+    }
   }
 
   // Parse multi-edit actions
@@ -428,6 +541,21 @@ export function parseActions(content: string): Action[] {
   // Parse ls actions
   const lsRegex = new RegExp(PATTERNS.ls.source, 'gi');
   while ((match = lsRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const path = extractAttr(fullTag, 'path');
+    const ignoreStr = extractAttr(fullTag, 'ignore');
+    if (path) {
+      actions.push({
+        type: 'ls',
+        path,
+        ignore: ignoreStr ? ignoreStr.split(',').map(s => s.trim()) : undefined,
+      } as LSAction);
+    }
+  }
+
+  // Parse list actions (alias for ls)
+  const listRegex = new RegExp(PATTERNS.list.source, 'gi');
+  while ((match = listRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const path = extractAttr(fullTag, 'path');
     const ignoreStr = extractAttr(fullTag, 'ignore');
@@ -532,6 +660,18 @@ export function parseActions(content: string): Action[] {
     } as NotifyAction);
   }
 
+  // Parse say actions (user communication)
+  const sayRegex = new RegExp(PATTERNS.say.source, 'gi');
+  while ((match = sayRegex.exec(safeContent)) !== null) {
+    const message = match[1].trim();
+    if (message) {
+      actions.push({
+        type: 'say',
+        message,
+      } as SayAction);
+    }
+  }
+
   // ===== Skills =====
 
   // Parse skill actions
@@ -593,33 +733,6 @@ export function parseActions(content: string): Action[] {
         path: path || undefined,
         depth: (depth as ExploreAction['depth']) || undefined,
       } as ExploreAction);
-    }
-  }
-
-  // Parse plan actions (task planning & tracking)
-  const planRegex = new RegExp(PATTERNS.plan.source, 'gi');
-  while ((match = planRegex.exec(safeContent)) !== null) {
-    const fullTag = match[0];
-    const operation = extractAttr(fullTag, 'operation') || extractAttr(fullTag, 'op');
-    if (
-      operation &&
-      ['add', 'update', 'complete', 'remove', 'show', 'clear', 'ask'].includes(operation)
-    ) {
-      const id = extractAttr(fullTag, 'id');
-      const content = extractAttr(fullTag, 'content') || extractAttr(fullTag, 'task');
-      const description = extractAttr(fullTag, 'description') || extractAttr(fullTag, 'desc');
-      const status = extractAttr(fullTag, 'status') as PlanItemStatus | undefined;
-      const question = extractAttr(fullTag, 'question') || extractAttr(fullTag, 'q');
-
-      actions.push({
-        type: 'plan',
-        operation: operation as PlanAction['operation'],
-        id: id || undefined,
-        content: content || undefined,
-        description: description || undefined,
-        status: status || undefined,
-        question: question || undefined,
-      } as PlanAction);
     }
   }
 

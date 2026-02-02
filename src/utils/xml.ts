@@ -3,6 +3,8 @@
  * Aligned with Claude Code tool schema
  */
 
+// Only strip KNOWN action tags - do NOT strip arbitrary XML-like tags
+// This allows LLM to use formatting tags like <list>, <item>, etc. in commentary
 const ACTION_TAG_PATTERNS = [
   // Thinking/reasoning (should never be shown to user)
   /<think>[\s\S]*?<\/think>/g,
@@ -12,58 +14,30 @@ const ACTION_TAG_PATTERNS = [
   // Shell commands
   /<bash[^>]*>[\s\S]*?<\/bash>/g,
   /<exec\s*>[\s\S]*?<\/exec>/g,
-  /<explore[^>]*\/>/g,
-  /<grep[^>]*\/>/g,
-  /<glob[^>]*\/>/g,
-  /<ls[^>]*\/>/g,
-  /<read[^>]*\/>/g,
-  /<edit[^>]*\/>/g,
-  /<write[^>]*\/>/g,
-  /<multi-edit[^>]*>[\s\S]*?<\/multi-edit>/g,
-  /<plan[^>]*\/>/g,
-  /<git[^>]*\/>/g,
-  /<format[^>]*\/>/g,
-  /<fetch[^>]*\/>/g,
-  /<search[^>]*\/>/g,
-  /<notify[^>]*\/>/g,
-  /<schedule[^>]*\/>/g,
-  /<task[^>]*\/>/g,
-  /<skill[^>]*\/>/g,
-  /<skill-install[^>]*\/>/g,
-  // File operations
+  // File operations - full tags with content
   /<read[^>]*\/>/g,
   /<read[^>]*>[\s\S]*?<\/read>/g,
   /<edit[^>]*>[\s\S]*?<\/edit>/g,
   /<multi-edit[^>]*>[\s\S]*?<\/multi-edit>/g,
   /<write[^>]*>[\s\S]*?<\/write>/g,
   /<create[^>]*>[\s\S]*?<\/create>/g,
-  // Search & navigation
+  // Search & navigation - self-closing only
+  /<explore[^>]*\/>/g,
   /<glob[^>]*\/>/g,
-  /<glob[^>]*>[\s\S]*?<\/glob>/g,
-  /<grep[^>]*>[\s\S]*?<\/grep>/g,
   /<grep[^>]*\/>/g,
   /<ls[^>]*\/>/g,
-  /<ls[^>]*>[\s\S]*?<\/ls>/g,
-  // Git operations
-  /<git[^>]*\/>/g,
-  /<git[^>]*>[\s\S]*?<\/git>/g,
-  // Web operations
+  // Web operations - self-closing only (search action uses query= attribute)
   /<fetch[^>]*\/>/g,
-  /<fetch[^>]*>[\s\S]*?<\/fetch>/g,
-  /<search[^>]*\/>/g,
-  /<search[^>]*>[\s\S]*?<\/search>/g,
+  /<search\s+query=[^>]*\/>/g,
   // Code quality
   /<format[^>]*\/>/g,
-  /<format[^>]*>[\s\S]*?<\/format>/g,
   // Scheduling & notifications
   /<schedule[^>]*>[\s\S]*?<\/schedule>/g,
   /<notify[^>]*\/>/g,
   /<notify[^>]*>[\s\S]*?<\/notify>/g,
   // Skills
   /<skill[^>]*\/>/g,
-  /<skill[^>]*>[\s\S]*?<\/skill>/g,
   /<skill-install[^>]*\/>/g,
-  /<skill-install[^>]*>[\s\S]*?<\/skill-install>/g,
   // Plan management (silent - should never show)
   /<plan[^>]*\/>/g,
   /<plan[^>]*>[\s\S]*?<\/plan>/g,
@@ -75,31 +49,51 @@ const ACTION_TAG_PATTERNS = [
   // Connector config
   /<telegram-config[^>]*\/>/g,
   /<discord-config[^>]*\/>/g,
-  // Inner tags (used inside edit/multi-edit)
-  /<search>[\s\S]*?<\/search>/g,
-  /<replace>[\s\S]*?<\/replace>/g,
+  // NOTE: <search> and <replace> are NOT stripped here - they're only meaningful inside <edit>
+  // and <edit> is already stripped as a whole
 ];
 
 /**
  * Remove all action tags from content
+ * Only removes KNOWN action tags - preserves arbitrary XML-like formatting tags
  */
 export function cleanXmlTags(content: string | unknown): string {
   if (typeof content !== 'string') {
     return typeof content === 'undefined' || content === null ? '' : String(content);
   }
   let result = content;
+
+  // Special handling for <say> - keep content, remove tags
+  result = result.replace(/<say\s*>([\s\S]*?)<\/say>/gi, '$1');
+
   for (const pattern of ACTION_TAG_PATTERNS) {
     result = result.replace(new RegExp(pattern.source, 'g'), '');
   }
-  // Catch any remaining action-like XML tags (opening and closing)
+  // Catch remaining action tags that have attributes (path=, query=, pattern=, etc.)
+  // These are clearly action invocations, not formatting tags
   result = result.replace(
-    /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|replace)[^>]*\/?>/gi,
+    /<(read|edit|multi-edit|write|create|glob|grep|ls|fetch|explore)\s+[^>]*\/?>/gi,
     '',
   );
+  // Catch simple self-closing action tags
   result = result.replace(
-    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|replace)>/gi,
+    /<(bash|exec|format|ps|kill|telegram-config|discord-config)\s*\/?>/gi,
     '',
   );
+  // Catch orphan <say> opening tags (content already extracted above)
+  result = result.replace(/<say\s*>/gi, '');
+  // Catch closing tags for action types (unambiguous)
+  result = result.replace(
+    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|fetch|format|schedule|notify|skill|skill-install|plan|task|explore|say)>/gi,
+    '',
+  );
+  // Clean up edit internal tags (search/replace) that shouldn't appear in output
+  result = result.replace(/<\/?search>|<\/?replace>/gi, '');
+  result = result.replace(/<search">|<replace">/gi, ''); // Malformed variants
+  // Clean partial/broken tags at start or end
+  result = result.replace(/^[a-z]*">\s*/i, ''); // Partial tag at start like `h">`
+  result = result.replace(/<\/[a-z-]*$/i, ''); // Incomplete closing tag at end like `</`
+  result = result.replace(/<[a-z-]*">\s*/gi, ''); // Malformed opening with stray quote
   return result.trim();
 }
 

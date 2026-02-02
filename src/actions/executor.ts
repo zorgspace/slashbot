@@ -28,7 +28,7 @@ import {
   executeExplore,
   executeTelegramConfig,
   executeDiscordConfig,
-  executePlan,
+  executeSay,
 } from './handlers';
 
 /**
@@ -121,6 +121,10 @@ async function executeAction(
     case 'notify':
       return executeNotify(action, handlers);
 
+    // User Communication
+    case 'say':
+      return executeSay(action);
+
     // Skills
     case 'skill':
       return executeSkill(action, handlers);
@@ -134,10 +138,6 @@ async function executeAction(
     // Parallel Exploration
     case 'explore':
       return executeExplore(action, handlers);
-
-    // Plan Management
-    case 'plan':
-      return executePlan(action, handlers);
 
     // Connector Configuration
     case 'telegram-config':

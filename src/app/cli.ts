@@ -30,6 +30,23 @@ export function handleVersionFlag(version: string): boolean {
   return false;
 }
 
+/**
+ * Parse -m/--message argument and return the message if present
+ */
+export function getMessageArg(): string | null {
+  const args = process.argv.slice(2);
+  const msgIndex = args.findIndex(arg => arg === '-m' || arg === '--message');
+  if (msgIndex !== -1 && args[msgIndex + 1]) {
+    return args[msgIndex + 1];
+  }
+  // Also support -m"message" or --message="message" format
+  for (const arg of args) {
+    if (arg.startsWith('-m=')) return arg.slice(3);
+    if (arg.startsWith('--message=')) return arg.slice(10);
+  }
+  return null;
+}
+
 export async function handleCliArgs(version: string): Promise<boolean> {
   const args = process.argv.slice(2);
 
@@ -41,10 +58,12 @@ ${c.violet('Slashbot')} - CLI Assistant powered by Grok
 ${c.bold('Usage:')}
   slashbot [options]
   slashbot login              Enter API key
+  slashbot -m "message"       Send a message and exit
 
 ${c.bold('Options:')}
-  -h, --help      Show this help
-  -v, --version   Show version
+  -h, --help           Show this help
+  -v, --version        Show version
+  -m, --message MSG    Send message non-interactively
 
 ${c.bold('Commands:')}
   /login          Enter Grok API key

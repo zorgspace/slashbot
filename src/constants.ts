@@ -78,6 +78,15 @@ export const SCHEDULER = {
   EXECUTION_TIMEOUT: 300000, // 5 minutes
 } as const;
 
+// === Default Skills ===
+// Skills that are automatically installed on first run
+export const DEFAULT_SKILLS = [
+  {
+    url: 'https://bags.fm/skill.md',
+    name: 'bags',
+  },
+] as const;
+
 // === Security: Dangerous Patterns ===
 export const DANGEROUS_COMMANDS = [
   'chmod -R 777',

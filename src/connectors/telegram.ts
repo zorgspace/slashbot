@@ -10,7 +10,7 @@
  */
 
 import { Telegraf } from 'telegraf';
-import { c } from '../ui/colors';
+import { c, connectorStatus } from '../ui/colors';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
 import { getTranscriptionService } from '../services/transcription';
 import { imageBuffer } from '../code/imageBuffer';
@@ -125,7 +125,7 @@ export class TelegramConnector implements Connector {
           const fileUrl = `https://api.telegram.org/file/bot${this.bot.telegram.token}/${file.file_path}`;
 
           // Transcribe
-          console.log(c.muted('[Telegram] Transcribing voice message...'));
+          console.log(connectorStatus('telegram', 'Transcribing voice message...'));
           const result = await transcriptionService.transcribeFromUrl(fileUrl);
 
           if (!result || !result.text) {
@@ -133,7 +133,8 @@ export class TelegramConnector implements Connector {
             return;
           }
 
-          console.log(c.muted(`[Telegram] Voice: "${result.text.slice(0, 50)}..."`));
+          const preview = result.text.length > 40 ? result.text.slice(0, 40) + '...' : result.text;
+          console.log(connectorStatus('telegram', `Voice: "${preview}"`));
 
           // Process transcribed text
           const response = await this.messageHandler(result.text, 'telegram');
@@ -175,7 +176,7 @@ export class TelegramConnector implements Connector {
           const fileUrl = `https://api.telegram.org/file/bot${this.bot.telegram.token}/${file.file_path}`;
 
           // Download and convert to base64 data URL
-          console.log(c.muted('[Telegram] Downloading image...'));
+          console.log(connectorStatus('telegram', 'Downloading image...'));
           const imageResponse = await fetch(fileUrl);
           const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString('base64');
           const mimeType = file.file_path?.endsWith('.png') ? 'image/png' : 'image/jpeg';
@@ -183,11 +184,7 @@ export class TelegramConnector implements Connector {
 
           // Add to image buffer for vision context
           imageBuffer.push(dataUrl);
-          console.log(
-            c.muted(
-              `[Telegram] Image added to context (${Math.round(imageBuffer64.length / 1024)}KB)`,
-            ),
-          );
+          console.log(connectorStatus('telegram', `Image added (${Math.round(imageBuffer64.length / 1024)}KB)`));
 
           // Use caption or default prompt
           const message = ctx.message.caption || 'What is in this image?';
@@ -324,7 +321,8 @@ export class TelegramConnector implements Connector {
 
     const targetChat = this.replyTargetChatId;
     const chunks = splitMessage(text, this.config.maxMessageLength);
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = i === 0 ? "🔵 " + chunks[i] : chunks[i];
       await this.bot.telegram
         .sendMessage(targetChat, chunk, {
           parse_mode: 'Markdown',

@@ -7,7 +7,6 @@
 import 'reflect-metadata';
 import { injectable } from 'inversify';
 import { EventEmitter } from 'events';
-import type { PlanItem } from '../actions/types';
 import type { ConnectorSource } from '../connectors/base';
 
 /**
@@ -21,8 +20,6 @@ export type SlashbotEvent =
   | { type: 'connector:response'; source: ConnectorSource; response: string }
   | { type: 'connector:connected'; source: ConnectorSource }
   | { type: 'connector:disconnected'; source: ConnectorSource }
-  | { type: 'plan:update'; items: PlanItem[] }
-  | { type: 'plan:question'; question: string }
   | { type: 'grok:initialized' }
   | { type: 'grok:disconnected' }
   | { type: 'prompt:redraw' };

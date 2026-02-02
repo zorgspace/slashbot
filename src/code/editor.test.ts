@@ -99,8 +99,8 @@ describe('CodeEditor', () => {
 
       const result = await editor.editFile({
         path: 'test.ts',
-        search: 'const y = 2;',
-        replace: 'const z = 3;',
+        search: 'function foo() {',
+        replace: 'function bar() {',
       });
 
       expect(result.success).toBe(false);

@@ -15,7 +15,6 @@ export const TYPES = {
   // Composite services
   ActionHandlerService: Symbol.for('ActionHandlerService'),
   ConnectorRegistry: Symbol.for('ConnectorRegistry'),
-  PlanManager: Symbol.for('PlanManager'),
   HistoryManager: Symbol.for('HistoryManager'),
   CommandRegistry: Symbol.for('CommandRegistry'),
 

@@ -21,8 +21,7 @@ export type ActionType =
   | 'skill-install'
   | 'task'
   | 'explore'
-  // Plan management
-  | 'plan'
+  | 'say'
   // Aliases for backwards compatibility
   | 'exec'
   | 'create';
@@ -181,25 +180,11 @@ export interface ExploreAction {
   depth?: 'quick' | 'medium' | 'deep'; // How thorough (default: medium)
 }
 
-// ===== Plan Management =====
+// ===== User Communication =====
 
-export type PlanItemStatus = 'pending' | 'in_progress' | 'completed';
-
-export interface PlanItem {
-  id: string;
-  content: string;
-  status: PlanItemStatus;
-  description?: string;
-}
-
-export interface PlanAction {
-  type: 'plan';
-  operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear' | 'ask';
-  id?: string; // For update/complete/remove operations
-  content?: string; // For add operation
-  description?: string; // Optional description for the task
-  status?: PlanItemStatus; // For update operation
-  question?: string; // For ask operation - question to ask the user
+export interface SayAction {
+  type: 'say';
+  message: string;
 }
 
 // ===== Process Management =====
@@ -249,7 +234,7 @@ export type Action =
   | SkillInstallAction
   | TaskAction
   | ExploreAction
-  | PlanAction
+  | SayAction
   | PsAction
   | KillAction
   | TelegramConfigAction
@@ -326,17 +311,6 @@ export interface ActionHandlers {
   onSkillInstall?: (url: string, name?: string) => Promise<{ name: string; path: string }>;
   // Sub-task spawning
   onTask?: (prompt: string, description?: string) => Promise<string>;
-  // Plan management
-  onPlan?: (
-    operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear' | 'ask',
-    options?: {
-      id?: string;
-      content?: string;
-      description?: string;
-      status?: PlanItemStatus;
-      question?: string;
-    },
-  ) => Promise<{ success: boolean; message: string; plan?: PlanItem[]; question?: string }>;
   // Process management
   onPs?: () => Promise<string>;
   onKill?: (target: string) => Promise<boolean>;

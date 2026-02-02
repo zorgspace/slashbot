@@ -26,11 +26,12 @@ export type { BannerOptions } from './components/banner';
 
 // Prompt components
 export {
-  setStickyPlanRef,
   prompt,
   inputPrompt,
+  connectorStatus,
   connectorMessage,
   connectorResponse,
+  connectorAction,
   inputClose,
   responseStart,
   hintLine,
@@ -48,15 +49,3 @@ export type { DiffLine } from './display/file-viewer';
 
 // Thinking display
 export { thinkingDisplay } from './display/thinking';
-
-// Plan display
-export { PlanDisplay, planDisplay, planStep } from './plan/display';
-export type { PlanItemStatus, PlanDisplayItem } from './plan/display';
-
-// Sticky plan
-export { StickyPlan, stickyPlan } from './plan/sticky';
-
-// Initialize the sticky plan reference for inputPrompt
-import { setStickyPlanRef } from './components/prompt';
-import { stickyPlan } from './plan/sticky';
-setStickyPlanRef(stickyPlan);

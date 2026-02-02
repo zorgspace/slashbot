@@ -95,7 +95,7 @@ export class CodeEditor {
           results.push({
             file: match[1].replace(this.workDir + '/', ''),
             line: parseInt(match[2]),
-            content: match[3].trim(),
+            content: match[3], // Preserve indentation
             match: pattern,
           });
         }
@@ -105,7 +105,7 @@ export class CodeEditor {
           results.push({
             file: contextMatch[1].replace(this.workDir + '/', ''),
             line: parseInt(contextMatch[2]),
-            content: contextMatch[3].trim(),
+            content: contextMatch[3], // Preserve indentation
             match: '', // Context line, not a match
           });
         }
@@ -210,42 +210,217 @@ export class CodeEditor {
     return { success: true, status: 'applied', message: `Modified: ${edit.path}` };
   }
 
+
   /**
    * Try to find the search pattern with normalized whitespace
+   * Uses multiple strategies to find a match
    */
   private findNormalizedMatch(content: string, search: string): string | null {
-    // Normalize both for comparison
-    const normalizeWs = (s: string) => s.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
-    const normalizedSearch = normalizeWs(search);
-    const normalizedContent = normalizeWs(content);
+    // Strategy 1: Normalize only line endings and trailing whitespace (preserve leading indentation)
+    const normalizeLight = (s: string) =>
+      s
+        .replace(/\r\n/g, '\n') // Normalize line endings
+        .replace(/[ \t]+$/gm, ''); // Trim trailing whitespace per line only
 
-    if (!normalizedContent.includes(normalizedSearch)) {
-      return null;
+    const lightSearch = normalizeLight(search);
+    const lightContent = normalizeLight(content);
+
+    if (lightContent.includes(lightSearch)) {
+      const idx = lightContent.indexOf(lightSearch);
+      return content.substring(idx, idx + lightSearch.length);
     }
 
-    // Find the actual text in original content that matches
+    // Strategy 2: Line-by-line matching with flexible indentation
     const searchLines = search.split('\n');
     const contentLines = content.split('\n');
 
-    // Find first line match
-    const firstSearchLine = searchLines[0].trim();
-    if (!firstSearchLine) return null;
+    // Find first non-empty search line
+    const firstNonEmptyIdx = searchLines.findIndex(l => l.trim().length > 0);
+    if (firstNonEmptyIdx === -1) return null;
+
+    const firstSearchLine = searchLines[firstNonEmptyIdx].trim();
 
     for (let i = 0; i < contentLines.length; i++) {
       if (contentLines[i].trim() === firstSearchLine) {
-        // Check if all lines match
-        let matches = true;
-        for (let j = 0; j < searchLines.length && i + j < contentLines.length; j++) {
-          if (contentLines[i + j].trim() !== searchLines[j].trim()) {
-            matches = false;
+        // Try to match all search lines from this position
+        let searchIdx = firstNonEmptyIdx;
+        let contentIdx = i;
+        let allMatch = true;
+        const matchedLines: number[] = [];
+
+        while (searchIdx < searchLines.length && contentIdx < contentLines.length) {
+          const searchTrimmed = searchLines[searchIdx].trim();
+          const contentTrimmed = contentLines[contentIdx].trim();
+
+          // Handle empty lines
+          if (searchTrimmed === '' && contentTrimmed === '') {
+            matchedLines.push(contentIdx);
+            searchIdx++;
+            contentIdx++;
+            continue;
+          }
+          if (searchTrimmed === '') {
+            searchIdx++;
+            continue;
+          }
+          if (contentTrimmed === '') {
+            contentIdx++;
+            continue;
+          }
+
+          // Compare trimmed content
+          if (contentTrimmed === searchTrimmed) {
+            matchedLines.push(contentIdx);
+            searchIdx++;
+            contentIdx++;
+          } else {
+            allMatch = false;
             break;
           }
         }
-        if (matches) {
-          // Return the original content slice
-          return contentLines.slice(i, i + searchLines.length).join('\n');
+
+        // Check if we matched all search lines
+        if (allMatch && searchIdx >= searchLines.length) {
+          const startLine = matchedLines[0];
+          const endLine = matchedLines[matchedLines.length - 1];
+          return contentLines.slice(startLine, endLine + 1).join('\n');
         }
       }
+    }
+
+    // Strategy 3: Strict line-by-line matching - require exact trimmed match for ALL lines
+    // This is safer than fuzzy matching which can corrupt files
+    const searchTrimmedLines = searchLines.map(l => l.trim()).filter(l => l.length > 0);
+
+    if (searchTrimmedLines.length === 0) return null;
+
+    // Find first line that matches exactly (trimmed)
+    const firstTrimmedLine = searchTrimmedLines[0];
+
+    for (let i = 0; i < contentLines.length; i++) {
+      if (contentLines[i].trim() !== firstTrimmedLine) continue;
+
+      // Found potential start, verify ALL remaining lines match exactly
+      let allMatch = true;
+      let searchIdx = 1;
+      let contentIdx = i + 1;
+      const matchStart = i;
+
+      while (searchIdx < searchTrimmedLines.length && contentIdx < contentLines.length) {
+        const searchLine = searchTrimmedLines[searchIdx];
+        const contentLine = contentLines[contentIdx].trim();
+
+        // Skip empty lines in content
+        if (contentLine === '') {
+          contentIdx++;
+          continue;
+        }
+
+        if (contentLine !== searchLine) {
+          allMatch = false;
+          break;
+        }
+
+        searchIdx++;
+        contentIdx++;
+      }
+
+      // All search lines must be matched
+      if (allMatch && searchIdx === searchTrimmedLines.length) {
+        const result = contentLines.slice(matchStart, contentIdx).join('\n');
+        console.log(c.muted(`Matched by line-by-line comparison (lines ${matchStart + 1}-${contentIdx})`));
+        return result;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract the original text from content given a match in normalized content
+   */
+  private extractOriginalMatch(
+    original: string,
+    normalized: string,
+    normalizedIdx: number,
+    normalizedLen: number,
+  ): string | null {
+    // This is approximate - find the region in original that corresponds
+    // to the normalized match by tracking character counts
+    const origLines = original.split('\n');
+    const normLines = normalized.split('\n');
+
+    let normCharCount = 0;
+    let startLine = 0;
+
+    // Find start line
+    for (let i = 0; i < normLines.length; i++) {
+      if (normCharCount + normLines[i].length >= normalizedIdx) {
+        startLine = i;
+        break;
+      }
+      normCharCount += normLines[i].length + 1; // +1 for newline
+    }
+
+    // Find end line
+    const endCharIdx = normalizedIdx + normalizedLen;
+    let endLine = startLine;
+    for (let i = startLine; i < normLines.length; i++) {
+      normCharCount += normLines[i].length + 1;
+      endLine = i;
+      if (normCharCount >= endCharIdx) break;
+    }
+
+    // Extract from original
+    return origLines.slice(startLine, endLine + 1).join('\n');
+  }
+
+  /**
+   * Try to match search lines starting from a given content line
+   */
+  private tryMatchFromLine(
+    contentLines: string[],
+    startIdx: number,
+    searchLines: string[],
+  ): string | null {
+    let contentIdx = startIdx;
+    let searchIdx = 0;
+    const matchedContentLines: number[] = [];
+
+    while (searchIdx < searchLines.length && contentIdx < contentLines.length) {
+      const searchTrimmed = searchLines[searchIdx];
+      const contentTrimmed = contentLines[contentIdx].trim();
+
+      // Skip empty lines in both
+      if (!contentTrimmed && !searchTrimmed) {
+        contentIdx++;
+        searchIdx++;
+        continue;
+      }
+      if (!contentTrimmed) {
+        contentIdx++;
+        continue;
+      }
+      if (!searchTrimmed) {
+        searchIdx++;
+        continue;
+      }
+
+      // Check for match (exact or contained)
+      if (contentTrimmed === searchTrimmed || contentTrimmed.includes(searchTrimmed)) {
+        matchedContentLines.push(contentIdx);
+        searchIdx++;
+      }
+      contentIdx++;
+
+      // Don't look too far ahead
+      if (contentIdx - startIdx > searchLines.length * 2) break;
+    }
+
+    if (searchIdx === searchLines.length && matchedContentLines.length > 0) {
+      const firstMatch = matchedContentLines[0];
+      const lastMatch = matchedContentLines[matchedContentLines.length - 1];
+      return contentLines.slice(firstMatch, lastMatch + 1).join('\n');
     }
 
     return null;

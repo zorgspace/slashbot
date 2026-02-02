@@ -71,9 +71,14 @@ export class ConnectorRegistry {
     const sent: string[] = [];
     const failed: string[] = [];
 
+    // Only send if target is specified (disable sending to all)
+    if (!target) {
+      return { sent: [], failed: [] };
+    }
+
     for (const [name, conn] of this.connectors) {
-      // Skip if target specified and doesn't match
-      if (target && name !== target) continue;
+      // Skip if target doesn't match
+      if (name !== target) continue;
       // Skip if not running
       if (!conn.isRunning()) continue;
 

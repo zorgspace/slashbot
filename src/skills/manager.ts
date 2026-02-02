@@ -7,7 +7,7 @@
 
 import path from 'path';
 import { c } from '../ui/colors';
-import { HOME_SKILLS_DIR } from '../constants';
+import { HOME_SKILLS_DIR, DEFAULT_SKILLS } from '../constants';
 
 export interface Skill {
   name: string;
@@ -72,6 +72,86 @@ function parseSkillMetadata(content: string): { metadata: Skill['metadata']; bod
 }
 
 /**
+ * Extract relative .md file paths from markdown content
+ * Looks for patterns like [text](./path/to/file.md) or [text](path/to/file.md)
+ */
+function extractRelativeMdPaths(content: string): string[] {
+  const paths: string[] = [];
+  const seenPaths = new Set<string>();
+
+  // Pattern: Markdown links to .md files - [text](path.md) or [text](./path.md)
+  // Captures relative paths only (not http:// or https://)
+  const mdLinkPattern = /\[[^\]]*\]\((?!https?:\/\/)([^)]+\.md)\)/gi;
+  let match;
+  while ((match = mdLinkPattern.exec(content)) !== null) {
+    let relativePath = match[1];
+    // Normalize path - remove leading ./
+    if (relativePath.startsWith('./')) {
+      relativePath = relativePath.slice(2);
+    }
+    if (!seenPaths.has(relativePath)) {
+      seenPaths.add(relativePath);
+      paths.push(relativePath);
+    }
+  }
+
+  return paths;
+}
+
+/**
+ * Extract subskill URLs from skill content
+ * Looks for URLs in markdown tables or bash install scripts
+ */
+function extractSubskillUrls(content: string, baseUrl: string): string[] {
+  const urls: string[] = [];
+  const seenUrls = new Set<string>();
+
+  // Get the base domain from the main skill URL
+  let baseDomain: string;
+  try {
+    const url = new URL(baseUrl);
+    baseDomain = `${url.protocol}//${url.host}`;
+  } catch {
+    return urls;
+  }
+
+  // Pattern 1: Markdown table with URLs like `https://bags.fm/culture.md`
+  const tableUrlPattern = /`(https?:\/\/[^`\s]+\.(?:md|json))`/gi;
+  let match;
+  while ((match = tableUrlPattern.exec(content)) !== null) {
+    const url = match[1];
+    // Skip the main skill.md itself
+    if (!url.toLowerCase().endsWith('/skill.md') && !seenUrls.has(url)) {
+      seenUrls.add(url);
+      urls.push(url);
+    }
+  }
+
+  // Pattern 2: Curl commands like "curl -s https://bags.fm/culture.md > ..."
+  const curlPattern = /curl\s+(?:-[sS]\s+)?(https?:\/\/[^\s>]+\.(?:md|json))/gi;
+  while ((match = curlPattern.exec(content)) !== null) {
+    const url = match[1];
+    if (!url.toLowerCase().endsWith('/skill.md') && !seenUrls.has(url)) {
+      seenUrls.add(url);
+      urls.push(url);
+    }
+  }
+
+  // Pattern 3: Relative references in tables like | **AUTH.md** | that could be resolved
+  const relativePattern = /\|\s*\*\*([A-Z_]+\.(?:md|json))\*\*\s*\|/gi;
+  while ((match = relativePattern.exec(content)) !== null) {
+    const filename = match[1].toLowerCase();
+    const fullUrl = `${baseDomain}/${filename}`;
+    if (!filename.endsWith('skill.md') && !seenUrls.has(fullUrl)) {
+      seenUrls.add(fullUrl);
+      urls.push(fullUrl);
+    }
+  }
+
+  return urls;
+}
+
+/**
  * Extract skill name from URL or filename
  */
 function extractSkillName(url: string): string {
@@ -111,6 +191,22 @@ export function createSkillManager(_basePath?: string): SkillManager {
     async init(): Promise<void> {
       const { mkdir } = await import('fs/promises');
       await mkdir(skillsDir, { recursive: true });
+
+      // Install default skills if not already installed
+      for (const defaultSkill of DEFAULT_SKILLS) {
+        const existingSkill = await this.getSkill(defaultSkill.name);
+        if (!existingSkill) {
+          try {
+            await this.installSkill(defaultSkill.url, defaultSkill.name);
+            console.log(c.dim(`Installed default skill: ${defaultSkill.name}`));
+          } catch (error) {
+            // Silently ignore if default skill installation fails (e.g., network issues)
+            console.error(
+              c.dim(`Failed to install default skill ${defaultSkill.name}: ${error}`),
+            );
+          }
+        }
+      }
     },
 
     async listSkills(): Promise<Skill[]> {
@@ -230,6 +326,85 @@ export function createSkillManager(_basePath?: string): SkillManager {
       const skillPath = path.join(skillDir, 'skill.md');
       await Bun.write(skillPath, content);
 
+      // Get base URL for resolving relative paths
+      const baseUrl = url.substring(0, url.lastIndexOf('/') + 1);
+
+      // Recursively download relative .md files
+      const downloadedPaths = new Set<string>(['skill.md']);
+      const queue: Array<{ relativePath: string; content: string }> = [
+        { relativePath: 'skill.md', content },
+      ];
+
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        const relativeMdPaths = extractRelativeMdPaths(current.content);
+
+        for (const relativePath of relativeMdPaths) {
+          // Resolve path relative to current file's directory
+          const currentDir = path.dirname(current.relativePath);
+          const resolvedPath =
+            currentDir === '.' ? relativePath : path.join(currentDir, relativePath);
+          const normalizedPath = path.normalize(resolvedPath);
+
+          // Skip if already downloaded
+          if (downloadedPaths.has(normalizedPath)) continue;
+          downloadedPaths.add(normalizedPath);
+
+          try {
+            // Build full URL for download
+            const fullUrl = new URL(normalizedPath, baseUrl).href;
+
+            const subResponse = await fetch(fullUrl, {
+              headers: {
+                'User-Agent': 'Slashbot/1.0 (Skill Installer)',
+                Accept: 'text/markdown,text/plain,*/*',
+              },
+              redirect: 'follow',
+            });
+
+            if (subResponse.ok) {
+              const subContent = await subResponse.text();
+
+              // Create subdirectory if needed
+              const targetPath = path.join(skillDir, normalizedPath);
+              const targetDir = path.dirname(targetPath);
+              await mkdir(targetDir, { recursive: true });
+
+              await Bun.write(targetPath, subContent);
+
+              // Add to queue for recursive processing
+              queue.push({ relativePath: normalizedPath, content: subContent });
+            }
+          } catch {
+            // Silently ignore failed downloads
+          }
+        }
+      }
+
+      // Also download absolute URL subskills (legacy behavior)
+      const subskillUrls = extractSubskillUrls(content, url);
+      for (const subskillUrl of subskillUrls) {
+        try {
+          const subResponse = await fetch(subskillUrl, {
+            headers: {
+              'User-Agent': 'Slashbot/1.0 (Skill Installer)',
+              Accept: 'text/markdown,text/plain,application/json,*/*',
+            },
+            redirect: 'follow',
+          });
+
+          if (subResponse.ok) {
+            const subContent = await subResponse.text();
+            // Extract filename from URL
+            const subFilename = path.basename(new URL(subskillUrl).pathname);
+            const subPath = path.join(skillDir, subFilename);
+            await Bun.write(subPath, subContent);
+          }
+        } catch {
+          // Silently ignore failed subskill downloads
+        }
+      }
+
       return {
         name: skillName,
         path: skillPath,
@@ -283,6 +458,7 @@ export function createSkillManager(_basePath?: string): SkillManager {
       // Download all files
       let skillContent = '';
       let skillMetadata: Skill['metadata'] = {};
+      const failedFiles: string[] = [];
 
       for (const file of files) {
         // Calculate relative path within skill directory
@@ -309,7 +485,14 @@ export function createSkillManager(_basePath?: string): SkillManager {
             const parsed = parseSkillMetadata(skillContent);
             skillMetadata = parsed.metadata;
           }
+        } else {
+          failedFiles.push(`${file.path} (HTTP ${fileResponse.status})`);
         }
+      }
+
+      // If any files failed to download, throw an error to prevent partial installation
+      if (failedFiles.length > 0) {
+        throw new Error(`Failed to download ${failedFiles.length} file(s): ${failedFiles.join(', ')}`);
       }
 
       // If no skill.md found, look for README.md or any .md file
@@ -379,6 +562,8 @@ export function createSkillManager(_basePath?: string): SkillManager {
 
       prompt +=
         '\nTo use: [[skill name="skill_name"/]] → then execute curl commands from the loaded content.\n';
+      prompt +=
+        '\n**IMPORTANT:** When using a skill, follow its documentation completely. Do NOT search for additional information unless the skill file explicitly lacks what you need. The skill documentation is your primary and authoritative source.\n';
 
       return prompt;
     },

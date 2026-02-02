@@ -4,35 +4,23 @@
 
 import { colors } from '../core';
 
-// Maximum lines to display to user (full output kept for LLM context)
-const MAX_DISPLAY_LINES = 10;
-
-/**
- * Truncate output to MAX_DISPLAY_LINES for user display
- * Returns truncated text with indicator if content was cut
- */
+// No display limit - show full output
 function truncateForDisplay(text: string): string {
-  const lines = text.split('\n');
-  if (lines.length <= MAX_DISPLAY_LINES) {
-    return text;
-  }
-  const truncated = lines.slice(0, MAX_DISPLAY_LINES).join('\n');
-  const hiddenCount = lines.length - MAX_DISPLAY_LINES;
-  return `${truncated}\n${colors.muted}... (${hiddenCount} more lines)${colors.reset}`;
+  return text; // No truncation
 }
 
 // Claude Code-style output formatting
 export const step = {
-  // Assistant message/thought (violet bullet)
+  // Assistant message/thought (blue bullet)
   message: (text: string) => {
-    console.log(`${colors.violet}●${colors.reset} ${text}`);
+    console.log(`${colors.info}●${colors.reset} ${text}`);
   },
 
-  // Tool call: ● ToolName(args) - violet bullet and name
+  // Tool call: ● ToolName(args) - blue bullet and name
   tool: (toolName: string, args?: string) => {
     const argsStr = args ? `(${args})` : '';
     console.log(
-      `${colors.violet}●${colors.reset} ${colors.violet}${toolName}${colors.reset}${argsStr}`,
+      `${colors.info}●${colors.reset} ${colors.info}${toolName}${colors.reset}${argsStr}`,
     );
   },
 
@@ -99,28 +87,18 @@ export const step = {
     );
   },
 
-  // Bash result: ⎿  output - white for general, green for success, red for errors
-  // Display truncated to MAX_DISPLAY_LINES, full output kept for LLM context
-  bashResult: (command: string, output: string, exitCode = 0) => {
+  // Bash result: just show status (output is streamed in real-time)
+  bashResult: (_command: string, output: string, exitCode = 0) => {
     const isError = exitCode !== 0 || output.startsWith('Error:');
     const isSuccess =
       output.includes('No errors') || output.includes('success') || output.includes('✓');
+    // Only show status indicator - output was already streamed to console
     if (isError) {
-      console.log(`  ${colors.error}⎿  Error: Exit code ${exitCode}${colors.reset}`);
-      console.log(`     ${colors.muted}$ ${command}${colors.reset}`);
+      console.log(`  ${colors.error}⎿  Exit code ${exitCode}${colors.reset}`);
     } else if (isSuccess) {
-      console.log(`  ${colors.green}⎿  ✓ ${output.trim().split('\n')[0]}${colors.reset}`);
-      return; // Don't show full output for simple success
+      console.log(`  ${colors.green}⎿  ✓ Done${colors.reset}`);
     } else {
-      console.log(`  ${colors.white}⎿  $ ${command}${colors.reset}`);
-    }
-    if (output) {
-      const truncated = truncateForDisplay(output);
-      const lines = truncated.split('\n');
-      lines.forEach(line => {
-        const lineColor = isError ? colors.error : colors.white;
-        console.log(`     ${lineColor}${line}${colors.reset}`);
-      });
+      console.log(`  ${colors.white}⎿  Done${colors.reset}`);
     }
   },
 

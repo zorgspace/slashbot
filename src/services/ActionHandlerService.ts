@@ -4,6 +4,7 @@
  */
 
 import 'reflect-metadata';
+import path from 'path';
 import { injectable, inject } from 'inversify';
 import { TYPES } from '../di/types';
 import { c } from '../ui/colors';
@@ -13,7 +14,6 @@ import type { CodeEditor } from '../code/editor';
 import type { SecureFileSystem } from '../fs/filesystem';
 import type { SkillManager } from '../skills/manager';
 import type { ConfigManager } from '../config/config';
-import type { PlanManager } from './PlanManager';
 import type { ConnectorRegistry } from './ConnectorRegistry';
 import type { GrokClient } from '../api/grok';
 
@@ -27,7 +27,6 @@ export class ActionHandlerService {
     @inject(TYPES.FileSystem) private fileSystem: SecureFileSystem,
     @inject(TYPES.SkillManager) private skillManager: SkillManager,
     @inject(TYPES.ConfigManager) private configManager: ConfigManager,
-    @inject(TYPES.PlanManager) private planManager: PlanManager,
     @inject(TYPES.ConnectorRegistry) private connectorRegistry: ConnectorRegistry,
   ) {}
 
@@ -61,8 +60,19 @@ export class ActionHandlerService {
         return results.map(r => `${r.file}:${r.line}: ${r.content}`).join('\n');
       },
 
-      onRead: async path => {
-        return await this.codeEditor.readFile(path);
+      onRead: async (path, options) => {
+        const content = await this.codeEditor.readFile(path);
+        if (!content) return null;
+
+        // Apply offset/limit if specified
+        if (options?.offset || options?.limit) {
+          const lines = content.split('\n');
+          const start = options.offset || 0;
+          const end = options.limit ? start + options.limit : lines.length;
+          return lines.slice(start, end).join('\n');
+        }
+
+        return content;
       },
 
       onEdit: async (path, search, replace, replaceAll) => {
@@ -110,13 +120,25 @@ export class ActionHandlerService {
         // Check if command needs interactive input
         const needsInteractive = /^sudo\s|^ssh\s|passwd|read\s+-/.test(command);
 
+        // Check if running slashbot itself - needs special handling
+        const isSlashbotExec = /\bslashbot\b|bun\s+run\s+(dev|start)/.test(command);
+        const extraEnv: Record<string, string> = {};
+        if (isSlashbotExec) {
+          if (!options?.timeout) {
+            // Force short timeout for slashbot self-execution (it's interactive)
+            options = { ...options, timeout: 5000 };
+          }
+          // Signal to child slashbot that it's running in non-interactive mode
+          extraEnv.SLASHBOT_NON_INTERACTIVE = '1';
+        }
+
         if (needsInteractive) {
           const { spawn } = await import('child_process');
           return new Promise<string>(resolve => {
             const child = spawn('bash', ['-lc', command], {
               cwd: workDir,
               stdio: 'inherit',
-              env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1' },
+              env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1', ...extraEnv },
             });
             child.on('close', code => {
               resolve(code === 0 ? 'Command completed' : `Command exited with code ${code}`);
@@ -127,7 +149,7 @@ export class ActionHandlerService {
           });
         }
 
-        // Normal execution
+        // Normal execution with real-time output streaming
         try {
           const { spawn } = await import('child_process');
           const timeout = options?.timeout || 30000;
@@ -136,11 +158,13 @@ export class ActionHandlerService {
             let stdout = '';
             let stderr = '';
             let killed = false;
+            let hasOutput = false;
 
             const child = spawn(command, {
               shell: '/bin/bash',
               cwd: workDir,
-              env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1' },
+              stdio: ['ignore', 'pipe', 'pipe'], // Close stdin to prevent interactive hangs
+              env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1', ...extraEnv },
             });
 
             const timer = setTimeout(() => {
@@ -149,21 +173,39 @@ export class ActionHandlerService {
             }, timeout);
 
             child.stdout?.on('data', data => {
-              stdout += data.toString();
+              const text = data.toString();
+              stdout += text;
+              // Stream to console in real-time
+              if (!hasOutput) {
+                process.stdout.write('\n');
+                hasOutput = true;
+              }
+              process.stdout.write(text);
             });
 
             child.stderr?.on('data', data => {
-              stderr += data.toString();
+              const text = data.toString();
+              stderr += text;
+              // Stream stderr to console in real-time
+              if (!hasOutput) {
+                process.stdout.write('\n');
+                hasOutput = true;
+              }
+              process.stderr.write(text);
             });
 
             child.on('close', code => {
               clearTimeout(timer);
+              // Add newline after streamed output if there was any
+              if (hasOutput && !stdout.endsWith('\n') && !stderr.endsWith('\n')) {
+                process.stdout.write('\n');
+              }
               if (killed) {
                 resolve(`Error: Command timed out after ${timeout}ms`);
               } else if (code !== 0) {
-                resolve(`Error: Command failed: ${command}\n${stderr || stdout}`);
+                resolve(`Error: Command failed with code ${code}`);
               } else {
-                resolve(stdout || stderr || 'Command executed');
+                resolve(stdout || stderr || 'OK');
               }
             });
 
@@ -329,6 +371,38 @@ export class ActionHandlerService {
           throw new Error(`Skill not found: ${name}`);
         }
         let content = `[SKILL: ${name}]\n${skill.content}`;
+
+        // List all available .md files in the skill directory
+        const skillDir = path.dirname(skill.path);
+        try {
+          const { readdir } = await import('fs/promises');
+          const listFiles = async (dir: string, prefix = ''): Promise<string[]> => {
+            const files: string[] = [];
+            const entries = await readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+              if (entry.isDirectory()) {
+                files.push(...(await listFiles(path.join(dir, entry.name), relativePath)));
+              } else if (entry.name.endsWith('.md') && entry.name !== 'skill.md') {
+                files.push(relativePath);
+              }
+            }
+            return files;
+          };
+
+          const availableFiles = await listFiles(skillDir);
+          if (availableFiles.length > 0) {
+            content += '\n\n[AVAILABLE RULE FILES]:\n';
+            content += 'The following documentation files are available locally. ';
+            content += 'Use <read path="~/.slashbot/skills/' + name + '/FILENAME"/> to load specific rules when needed:\n';
+            availableFiles.forEach(file => {
+              content += `- ${file}\n`;
+            });
+          }
+        } catch {
+          // Skill directory listing failed, continue without file list
+        }
+
         if (args) {
           content += `\n\n[TASK: ${args}]`;
         }
@@ -396,10 +470,6 @@ ${prompt.replace(/"""/g, "'''")}`;
         } catch (error: any) {
           return { success: false, message: error.message || 'Configuration failed' };
         }
-      },
-
-      onPlan: async (operation, options) => {
-        return this.planManager.execute(operation, options);
       },
     };
   }

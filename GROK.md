@@ -2,19 +2,19 @@
 
 This document provides a complete, actionable guide to understanding, using, developing, and extending **Slashbot**. It is designed for developers, AI assistants (e.g., Slashbot, Claude, GPT), and contributors to immediately onboard and contribute. All explanations include real code examples from the codebase, rationale for patterns, and step-by-step workflows.
 
-Slashbot is a production-ready (v1.2.0) autonomous CLI AI agent inspired by Claude Code, powered by xAI's Grok API. It enables agentic workflows in the terminal: read/edit files, run shell commands, git ops, web search, scheduling, skills, and multi-platform connectors (Telegram/Discord).
+Slashbot is a production-ready autonomous CLI AI agent inspired by Claude Code, powered by xAI's Grok API. It enables agentic workflows in the terminal: read/edit files, run shell commands, git ops, web search, scheduling, skills, and multi-platform connectors (Telegram/Discord).
 
 ## 1. PROJECT OVERVIEW
 
 **Project Name**: Slashbot  
-**Version**: 1.2.0 (stable, with recent enhancements like sticky plan display, auto-updates, image support, and process management).  
+**Version**: Latest (stable, with recent enhancements like sticky plan display, auto-updates, image support, and process management).  
 **Purpose**: A lightweight, autonomous CLI coding assistant that executes real file/system operations via an "agentic loop." Unlike chat-only AIs, Slashbot parses LLM responses for XML action tags (e.g., `<read path="file.ts"/>`), executes them iteratively, and feeds results back until tasks complete. It solves the problem of bridging LLMs with real-world code editing/automation without heavy setups like VS Code extensions.  
 **Key Features**:
 
 - **Agentic Execution**: LLM plans → actions (read/edit/bash/git) → results → iterate.
 - **Multi-Modal**: Image analysis (paste base64/images), voice transcription (OpenAI optional).
 - **Connectors**: Telegram/Discord for remote control.
-- **Skills System**: Load modular prompts/capabilities from `.slashbot/skills/`.
+- **Skills System**: Load modular prompts/capabilities from `~/.slashbot/skills/`.
 - **Scheduler**: Cron-based tasks (bash or LLM-powered).
 - **Plan UI**: Visual sticky progress tracker for multi-step tasks.
 - **Secure**: Permissions system, process isolation, no destructive ops by default.
@@ -283,7 +283,7 @@ Ex: First run → Banner shows version, dir, tasks, connectors.
 **Adding Components/Modules**:
 
 - UI: `src/ui/components/new.ts` (chalk/box/spinner).
-- Skill: `.slashbot/skills/new.md` (prompt) or `<skill-install url="..."/>`.
+- Skill: `~/.slashbot/skills/new.md` (prompt) or `<skill-install url="..."/>`.
 - Connector: Extend `base.ts` → `connectors/new.ts` → Registry.
 
 **Database Changes**: No DB (file-based). Edit `ConfigManager` for JSON.
@@ -377,7 +377,7 @@ compressActionResults([{ action: 'bash ls', result: 'file1\nfile2', success: tru
 - FS: WorkDir-bound, authorize via `/authorize`.
 - No eval/exec injection (parsed XML).
 
-**Breaking Changes**: v1.2.0: Enhanced UX/stability. Check commits.
+**Breaking Changes**: Latest: Enhanced UX/stability. Check commits.
 **Known Issues**:
 
 - Linux images: xclip/wl-paste required.

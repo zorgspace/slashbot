@@ -209,20 +209,5 @@ describe('EventBus', () => {
       );
     });
 
-    it('plan events have items', () => {
-      const handler = vi.fn();
-      eventBus.on('plan:update', handler);
-
-      eventBus.emit({
-        type: 'plan:update',
-        items: [{ id: '1', content: 'Task 1', status: 'pending' }],
-      });
-
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          items: expect.arrayContaining([expect.objectContaining({ id: '1' })]),
-        }),
-      );
-    });
   });
 });

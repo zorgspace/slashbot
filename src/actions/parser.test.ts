@@ -126,6 +126,127 @@ echo "line 2"
       expect(actions).toHaveLength(1);
       expect((actions[0] as any).search).toContain('  function test()');
     });
+
+    // Hardened parsing tests
+    it('parses edit with unquoted path', () => {
+      const content = `<edit path=src/file.ts>
+<search>old</search>
+<replace>new</replace>
+</edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).path).toBe('src/file.ts');
+    });
+
+    it('parses edit with file= instead of path=', () => {
+      const content = `<edit file="src/file.ts">
+<search>old</search>
+<replace>new</replace>
+</edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).path).toBe('src/file.ts');
+    });
+
+    it('parses edit with extra content between tags', () => {
+      const content = `<edit path="src/file.ts">
+
+Here's the edit:
+
+<search>old code</search>
+
+<replace>new code</replace>
+
+</edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).search).toBe('old code');
+      expect((actions[0] as any).replace).toBe('new code');
+    });
+
+    it('parses inline edit without newlines', () => {
+      const content = `<edit path="file.ts"><search>old</search><replace>new</replace></edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).path).toBe('file.ts');
+    });
+
+    it('parses edit with truncated closing tag', () => {
+      const content = `<edit path="file.ts">
+<search>old</search>
+<replace>new</replace>
+</edit`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).path).toBe('file.ts');
+    });
+
+    it('parses edit without path but with path in content', () => {
+      const content = `<edit>src/file.ts
+<search>old</search>
+<replace>new</replace>
+</edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).path).toBe('src/file.ts');
+    });
+
+    it('parses edit with extra </search> after </replace>', () => {
+      const content = `<edit path="file.ts"><search>old code</search><replace>new code</replace></search></edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).path).toBe('file.ts');
+      expect((actions[0] as any).search).toBe('old code');
+      expect((actions[0] as any).replace).toBe('new code');
+    });
+
+    it('parses edit with extra </search> and truncated </edit', () => {
+      const content = `<edit path="file.ts"><search>old</search><replace>new</replace></search></edit`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).path).toBe('file.ts');
+    });
+
+    it('parses edit with empty search and replace', () => {
+      const content = `<edit path="file.ts"><search></search><replace></replace></edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).path).toBe('file.ts');
+      expect((actions[0] as any).search).toBe('');
+      expect((actions[0] as any).replace).toBe('');
+    });
+
+    it('parses edit with empty search only', () => {
+      const content = `<edit path="file.ts"><search></search><replace>new content</replace></edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).search).toBe('');
+      expect((actions[0] as any).replace).toBe('new content');
+    });
+
+    it('parses edit with empty replace only', () => {
+      const content = `<edit path="file.ts"><search>old content</search><replace></replace></edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).search).toBe('old content');
+      expect((actions[0] as any).replace).toBe('');
+    });
+
+    it('parses edit with </search> used instead of </replace>', () => {
+      const content = `<edit path="file.ts"><search>old</search><replace>new</search></replace>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).search).toBe('old');
+      expect((actions[0] as any).replace).toBe('new');
+    });
+
+    it('parses edit with </search></edit ending instead of </replace></edit>', () => {
+      const content = `<edit path="file.ts"><search>old code</search><replace>new code</search></edit>`;
+      const actions = parseActions(content);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).search).toBe('old code');
+      expect((actions[0] as any).replace).toBe('new code');
+    });
   });
 
   describe('Multi-edit actions', () => {
@@ -298,34 +419,7 @@ const x = 1;
     });
   });
 
-  describe('Plan actions', () => {
-    it('parses plan add', () => {
-      const content =
-        '<plan operation="add" content="Implement feature X" description="Add new functionality"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect(actions[0].type).toBe('plan');
-      expect((actions[0] as any).operation).toBe('add');
-      expect((actions[0] as any).content).toBe('Implement feature X');
-    });
-
-    it('parses plan update', () => {
-      const content = '<plan operation="update" id="1" status="in_progress"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect((actions[0] as any).operation).toBe('update');
-      expect((actions[0] as any).id).toBe('1');
-      expect((actions[0] as any).status).toBe('in_progress');
-    });
-
-    it('parses plan ask', () => {
-      const content = '<plan operation="ask" question="What is your budget?"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect((actions[0] as any).operation).toBe('ask');
-      expect((actions[0] as any).question).toBe('What is your budget?');
-    });
-  });
+  // NOTE: Plan actions were removed from the system
 
   describe('Code block prevention', () => {
     it('ignores actions inside fenced code blocks', () => {

@@ -14,8 +14,8 @@ export const GROK_CONFIG = {
   MODEL_VISION: 'grok-4-1-fast-non-reasoning',
   /** X.AI API base URL */
   API_BASE_URL: 'https://api.x.ai/v1',
-  /** Maximum tokens for response generation */
-  MAX_TOKENS: 16384,
+  /** Maximum tokens for response generation (high value for unlimited feel) */
+  MAX_TOKENS: 131072,
   /** Temperature for response randomness (0-1) */
   TEMPERATURE: 0.7,
   /** Maximum messages to keep in context before compression */

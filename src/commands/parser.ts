@@ -165,10 +165,61 @@ export function getCommandNames(): string[] {
 export function completer(line: string): [string[], string] {
   const commandNames = getCommandNames();
 
-  if (line.startsWith('/')) {
-    const hits = commandNames.filter(cmd => cmd.startsWith(line));
-    return [hits.length ? hits : commandNames, line];
+  if (line === '') {
+    // Empty line - show all commands
+    return [commandNames, line];
   }
 
-  return [[], line];
+  if (line.startsWith('/')) {
+    // Filter commands that start with the current line
+    const filtered = commandNames.filter(cmd => cmd.startsWith(line));
+    if (filtered.length > 0) {
+      return [filtered, line];
+    } else {
+      // No matches, show all
+      return [commandNames, line];
+    }
+  }
+
+  // For any other input, show all slash commands (Tab completion should always show available commands)
+  return [commandNames, line];
+}
+
+/**
+ * Get all commands with descriptions for beautiful display
+ */
+export function getCommandsWithDescriptions(): Array<{ name: string; description: string }> {
+  try {
+    const registry = getService<CommandRegistry>(TYPES.CommandRegistry);
+    const handlers = registry.getAll();
+    return handlers.map(handler => ({
+      name: handler.name,
+      description: handler.description,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get grouped commands for beautiful tab completion display
+ */
+export function getGroupedCommands(): Array<{ title: string; cmds: Array<{ name: string; description: string }> }> {
+  const allCommands = getCommandsWithDescriptions();
+
+  const cmdGroups = [
+    { title: 'Session', cmds: ['login', 'logout', 'config'] },
+    { title: 'Code', cmds: ['auth', 'init', 'grep', 'files'] },
+    { title: 'Tasks', cmds: ['task', 'tasks'] },
+    { title: 'Skills', cmds: ['skill', 'skills'] },
+    { title: 'Personality', cmds: ['depressed', 'sarcasm', 'normal', 'unhinged'] },
+    { title: 'System', cmds: ['help', '?', 'ps', 'kill', 'telegram-config', 'discord-config', 'model', 'personality', 'history', 'clear', 'exit', 'update'] },
+  ];
+
+  return cmdGroups.map(group => ({
+    title: group.title,
+    cmds: group.cmds
+      .map(cmdName => allCommands.find(cmd => cmd.name === cmdName))
+      .filter(Boolean) as Array<{ name: string; description: string }>,
+  })).filter(group => group.cmds.length > 0);
 }

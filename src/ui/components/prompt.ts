@@ -4,42 +4,50 @@
 
 import { colors } from '../core';
 
-// Sticky plan reference (set later to avoid circular dependency)
-let _stickyPlanRef: { render: () => string } | null = null;
-
-export function setStickyPlanRef(ref: { render: () => string }): void {
-  _stickyPlanRef = ref;
-}
-
 export function prompt(): string {
   return `${colors.violet}${colors.bold}slashbot${colors.reset} ${colors.violetLight}>${colors.reset} `;
 }
 
 export function inputPrompt(): string {
-  // Include sticky plan if visible
-  if (_stickyPlanRef) {
-    const planLine = _stickyPlanRef.render();
-    if (planLine) {
-      return `${planLine}${colors.violet}╰─${colors.reset} `;
-    }
-  }
   return `${colors.violet}╭─${colors.reset} `;
 }
 
-// Connector message display (Telegram/Discord)
-export function connectorMessage(source: 'telegram' | 'discord', message: string): string {
+// Connector status message (transcribing, downloading, etc.)
+export function connectorStatus(source: 'telegram' | 'discord', status: string): string {
   const label = source === 'telegram' ? 'Telegram' : 'Discord';
-  const truncated = message.length > 80 ? message.slice(0, 77) + '...' : message;
-  return `\n${colors.violet}╭─${colors.reset} ${colors.info}[${label}]${colors.reset} ${truncated}`;
+  return `${colors.muted}   [${label}] ${status}${colors.reset}`;
 }
 
+// Connector message display (Telegram/Discord) - CLI-style prompt for user input
+export function connectorMessage(source: 'telegram' | 'discord', message: string): string {
+  const label = source === 'telegram' ? 'Telegram' : 'Discord';
+  const lines = message.split('\n');
+
+  // First line with connector label in prompt style
+  let output = `${colors.violet}╭─${colors.reset} ${colors.info}[${label}]${colors.reset} ${lines[0]}`;
+
+  // Continuation lines with indent
+  for (let i = 1; i < lines.length; i++) {
+    output += `\n   ${lines[i]}`;
+  }
+
+  return output;
+}
+
+// Connector response sent confirmation
 export function connectorResponse(source: 'telegram' | 'discord', response: string): string {
   const label = source === 'telegram' ? 'Telegram' : 'Discord';
   const lines = response.split('\n');
-  const preview = lines.slice(0, 3).join('\n');
-  const truncated = preview.length > 200 ? preview.slice(0, 197) + '...' : preview;
-  const moreLines = lines.length > 3 ? ` (+${lines.length - 3} lines)` : '';
-  return `${colors.muted}⎿  Sent to ${label}${moreLines}${colors.reset}\n${colors.muted}${truncated}${colors.reset}`;
+  const preview = lines.slice(0, 2).join('\n');
+  const truncated = preview.length > 100 ? preview.slice(0, 97) + '...' : preview;
+  const moreLines = lines.length > 2 ? ` (+${lines.length - 2} lines)` : '';
+  return `${colors.muted}⎿  Sent to ${label}${moreLines}${colors.reset}\n${colors.muted}   ${truncated.replace(/\n/g, '\n   ')}${colors.reset}`;
+}
+
+// Connector action status display
+export function connectorAction(action: string, success: boolean): string {
+  const icon = success ? `${colors.success}✓${colors.reset}` : `${colors.error}✗${colors.reset}`;
+  return `${colors.muted}│${colors.reset} ${icon} ${action}`;
 }
 
 export function inputClose(): string {

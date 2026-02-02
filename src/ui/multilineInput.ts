@@ -11,7 +11,12 @@
 
 import { expandPaste, readImageFromClipboard } from './pasteHandler';
 import { addImage, imageBuffer } from '../code/imageBuffer';
-import { c, thinkingDisplay, stickyPlan } from './colors';
+import { c, thinkingDisplay, colors } from './colors';
+import { drawBox } from './components/box';
+import { getGroupedCommands } from '../commands/parser';
+
+// Cursor blink rate
+const CURSOR_BLINK_INTERVAL = 530; // ms - matches typical terminal blink rate
 
 // Shift+Enter sequences (varies by terminal)
 const SHIFT_ENTER_SEQUENCES = [
@@ -53,6 +58,10 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     let historyIndex = -1;
     const history = options.history || [];
 
+    // Cursor blinking state
+    let cursorVisible = true;
+    let blinkInterval: ReturnType<typeof setInterval> | null = null;
+
     // Paste handling state
     let inPaste = false;
     let pasteBuffer = '';
@@ -69,6 +78,8 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
 
     // Print initial prompt (includes sticky plan if present)
     process.stdout.write(options.prompt);
+    // Hide native terminal cursor
+    process.stdout.write('\x1b[?25l');
 
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
@@ -76,6 +87,11 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     process.stdin.resume();
 
     const cleanup = () => {
+      if (blinkInterval) {
+        clearInterval(blinkInterval);
+        blinkInterval = null;
+      }
+      process.stdout.write('\x1b[?25h'); // Show native cursor again
       process.stdin.removeListener('data', onData);
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(wasRaw ?? false);
@@ -84,19 +100,6 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
 
     const submit = () => {
       cleanup();
-
-      // Clear the sticky plan line if visible
-      // Structure: sticky plan line + input lines
-      if (stickyPlan.isVisible()) {
-        const linesToClear = lines.length + 1; // +1 for sticky plan line
-        // Move cursor up to sticky plan line
-        if (linesToClear > 0) {
-          process.stdout.write(`\x1b[${linesToClear}A`);
-        }
-        // Clear from cursor to end of screen
-        process.stdout.write('\x1b[J');
-      }
-
       process.stdout.write('\n');
       const fullInput = [...lines, currentLine].join('\n');
       // Expand any paste placeholders
@@ -122,10 +125,8 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       // Move cursor to the beginning of the first row of this logical line
       // and clear all wrapped rows
       if (wrappedRows > 1) {
-        // Calculate which row we're currently on based on cursor position
         const cursorTotal = promptWidth + cursorPos;
         const currentRow = Math.floor(cursorTotal / termWidth);
-        // Move up to the first row
         if (currentRow > 0) {
           process.stdout.write(`\x1b[${currentRow}A`);
         }
@@ -144,35 +145,45 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       }
       process.stdout.write('\r');
 
-      // Write the prompt (use inputLinePrompt for redraw, not full prompt with sticky plan)
+      // Write the prompt
       if (lines.length > 0) {
         process.stdout.write('   '); // Continuation indent
       } else {
         process.stdout.write(inputLinePrompt);
       }
-      process.stdout.write(currentLine);
 
-      // Move cursor to correct position
-      const cursorTotal = promptWidth + cursorPos;
-      const endTotal = promptWidth + currentLine.length;
-      const cursorRow = Math.floor(cursorTotal / termWidth);
-      const cursorCol = cursorTotal % termWidth;
-      const endRow = Math.floor(endTotal / termWidth);
-      const endCol = endTotal % termWidth;
+      // Write text with block cursor (highlights char at cursor position)
+      const beforeCursor = currentLine.slice(0, cursorPos);
+      const charAtCursor = currentLine[cursorPos] || ' '; // Space if at end
+      const afterCursor = currentLine.slice(cursorPos + 1);
 
-      // Move cursor from end position to correct position
-      if (endRow > cursorRow) {
-        process.stdout.write(`\x1b[${endRow - cursorRow}A`); // Move up
+      process.stdout.write(beforeCursor);
+      if (cursorVisible) {
+        // Block cursor: highlight the character at cursor position
+        process.stdout.write(`${colors.bgViolet}${colors.white}${charAtCursor}${colors.reset}`);
+      } else {
+        process.stdout.write(charAtCursor);
       }
-      if (endCol !== cursorCol) {
-        process.stdout.write(`\r\x1b[${cursorCol}C`); // Move to column
+      process.stdout.write(afterCursor);
+    };
+
+    // Reset cursor to visible state (call on any user input)
+    const resetCursorBlink = () => {
+      cursorVisible = true;
+      if (blinkInterval) {
+        clearInterval(blinkInterval);
       }
+      blinkInterval = setInterval(() => {
+        cursorVisible = !cursorVisible;
+        redrawCurrentLine();
+      }, CURSOR_BLINK_INTERVAL);
     };
 
     const insertText = (text: string) => {
       // Insert text at cursor position
       currentLine = currentLine.slice(0, cursorPos) + text + currentLine.slice(cursorPos);
       cursorPos += text.length;
+      resetCursorBlink();
       redrawCurrentLine();
     };
 
@@ -180,6 +191,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       if (cursorPos > 0) {
         currentLine = currentLine.slice(0, cursorPos - 1) + currentLine.slice(cursorPos);
         cursorPos--;
+        resetCursorBlink();
         redrawCurrentLine();
       } else if (lines.length > 0) {
         // Go back to previous line
@@ -188,6 +200,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         currentLine = prevLine + currentLine;
         // Move cursor up and redraw
         process.stdout.write('\x1b[A'); // Move up
+        resetCursorBlink();
         redrawCurrentLine();
       }
     };
@@ -275,9 +288,24 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     };
 
     const processInput = (str: string) => {
-      // Check for Ctrl+C
+      // Check for Ctrl+C - clear current input and start fresh
       if (str === '\x03') {
-        process.emit('SIGINT', 'SIGINT');
+        // Clear the current line display
+        process.stdout.write('\r\x1b[K');
+        // Clear any multi-line content above
+        for (let i = 0; i < lines.length; i++) {
+          process.stdout.write('\x1b[A\x1b[K'); // Move up and clear
+        }
+        // Reset state completely
+        lines.length = 0;
+        currentLine = '';
+        cursorPos = 0;
+        historyIndex = -1;
+        // Show canceled indicator and redraw fresh prompt
+        process.stdout.write(`${colors.muted}^C${colors.reset}\n`);
+        process.stdout.write(inputLinePrompt);
+        resetCursorBlink();
+        redrawCurrentLine();
         return;
       }
 
@@ -375,6 +403,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       if (str === '\x1b[3~') {
         if (cursorPos < currentLine.length) {
           currentLine = currentLine.slice(0, cursorPos) + currentLine.slice(cursorPos + 1);
+          resetCursorBlink();
           redrawCurrentLine();
         }
         return;
@@ -385,7 +414,8 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         // Right arrow
         if (cursorPos < currentLine.length) {
           cursorPos++;
-          process.stdout.write('\x1b[C');
+          resetCursorBlink();
+          redrawCurrentLine();
         }
         return;
       }
@@ -393,7 +423,8 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         // Left arrow
         if (cursorPos > 0) {
           cursorPos--;
-          process.stdout.write('\x1b[D');
+          resetCursorBlink();
+          redrawCurrentLine();
         }
         return;
       }
@@ -404,6 +435,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
             historyIndex++;
             currentLine = history[history.length - 1 - historyIndex];
             cursorPos = currentLine.length;
+            resetCursorBlink();
             redrawCurrentLine();
           }
         }
@@ -419,6 +451,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
             currentLine = '';
           }
           cursorPos = currentLine.length;
+          resetCursorBlink();
           redrawCurrentLine();
         }
         return;
@@ -428,6 +461,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       if (str === '\x1b[H' || str === '\x01') {
         // Home or Ctrl+A
         cursorPos = 0;
+        resetCursorBlink();
         redrawCurrentLine();
         return;
       }
@@ -436,6 +470,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       if (str === '\x1b[F' || str === '\x05') {
         // End or Ctrl+E
         cursorPos = currentLine.length;
+        resetCursorBlink();
         redrawCurrentLine();
         return;
       }
@@ -443,6 +478,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       // Ctrl+K - kill to end of line
       if (str === '\x0b') {
         currentLine = currentLine.slice(0, cursorPos);
+        resetCursorBlink();
         redrawCurrentLine();
         return;
       }
@@ -451,6 +487,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       if (str === '\x15') {
         currentLine = currentLine.slice(cursorPos);
         cursorPos = 0;
+        resetCursorBlink();
         redrawCurrentLine();
         return;
       }
@@ -464,6 +501,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         const newBefore = lastSpace === -1 ? '' : trimmed.slice(0, lastSpace + 1);
         currentLine = newBefore + after;
         cursorPos = newBefore.length;
+        resetCursorBlink();
         redrawCurrentLine();
         return;
       }
@@ -483,6 +521,54 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         return;
       }
 
+      // Tab completion
+      if (str === '\t') {
+        if (options.completer) {
+          const [completions, prefix] = options.completer(currentLine);
+          if (completions.length === 1) {
+            // Single completion - replace the line
+            currentLine = completions[0];
+            cursorPos = currentLine.length;
+            redrawCurrentLine();
+          } else if (completions.length > 1) {
+            // Check if we're completing slash commands for beautiful display
+            const isCommandCompletion = completions.every(comp => comp.startsWith('/'));
+            if (isCommandCompletion) {
+              // Beautiful grouped command display
+              const groupedCommands = getGroupedCommands();
+              process.stdout.write('\n');
+              for (const group of groupedCommands) {
+                if (group.cmds.length > 0) {
+                  process.stdout.write(`${c.violet(c.bold(group.title + ':'))}\n`);
+                  for (const cmd of group.cmds) {
+                    const paddedName = cmd.name.padEnd(12);
+                    process.stdout.write(`  ${c.violet(paddedName)} ${c.muted(cmd.description)}\n`);
+                  }
+                  process.stdout.write('\n');
+                }
+              }
+            } else {
+              // Regular completion display
+              process.stdout.write('\n');
+              for (const completion of completions.slice(0, 20)) {
+                process.stdout.write(`  ${completion}\n`);
+              }
+              if (completions.length > 20) {
+                process.stdout.write(`  ... and ${completions.length - 20} more\n`);
+              }
+            }
+            // Redraw prompt after completions
+            if (lines.length > 0) {
+              process.stdout.write('   ');
+            } else {
+              process.stdout.write(inputLinePrompt);
+            }
+            process.stdout.write(currentLine);
+          }
+        }
+        return;
+      }
+
       // Ignore other escape sequences
       if (str.startsWith('\x1b')) {
         return;
@@ -491,6 +577,13 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       // Regular character input - insert at cursor
       insertText(str);
     };
+
+    // Initial draw with cursor and start blinking (after all functions are defined)
+    redrawCurrentLine();
+    blinkInterval = setInterval(() => {
+      cursorVisible = !cursorVisible;
+      redrawCurrentLine();
+    }, CURSOR_BLINK_INTERVAL);
 
     process.stdin.on('data', onData);
   });

@@ -51,7 +51,6 @@ export async function initializeContainer(options: { basePath?: string }): Promi
     .inSingletonScope();
 
   // Bind composite services
-  const { PlanManager } = await import('../services/PlanManager');
   const { ConnectorRegistry } = await import('../services/ConnectorRegistry');
   const { ActionHandlerService } = await import('../services/ActionHandlerService');
   const { CommandRegistry } = await import('../commands/registry');
@@ -61,7 +60,6 @@ export async function initializeContainer(options: { basePath?: string }): Promi
   // EventBus should be bound first as other services may depend on it
   container.bind(TYPES.EventBus).to(EventBus).inSingletonScope();
 
-  container.bind(TYPES.PlanManager).to(PlanManager).inSingletonScope();
   container.bind(TYPES.ConnectorRegistry).to(ConnectorRegistry).inSingletonScope();
   container.bind(TYPES.ActionHandlerService).to(ActionHandlerService).inSingletonScope();
 

@@ -32,5 +32,5 @@ export { executeExplore } from './explore';
 // Connector handlers
 export { executeTelegramConfig, executeDiscordConfig } from './connectors';
 
-// Plan handler
-export { executePlan } from './plan';
+// Say handler (user communication)
+export { executeSay } from './say';

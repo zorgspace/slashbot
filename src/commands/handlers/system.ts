@@ -112,86 +112,6 @@ export const historyCommand: CommandHandler = {
   },
 };
 
-export const contextCommand: CommandHandler = {
-  name: 'context',
-  description: 'Manage context compression',
-  usage: '/context [on|off|status] [max_messages]',
-  execute: async (args, context) => {
-    if (!context.grokClient) {
-      console.log(c.error('GrokClient not available'));
-      return true;
-    }
-
-    const subcommand = args[0] || 'status';
-
-    switch (subcommand) {
-      case 'on':
-        const maxMsgs = parseInt(args[1]) || 20;
-        context.grokClient.setContextCompression(true, maxMsgs);
-        console.log(c.success(`Compression enabled (max ${maxMsgs} messages)`));
-        break;
-
-      case 'off':
-        context.grokClient.setContextCompression(false);
-        console.log(c.success('Compression disabled'));
-        break;
-
-      case 'status':
-      default:
-        const enabled = context.grokClient.isContextCompressionEnabled();
-        const maxMessages = context.grokClient.getMaxContextMessages();
-        const contextSize = context.grokClient.getContextSize();
-        const estimatedTokens = context.grokClient.estimateTokens();
-
-        console.log(`\n${c.violet('Context:')}\n`);
-        console.log(
-          `  ${c.muted('Compression:')}  ${enabled ? c.success('Enabled') : c.warning('Disabled')}`,
-        );
-        console.log(`  ${c.muted('Max messages:')} ${maxMessages}`);
-        console.log(`  ${c.muted('Messages:')}     ${contextSize}`);
-        console.log(`  ${c.muted('Tokens (~):')}   ${estimatedTokens.toLocaleString()}`);
-        console.log(`\n${c.muted('Usage: /context on [max] | /context off')}\n`);
-        break;
-    }
-
-    return true;
-  },
-};
-
-export const usageCommand: CommandHandler = {
-  name: 'usage',
-  description: 'Show Grok API usage',
-  usage: '/usage [reset]',
-  execute: async (args, context) => {
-    if (!context.grokClient) {
-      console.log(c.error('GrokClient not available'));
-      return true;
-    }
-
-    if (args[0] === 'reset') {
-      context.grokClient.resetUsage();
-      console.log(c.success('Statistics reset'));
-      return true;
-    }
-
-    const usage = context.grokClient.getUsage();
-    const contextSize = context.grokClient.getContextSize();
-    const estimatedTokens = context.grokClient.estimateTokens();
-
-    console.log(`\n${c.violet('Grok API Usage:')}\n`);
-    console.log(`  ${c.muted('Requests:')}      ${usage.requests}`);
-    console.log(`  ${c.muted('Prompt:')}        ${usage.promptTokens.toLocaleString()} tokens`);
-    console.log(`  ${c.muted('Completion:')}    ${usage.completionTokens.toLocaleString()} tokens`);
-    console.log(`  ${c.muted('Total:')}         ${usage.totalTokens.toLocaleString()} tokens`);
-    console.log(`\n${c.violet('Current context:')}\n`);
-    console.log(`  ${c.muted('Messages:')}      ${contextSize}`);
-    console.log(`  ${c.muted('Tokens (~):')}    ${estimatedTokens.toLocaleString()}`);
-    console.log(`\n${c.muted('/usage reset to reset statistics')}\n`);
-
-    return true;
-  },
-};
-
 export const exitCommand: CommandHandler = {
   name: 'exit',
   description: 'Quit Slashbot',
@@ -207,7 +127,5 @@ export const systemHandlers: CommandHandler[] = [
   helpCommand,
   clearCommand,
   historyCommand,
-  contextCommand,
-  usageCommand,
   exitCommand,
 ];

@@ -14,9 +14,13 @@ interface SignalContext {
 
 let lastCtrlC = 0;
 
-export function setupSignalHandlers(context: SignalContext): void {
-  // Prevent accidental exit - require double Ctrl+C
-  process.on('SIGINT', () => {
+/**
+ * Setup signal handlers with bot context
+ * @returns Cleanup function to remove all signal handlers
+ */
+export function setupSignalHandlers(context: SignalContext): () => void {
+  // Handler for SIGINT (Ctrl+C)
+  const sigintHandler = () => {
     const now = Date.now();
     const bot = context.getBot();
 
@@ -44,27 +48,48 @@ export function setupSignalHandlers(context: SignalContext): void {
     console.log(c.warning('\nPress Ctrl+C again to exit'));
     process.stdout.write(inputPrompt());
     lastCtrlC = now;
-  });
+  };
 
-  // Prevent SIGTERM from killing the app immediately
-  process.on('SIGTERM', () => {
+  // Handler for SIGTERM
+  const sigtermHandler = () => {
+    // In non-interactive mode (spawned as child), exit cleanly on SIGTERM
+    if (process.env.SLASHBOT_NON_INTERACTIVE || !process.stdin.isTTY) {
+      context.getBot()?.stop();
+      process.exit(0);
+    }
     console.log(c.warning('\nReceived SIGTERM - use /exit or Ctrl+C twice to quit'));
-  });
+  };
 
-  // Clean up on exit
-  process.on('exit', () => {
+  // Handler for exit
+  const exitHandler = () => {
     context.getBot()?.stop();
-  });
+  };
 
-  // Prevent uncaught exceptions from crashing
-  process.on('uncaughtException', err => {
+  // Handler for uncaught exceptions
+  const uncaughtExceptionHandler = (err: Error) => {
     console.log(c.error(`\nError: ${err.message}`));
     // Don't exit - keep running
-  });
+  };
 
-  // Prevent unhandled promise rejections from crashing
-  process.on('unhandledRejection', reason => {
+  // Handler for unhandled rejections
+  const unhandledRejectionHandler = (reason: unknown) => {
     console.log(c.error(`\nError: ${reason}`));
     // Don't exit - keep running
-  });
+  };
+
+  // Register all handlers
+  process.on('SIGINT', sigintHandler);
+  process.on('SIGTERM', sigtermHandler);
+  process.on('exit', exitHandler);
+  process.on('uncaughtException', uncaughtExceptionHandler);
+  process.on('unhandledRejection', unhandledRejectionHandler);
+
+  // Return cleanup function
+  return () => {
+    process.off('SIGINT', sigintHandler);
+    process.off('SIGTERM', sigtermHandler);
+    process.off('exit', exitHandler);
+    process.off('uncaughtException', uncaughtExceptionHandler);
+    process.off('unhandledRejection', unhandledRejectionHandler);
+  };
 }
