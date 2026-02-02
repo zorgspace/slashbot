@@ -506,6 +506,8 @@ export class GrokClient {
                     }
                     // Close thinking box before showing response
                     thinkingDisplay.endStream();
+                    // Add newline and white bullet for response
+                    process.stdout.write(`\n${colors.white}●${colors.reset} `);
                     firstChunk = false;
                   }
                   process.stdout.write(newContent);
@@ -546,6 +548,11 @@ export class GrokClient {
     const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
     const remainingContent = normalized.slice(displayedContent.length);
     if (remainingContent) {
+      // Add bullet if this is the first content being displayed
+      if (firstChunk) {
+        process.stdout.write(`\n${colors.white}●${colors.reset} `);
+        firstChunk = false;
+      }
       process.stdout.write(remainingContent);
       displayedContent = normalized;
     }
