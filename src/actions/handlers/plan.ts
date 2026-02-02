@@ -3,7 +3,7 @@
  */
 
 import type { ActionResult, ActionHandlers, PlanAction } from '../types';
-import { step, stickyPlan } from '../../ui/colors';
+import { step, stickyPlan, colors } from '../../ui/colors';
 
 export async function executePlan(
   action: PlanAction,
@@ -27,6 +27,15 @@ export async function executePlan(
 
       // Show progress inline for status changes
       if (action.operation === 'show') {
+        stickyPlan.print();
+      } else if (action.operation === 'add') {
+        // Show visual feedback when adding plan items
+        const newItem = result.plan.find(i => i.content === action.content);
+        if (newItem) {
+          const truncated = newItem.content.length > 50 ? newItem.content.slice(0, 47) + '...' : newItem.content;
+          console.log(`${colors.violet}●${colors.reset} ${colors.violet}Plan${colors.reset} ${colors.info}+${colors.reset} ${truncated}`);
+        }
+        // Show sticky plan line after adding all items
         stickyPlan.print();
       } else if (action.operation === 'complete') {
         // Show progress when completing steps
