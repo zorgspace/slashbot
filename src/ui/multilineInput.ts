@@ -60,7 +60,14 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     // Save terminal state
     const wasRaw = process.stdin.isRaw;
 
-    // Print initial prompt
+    // Separate sticky plan from input prompt for proper redraw
+    // If prompt contains newline, the part before is the sticky plan (displayed once)
+    // and the part after is the actual input prompt (used for redraws)
+    const promptParts = options.prompt.split('\n');
+    const hasStickyPlan = promptParts.length > 1;
+    const inputLinePrompt = hasStickyPlan ? promptParts[promptParts.length - 1] : options.prompt;
+
+    // Print initial prompt (includes sticky plan if present)
     process.stdout.write(options.prompt);
 
     if (process.stdin.isTTY) {
@@ -100,8 +107,8 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       if (lines.length > 0) {
         return 3; // Continuation indent "   "
       }
-      // Remove ANSI codes to get actual width
-      return options.prompt.replace(/\x1b\[[0-9;]*m/g, '').length;
+      // Remove ANSI codes to get actual width (use input line prompt, not full prompt)
+      return inputLinePrompt.replace(/\x1b\[[0-9;]*m/g, '').length;
     };
 
     const redrawCurrentLine = () => {
@@ -137,11 +144,11 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       }
       process.stdout.write('\r');
 
-      // Write the prompt
+      // Write the prompt (use inputLinePrompt for redraw, not full prompt with sticky plan)
       if (lines.length > 0) {
         process.stdout.write('   '); // Continuation indent
       } else {
-        process.stdout.write(options.prompt);
+        process.stdout.write(inputLinePrompt);
       }
       process.stdout.write(currentLine);
 
@@ -308,7 +315,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
               if (lines.length > 0) {
                 process.stdout.write('   ');
               } else {
-                process.stdout.write(options.prompt);
+                process.stdout.write(inputLinePrompt);
               }
               process.stdout.write(currentLine);
 
@@ -323,7 +330,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
                 if (lines.length > 0) {
                   process.stdout.write('   ');
                 } else {
-                  process.stdout.write(options.prompt);
+                  process.stdout.write(inputLinePrompt);
                 }
                 process.stdout.write(currentLine);
               } else {
@@ -334,7 +341,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
                 if (lines.length > 0) {
                   process.stdout.write('   ');
                 } else {
-                  process.stdout.write(options.prompt);
+                  process.stdout.write(inputLinePrompt);
                 }
                 process.stdout.write(currentLine);
               }
@@ -344,7 +351,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
               if (lines.length > 0) {
                 process.stdout.write('   ');
               } else {
-                process.stdout.write(options.prompt);
+                process.stdout.write(inputLinePrompt);
               }
               process.stdout.write(currentLine);
             });
@@ -470,7 +477,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         if (lines.length > 0) {
           process.stdout.write('   ');
         } else {
-          process.stdout.write(options.prompt);
+          process.stdout.write(inputLinePrompt);
         }
         process.stdout.write(currentLine);
         return;
