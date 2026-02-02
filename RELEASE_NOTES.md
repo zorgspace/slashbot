@@ -1,33 +1,37 @@
-# Release Notes - v1.2.0
+# Release Notes - v1.2.1
 
-This release brings significant enhancements to Slashbot's agentic capabilities, improved UI components, and better integration with development workflows.
+## Overview
+This release introduces significant improvements to the terminal UI, API robustness, and overall user experience for Slashbot, the autonomous AI CLI agent.
 
-## New Features
-- Enhanced action execution and handler management for more reliable agentic loops
-- Updated core action handlers, API client, editor, constants, and UI components
-- Implementation of core action handlers, commands, UI components, and dependency injection setup
-- Added onGit handler for improved git operations
+## Features
+- **Enhanced Terminal UI**: Added markdown support for better formatting and readability in the terminal interface.
+- **API Robustness Improvements**: Implemented token limit recovery mechanisms to handle API rate limits more gracefully.
+- **Process Management**: Added capabilities for managing background processes within the CLI environment.
+- **Executed Actions Tracking**: Introduced tracking of executed actions in the agentic loop to improve response validation and reliability.
+- **Documentation Updates**: Comprehensive updates to project documentation and enhancement of user guides.
 
-## Bug Fixes
-- Removed restrictive git force push, reset --hard, and clean -fd from security patterns and system prompt to allow safer operations
+## Refactors
+- **Plan Management System Removal**: Removed the previous plan management system and integrated a new "say" action for improved communication flow.
 
-## Changes
-- Updated various codebase components for better modularity
-- Bumped version to 1.2.0 in package.json and documentation
+## Documentation
+- **Git Workflow Enhancements**: Expanded git workflow instructions with detailed steps for analysis and context reading to ensure better version control practices.
 
-## Commits
-- feat: prepare for v1.2.0 release
-- feat: update documentation and prepare for release v1.2.0
-- feat: enhance action execution and handler management
-- feat: update various codebase components
-- fix: remove git force push, reset --hard, and clean -fd restrictions from security patterns and system prompt
-- feat: update core action handlers, API client, editor, constants, and UI components
-- feat: implement core action handlers, commands, UI components, and DI setup
-- chore: bump version to 1.2.0 (package.json, GROK.md)
-- feat-add-onGit-handler
+## Technical Details
+- **Agentic Loop Improvements**: The core agentic execution loop now tracks actions more accurately, reducing errors and improving consistency.
+- **UI Components**: Terminal UI components have been modernized with better markdown rendering support.
+
+## Compatibility
+This release maintains backward compatibility with existing configurations and skills. No breaking changes to the API or command structure.
+
+## Installation
+To update to v1.2.1, pull the latest changes and rebuild:
+```bash
+git pull
+bun install
+bun run build
+```
 
 ---
 
-Released on: 2026-02-02  
-Version: 1.2.0  
-Previous Version: 1.1.0
+*Co-authored-by: Slashbot*  
+*Co-authored-by: xAI (Grok)*
