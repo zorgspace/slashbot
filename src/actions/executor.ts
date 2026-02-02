@@ -58,7 +58,6 @@ export async function executeActions(
     const result = await executeAction(action, handlers);
     if (result) {
       results.push(result);
-      console.log('');
     }
   }
 

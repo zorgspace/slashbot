@@ -123,12 +123,19 @@ export function extractTagContent(tag: string, tagName: string): string | null {
 
 /**
  * Remove self-dialogue and verbose explanations from LLM output
+ * Less aggressive when content is short to preserve meaningful responses
  */
 export function cleanSelfDialogue(content: string): string {
   if (typeof content !== 'string') return '';
 
-  // Split into lines and filter aggressively
+  // Split into lines
   const lines = content.split('\n');
+  const nonEmptyLines = lines.filter(l => l.trim().length > 0);
+
+  // If content is short (1-3 non-empty lines), be more permissive
+  // This preserves short user-facing responses like "Let me check that file."
+  const isShortContent = nonEmptyLines.length <= 3;
+
   const cleanLines = lines.filter(line => {
     const trimmed = line.trim();
     if (!trimmed) return false;
@@ -136,7 +143,7 @@ export function cleanSelfDialogue(content: string): string {
     // Skip very short lines (single chars, just "I", etc.)
     if (trimmed.length <= 2) return false;
 
-    // Skip short confirmation lines
+    // Skip short confirmation lines (always filter these)
     if (
       /^(Yes|No|Done|Good|Perfect|Correct|Right|OK|Okay|Indeed|Exactly|Then|So|But|Now|And|First|Next|I)\.?\s*$/i.test(
         trimmed,
@@ -145,6 +152,20 @@ export function cleanSelfDialogue(content: string): string {
       return false;
     }
 
+    // For short content, be more permissive - only filter clearly internal patterns
+    if (isShortContent) {
+      // Only filter very obvious internal monologue
+      if (
+        /^(The (response|answer|result|output|final|summary) (is|will|should)|So the output|The boxed is|But in the response)/i.test(
+          trimmed,
+        )
+      ) {
+        return false;
+      }
+      return true;
+    }
+
+    // For longer content, apply more aggressive filtering
     // Skip internal monologue patterns
     if (
       /^(Then,?|But\s|So,?|Now,?|And\s|First,?|Next,?|Since\s|Because\s|However,?|Therefore,?|Perhaps\s|Maybe\s|Let me|Let's|I think|I will|I can|I need|I should|To (do|see|check|follow|complete|implement|wrap|end|fix)|The (response|answer|result|output|idea|plan|task|final|summary|conversation)|This (will|is|might|shows|suggests)|If (it|the|we)|For example)/i.test(

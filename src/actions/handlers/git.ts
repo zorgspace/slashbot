@@ -21,15 +21,12 @@ export async function executeGit(
     const nothingToPush = output.includes('Nothing to push') || output.includes('Everything up-to-date');
 
     if (isError) {
-      step.error(output.slice(0, 100));
+      step.error(output);
     } else if (nothingToPush && action.command === 'push') {
       // Explicitly show that nothing was pushed - don't let AI think push succeeded
       step.warning('Nothing to push - no new commits to send to remote');
     } else {
-      const preview = lines.slice(0, 8).join('\n');
-      step.result(
-        `${lines.length} line${lines.length !== 1 ? 's' : ''}\n${preview}${lines.length > 8 ? `\n... and ${lines.length - 8} more` : ''}`,
-      );
+      step.result(`${lines.length} line${lines.length !== 1 ? 's' : ''}\n${output}`);
     }
 
     // For push command, "nothing to push" is a warning, not success

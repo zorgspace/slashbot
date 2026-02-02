@@ -150,10 +150,6 @@ export class ActionHandlerService {
 
             child.stdout?.on('data', data => {
               stdout += data.toString();
-              if (stdout.length > 1024 * 1024) {
-                stdout = stdout.slice(0, 1024 * 1024) + '\n... (output truncated)';
-                child.kill('SIGTERM');
-              }
             });
 
             child.stderr?.on('data', data => {
@@ -239,30 +235,6 @@ export class ActionHandlerService {
 
       onGit: async (command, args) => {
         const workDir = this.codeEditor.getWorkDir();
-        const allowedCommands = [
-          'status',
-          'diff',
-          'log',
-          'branch',
-          'add',
-          'commit',
-          'checkout',
-          'stash',
-          'push',
-          'pull',
-        ];
-
-        if (!allowedCommands.includes(command)) {
-          return `Error: Git command '${command}' not allowed`;
-        }
-
-        // Safety check for dangerous push flags
-        if (command === 'push' && args) {
-          const lowerArgs = args.toLowerCase();
-          if (lowerArgs.includes('--force') || lowerArgs.includes('-f')) {
-            return `Error: Force push is not allowed. Use regular push or ask user explicitly.`;
-          }
-        }
 
         let gitCmd = `git ${command}`;
         if (args) {

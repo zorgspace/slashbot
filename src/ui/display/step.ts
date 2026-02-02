@@ -64,22 +64,17 @@ export const step = {
         `  ${colors.white}⎿  Found ${matches} match${matches > 1 ? 'es' : ''}${colors.reset}`,
       );
       if (preview) {
-        preview
-          .split('\n')
-          .slice(0, 5)
-          .forEach(line => {
-            console.log(`     ${colors.white}${line}${colors.reset}`);
-          });
+        preview.split('\n').forEach(line => {
+          console.log(`     ${colors.white}${line}${colors.reset}`);
+        });
       }
     }
   },
 
   // Bash/Exec action: ● Exec(command) - violet bullet and name
   bash: (command: string) => {
-    // Truncate long commands
-    const displayCmd = command.length > 60 ? command.slice(0, 57) + '...' : command;
     console.log(
-      `${colors.violet}●${colors.reset} ${colors.violet}Exec${colors.reset}(${displayCmd})`,
+      `${colors.violet}●${colors.reset} ${colors.violet}Exec${colors.reset}(${command})`,
     );
   },
 
@@ -99,16 +94,10 @@ export const step = {
     }
     if (output) {
       const lines = output.split('\n');
-      const maxLines = isError ? 30 : 15;
-      lines.slice(0, maxLines).forEach(line => {
+      lines.forEach(line => {
         const lineColor = isError ? colors.error : colors.white;
         console.log(`     ${lineColor}${line}${colors.reset}`);
       });
-      if (lines.length > maxLines) {
-        console.log(
-          `     ${colors.white}... (${lines.length - maxLines} more lines)${colors.reset}`,
-        );
-      }
     }
   },
 
@@ -179,25 +168,19 @@ export const step = {
 
   // Diff display with removed/added lines (Claude Code style with colored backgrounds)
   diff: (removed: string[], added: string[], filePath?: string, lineStart = 1) => {
-    const maxWidth = Math.min(process.stdout.columns || 80, 100) - 15;
-
     // Show removed lines with red background
     removed.forEach((line, i) => {
       const lineNum = String(lineStart + i).padStart(3, ' ');
-      const truncated = line.length > maxWidth ? line.slice(0, maxWidth - 3) + '...' : line;
-      const padded = truncated.padEnd(maxWidth, ' ');
       console.log(
-        `      ${colors.muted}${lineNum}${colors.reset} ${colors.error}-${colors.reset} ${colors.bgRed}${colors.white}${padded}${colors.reset}`,
+        `      ${colors.muted}${lineNum}${colors.reset} ${colors.error}-${colors.reset} ${colors.bgRed}${colors.white}${line}${colors.reset}`,
       );
     });
 
     // Show added lines with green background
     added.forEach((line, i) => {
       const lineNum = String(lineStart + i).padStart(3, ' ');
-      const truncated = line.length > maxWidth ? line.slice(0, maxWidth - 3) + '...' : line;
-      const padded = truncated.padEnd(maxWidth, ' ');
       console.log(
-        `      ${colors.muted}${lineNum}${colors.reset} ${colors.success}+${colors.reset} ${colors.bgGreen}${colors.white}${padded}${colors.reset}`,
+        `      ${colors.muted}${lineNum}${colors.reset} ${colors.success}+${colors.reset} ${colors.bgGreen}${colors.white}${line}${colors.reset}`,
       );
     });
 
@@ -241,7 +224,7 @@ export function buildStatus(success: boolean, errors?: string[]): string {
   }
   let output = `${colors.error}✗ Build failed${colors.reset}\n`;
   if (errors) {
-    errors.slice(0, 5).forEach(e => {
+    errors.forEach(e => {
       output += `  ${colors.muted}${e}${colors.reset}\n`;
     });
   }

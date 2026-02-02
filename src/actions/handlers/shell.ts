@@ -33,9 +33,8 @@ export async function executeShellCommand(
   // Display result
   step.bashResult(command, output || '', isError ? 1 : 0);
 
-  const truncatedCmd = command.length > 50 ? command.slice(0, 50) + '...' : command;
   return {
-    action: `Bash: ${truncatedCmd}`,
+    action: `Bash: ${command}`,
     success: !isError,
     result: output || 'OK',
     error: isError ? output : undefined,

@@ -179,6 +179,8 @@ export class GrokClient {
     const filesReadThisTurn = new Set<string>();
     let duplicateReadCount = 0;
     const MAX_DUPLICATE_READS = 3; // Stop if LLM keeps trying to read same file
+    let emptyResponseRetries = 0;
+    const MAX_EMPTY_RETRIES = 2; // Max retries when model produces thinking but no content
 
     // Agentic loop: execute actions and feed results back (no iteration limit)
     while (true) {
@@ -268,6 +270,26 @@ export class GrokClient {
 
       // If no actions were executed, check if LLM is hallucinating code instead of using actions
       if (actionResults.length === 0) {
+        // Detect if model produced thinking but no actual content (reasoning model edge case)
+        if (thinkingContent && !responseContent.trim()) {
+          emptyResponseRetries++;
+          if (emptyResponseRetries >= MAX_EMPTY_RETRIES) {
+            // Give up after max retries
+            console.log(c.warning('[Model not producing responses after retries]'));
+            break;
+          }
+          // Model was thinking but didn't produce output - prompt to continue
+          this.conversationHistory.push({
+            role: 'assistant',
+            content: '[Thinking...]',
+          });
+          this.conversationHistory.push({
+            role: 'user',
+            content: 'You were thinking but didn\'t provide a response. Please respond to the task.',
+          });
+          continue;
+        }
+
         // Detect if response looks like code output (common LLM hallucination after failed search)
         const codePatterns = [
           /^(async\s+)?(function|class|const|let|var|export|import)\s+/m,
@@ -506,6 +528,12 @@ export class GrokClient {
 
     // Always add newline after streaming (ensures spacing before actions)
     process.stdout.write('\n');
+
+    // Detect edge case: thinking content but no actual response
+    // This can happen with reasoning models that think but don't generate output
+    if (thinkingContent && !responseContent.trim()) {
+      console.log(c.warning('[Model produced thinking but no response - may need to retry]'));
+    }
 
     return { content: responseContent, thinking: thinkingContent };
   }

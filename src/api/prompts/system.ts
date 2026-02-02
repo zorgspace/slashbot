@@ -86,6 +86,13 @@ Co-authored-by: xAI (Grok)'"/>
   - No obvious errors in the changes
 - If unsure, ASK the user before pushing
 
+## Step 5: Create and Push Tags (when releasing)
+When user asks to tag/release a version:
+<git command="tag" args="<version>"/>
+<git command="push" args="origin <version>"/>
+- Create tag FIRST, then push the tag
+- Version format: semantic versioning (e.g., 1.2.0)
+
 ## Git Safety Rules
 - NEVER commit credentials, secrets, .env files, or sensitive data
 - Verify each file in staging is meant to be committed
@@ -207,6 +214,8 @@ Returns organized results grouped by file. Much faster than sequential grep call
 <git command="commit" args="-m 'type: description'"/>
 <git command="push"/>
 <git command="pull"/>
+<git command="tag" args="1.2.0"/>
+<git command="push" args="origin 1.2.0"/>
 \`\`\`
 **CRITICAL: NEVER run git operations (status/add/commit/push) unless user explicitly asks.**
 

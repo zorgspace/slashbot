@@ -27,10 +27,7 @@ export async function executeGlob(
     if (files.length === 0) {
       step.result('No files found');
     } else {
-      const preview = files.slice(0, 10).join('\n');
-      step.result(
-        `Found ${files.length} file${files.length > 1 ? 's' : ''}\n${preview}${files.length > 10 ? `\n... and ${files.length - 10} more` : ''}`,
-      );
+      step.result(`Found ${files.length} file${files.length > 1 ? 's' : ''}\n${files.join('\n')}`);
     }
 
     return {
@@ -88,7 +85,7 @@ export async function executeGrep(
   const grepResults = await handlers.onGrep(action.pattern, grepOptions);
   const lines = grepResults ? grepResults.split('\n').filter(l => l.trim()) : [];
 
-  step.grepResult(lines.length, lines.length > 0 ? lines.slice(0, 5).join('\n') : undefined);
+  step.grepResult(lines.length, grepResults || undefined);
 
   return {
     action: `Grep: ${action.pattern}`,
@@ -112,10 +109,7 @@ export async function executeLS(
     if (entries.length === 0) {
       step.result('Empty directory');
     } else {
-      const preview = entries.slice(0, 15).join('\n');
-      step.result(
-        `${entries.length} entries\n${preview}${entries.length > 15 ? `\n... and ${entries.length - 15} more` : ''}`,
-      );
+      step.result(`${entries.length} entries\n${entries.join('\n')}`);
     }
 
     return {

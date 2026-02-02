@@ -2,11 +2,9 @@
  * Grok API Utilities
  */
 
-import { GROK_CONFIG } from '../config/constants';
-
 /**
  * Format action results for LLM context
- * 256k context available - keep full results, only truncate extremely large outputs
+ * No truncation - send full results to the LLM
  */
 export function compressActionResults(
   results: Array<{ action: string; result: string; success: boolean; error?: string }>,
@@ -15,13 +13,7 @@ export function compressActionResults(
     .map(r => {
       const status = r.success ? '✓' : '✗';
       const errorNote = r.error ? ` (${r.error})` : '';
-
-      const output =
-        r.result.length > GROK_CONFIG.MAX_RESULT_CHARS
-          ? r.result.slice(0, GROK_CONFIG.MAX_RESULT_CHARS) + '\n...(truncated)'
-          : r.result;
-
-      return `[${status}] ${r.action}${errorNote}\n${output}`;
+      return `[${status}] ${r.action}${errorNote}\n${r.result}`;
     })
     .join('\n\n');
 }
