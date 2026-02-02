@@ -12,6 +12,7 @@ export * from './tasks';
 export * from './skills';
 export * from './images';
 export * from './init';
+export * from './update';
 
 import type { CommandHandler } from '../registry';
 import { sessionHandlers } from './session';
@@ -24,6 +25,7 @@ import { taskHandlers } from './tasks';
 import { skillHandlers } from './skills';
 import { imageHandlers } from './images';
 import { initHandlers } from './init';
+import { updateHandlers } from './update';
 
 /**
  * Get all command handlers
@@ -40,6 +42,7 @@ export function getAllHandlers(): CommandHandler[] {
     ...skillHandlers,
     ...imageHandlers,
     ...initHandlers,
+    ...updateHandlers,
   ];
 }
 

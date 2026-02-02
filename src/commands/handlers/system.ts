@@ -49,7 +49,7 @@ export const helpCommand: CommandHandler = {
       { title: 'Files', cmds: ['read', 'write'] },
       { title: 'API', cmds: ['usage', 'context'] },
       { title: 'Personality', cmds: ['depressed', 'sarcasm', 'normal', 'unhinged'] },
-      { title: 'Other', cmds: ['history', 'clear', 'exit'] },
+      { title: 'Other', cmds: ['update', 'history', 'clear', 'exit'] },
     ];
 
     for (const group of cmdGroups) {
