@@ -11,7 +11,7 @@
 
 import { expandPaste, readImageFromClipboard } from './pasteHandler';
 import { addImage, imageBuffer } from '../code/imageBuffer';
-import { c, thinkingDisplay } from './colors';
+import { c, thinkingDisplay, stickyPlan } from './colors';
 
 // Shift+Enter sequences (varies by terminal)
 const SHIFT_ENTER_SEQUENCES = [
@@ -77,6 +77,19 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
 
     const submit = () => {
       cleanup();
+
+      // Clear the sticky plan line if visible
+      // Structure: sticky plan line + input lines
+      if (stickyPlan.isVisible()) {
+        const linesToClear = lines.length + 1; // +1 for sticky plan line
+        // Move cursor up to sticky plan line
+        if (linesToClear > 0) {
+          process.stdout.write(`\x1b[${linesToClear}A`);
+        }
+        // Clear from cursor to end of screen
+        process.stdout.write('\x1b[J');
+      }
+
       process.stdout.write('\n');
       const fullInput = [...lines, currentLine].join('\n');
       // Expand any paste placeholders
