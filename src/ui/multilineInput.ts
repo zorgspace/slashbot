@@ -76,6 +76,9 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     }
     process.stdin.resume();
 
+    // Hide native cursor - we draw our own block cursor
+    process.stdout.write('\x1b[?25l');
+
     const cleanup = () => {
       if (blinkInterval) {
         clearInterval(blinkInterval);
@@ -280,21 +283,20 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     const processInput = (str: string) => {
       // Check for Ctrl+C - emit SIGINT to let signal handler manage exit
       if (str === '\x03') {
-        // Clear the current line display
-        process.stdout.write('\r\x1b[K');
-        // Clear any multi-line content above
-        for (let i = 0; i < lines.length; i++) {
-          process.stdout.write('\x1b[A\x1b[K'); // Move up and clear
+        // Stop cursor blink first
+        if (blinkInterval) {
+          clearInterval(blinkInterval);
+          blinkInterval = null;
         }
+        cursorVisible = false;
         // Reset state completely
         lines.length = 0;
         currentLine = '';
         cursorPos = 0;
         historyIndex = -1;
         // Emit SIGINT so the signal handler can track double Ctrl+C for exit
+        // Signal handler will print the warning/prompt, next keystroke restarts cursor
         process.emit('SIGINT', 'SIGINT');
-        resetCursorBlink();
-        redrawCurrentLine();
         return;
       }
 
