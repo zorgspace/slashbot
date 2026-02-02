@@ -22,6 +22,7 @@ export type ActionType =
   | 'skill'
   | 'skill-install'
   | 'task'
+  | 'explore'
   // Plan management
   | 'plan'
   // Aliases for backwards compatibility
@@ -185,6 +186,15 @@ export interface TaskAction {
   description?: string;
 }
 
+// ===== Parallel Exploration =====
+
+export interface ExploreAction {
+  type: 'explore';
+  query: string; // What to search for
+  path?: string; // Base path to search in (default: src/)
+  depth?: 'quick' | 'medium' | 'deep'; // How thorough (default: medium)
+}
+
 // ===== Plan Management =====
 
 export type PlanItemStatus = 'pending' | 'in_progress' | 'completed';
@@ -254,6 +264,7 @@ export type Action =
   | SkillAction
   | SkillInstallAction
   | TaskAction
+  | ExploreAction
   | PlanAction
   | PsAction
   | KillAction

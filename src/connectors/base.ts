@@ -3,6 +3,8 @@
  * All platform connectors implement this interface
  */
 
+import type { EventBus } from '../events/EventBus';
+
 export type ConnectorSource = 'cli' | 'telegram' | 'discord';
 
 export type MessageHandler = (message: string, source: ConnectorSource) => Promise<string | void>;
@@ -21,6 +23,7 @@ export interface Connector {
   readonly config: ConnectorConfig;
 
   setMessageHandler(handler: MessageHandler): void;
+  setEventBus?(eventBus: EventBus): void;
   start(): Promise<void>;
   stop(): void;
   sendMessage(text: string): Promise<void>;

@@ -15,6 +15,7 @@ import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './bas
 import { getTranscriptionService } from '../services/transcription';
 import { imageBuffer } from '../code/imageBuffer';
 import { acquireLock, releaseLock } from './locks';
+import type { EventBus } from '../events/EventBus';
 
 export interface TelegramConfig {
   botToken: string;
@@ -29,6 +30,7 @@ export class TelegramConnector implements Connector {
   private chatId: string;
   private replyTargetChatId: string; // Track where to send replies
   private messageHandler: MessageHandler | null = null;
+  private eventBus: EventBus | null = null;
   private running = false;
 
   constructor(config: TelegramConfig) {
@@ -219,6 +221,13 @@ export class TelegramConnector implements Connector {
   }
 
   /**
+   * Set the event bus for emitting connector events
+   */
+  setEventBus(eventBus: EventBus): void {
+    this.eventBus = eventBus;
+  }
+
+  /**
    * Start the Telegram bot (polling mode)
    * Only one instance can run at a time
    */
@@ -274,9 +283,15 @@ export class TelegramConnector implements Connector {
       this.bot.launch().catch(err => {
         console.log(c.error(`[Telegram] Error: ${err}`));
         releaseLock('telegram');
+        if (this.eventBus) {
+          this.eventBus.emit({ type: 'connector:disconnected', source: 'telegram' });
+        }
       });
 
       this.running = true;
+      if (this.eventBus) {
+        this.eventBus.emit({ type: 'connector:connected', source: 'telegram' });
+      }
     } catch (error) {
       await releaseLock('telegram');
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -294,6 +309,9 @@ export class TelegramConnector implements Connector {
     this.running = false;
     // Release lock asynchronously
     releaseLock('telegram').catch(() => {});
+    if (this.eventBus) {
+      this.eventBus.emit({ type: 'connector:disconnected', source: 'telegram' });
+    }
   }
 
   /**

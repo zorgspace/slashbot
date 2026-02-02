@@ -6,49 +6,7 @@
 import { c, colors, fileViewer } from '../ui/colors';
 import * as path from 'path';
 import type { EditResult, EditStatus, GrepOptions } from '../actions/types';
-
-// Directories to always exclude from searches
-const EXCLUDED_DIRS = [
-  'node_modules',
-  '.git',
-  'dist',
-  'build',
-  'out',
-  '.next',
-  '.nuxt',
-  '.output',
-  '.turbo',
-  '.cache',
-  '.parcel-cache',
-  'coverage',
-  '.coverage',
-  '.nyc_output',
-  'vendor',
-  'target',
-  '__pycache__',
-  '.pytest_cache',
-  '.mypy_cache',
-  '.ruff_cache',
-  '.venv',
-  'venv',
-  'env',
-  '.env',
-  '.idea',
-  '.vscode',
-  '.DS_Store',
-];
-
-// File patterns to exclude
-const EXCLUDED_FILES = [
-  '*.lock',
-  '*.min.js',
-  '*.min.css',
-  '*.map',
-  '*.chunk.js',
-  '*.bundle.js',
-  '*.d.ts',
-  '*.tsbuildinfo',
-];
+import { EXCLUDED_DIRS, EXCLUDED_FILES } from '../config/constants';
 
 export interface SearchResult {
   file: string;
@@ -61,6 +19,7 @@ export interface FileEdit {
   path: string;
   search: string;
   replace: string;
+  replaceAll?: boolean;
 }
 
 export class CodeEditor {
@@ -178,58 +137,225 @@ export class CodeEditor {
 
       const content = await file.text();
 
-      if (!content.includes(edit.search)) {
-        console.log(c.warning(`Pattern not found in ${edit.path}`));
-        // Show more of the search pattern for debugging
-        const searchPreview =
-          edit.search.length > 100 ? edit.search.slice(0, 100) + '...' : edit.search;
-        console.log(c.muted(`Searching: "${searchPreview}"`));
-
-        // Try to find a partial match to help LLM understand what went wrong
-        const firstLine = edit.search.split('\n')[0].trim();
-        if (firstLine.length > 10 && content.includes(firstLine.slice(0, 20))) {
-          const idx = content.indexOf(firstLine.slice(0, 20));
-          const contextStart = Math.max(0, idx - 10);
-          const contextEnd = Math.min(content.length, idx + 100);
-          const actualContent = content.slice(contextStart, contextEnd).replace(/\n/g, '\\n');
-          console.log(c.muted(`Similar text found: "${actualContent}"`));
-        }
-
-        return {
-          success: false,
-          status: 'not_found',
-          message: `Pattern not found in ${edit.path}. Use <read path="${edit.path}"/> to see actual content.`,
-        };
+      // Try exact match first
+      if (content.includes(edit.search)) {
+        return this.applyEdit(fullPath, content, edit);
       }
 
-      // Count occurrences for uniqueness warning
-      const occurrences = content.split(edit.search).length - 1;
-      if (occurrences > 1) {
-        console.log(
-          c.warning(`Warning: Pattern found ${occurrences} times, only first will be replaced`),
-        );
+      // Try whitespace-normalized match
+      const normalizedMatch = this.findNormalizedMatch(content, edit.search);
+      if (normalizedMatch) {
+        console.log(c.muted(`Using whitespace-normalized match`));
+        return this.applyEdit(fullPath, content, {
+          ...edit,
+          search: normalizedMatch,
+        });
       }
 
-      // Idempotency check - is this edit already applied?
-      const newContent = content.replace(edit.search, edit.replace);
-      if (newContent === content) {
-        console.log(c.muted(`Edit already applied: ${edit.path}`));
-        return {
-          success: true,
-          status: 'already_applied',
-          message: 'Edit already applied (no change needed)',
-        };
+      // Pattern not found - provide helpful suggestions
+      console.log(c.warning(`Pattern not found in ${edit.path}`));
+      const suggestions = this.findSimilarPatterns(content, edit.search);
+
+      if (suggestions.length > 0) {
+        console.log(c.muted(`Did you mean one of these?`));
+        suggestions.forEach((s, i) => {
+          const preview = s.length > 80 ? s.slice(0, 77) + '...' : s;
+          console.log(c.muted(`  ${i + 1}. "${preview.replace(/\n/g, '\\n')}"`));
+        });
       }
 
-      await Bun.write(fullPath, newContent);
-
-      // Display the diff with Claude Code style viewer
-      fileViewer.displayInlineEdit(edit.path, edit.search, edit.replace);
-      console.log(c.success(`Modified: ${edit.path}`));
-      return { success: true, status: 'applied', message: `Modified: ${edit.path}` };
+      return {
+        success: false,
+        status: 'not_found',
+        message: `Pattern not found in ${edit.path}. ${suggestions.length > 0 ? 'Similar patterns exist - check whitespace/indentation.' : 'Use <read> to see actual content.'}`,
+      };
     } catch (error) {
       console.log(c.error(`Edit error: ${error}`));
       return { success: false, status: 'error', message: `Edit error: ${error}` };
+    }
+  }
+
+  private async applyEdit(fullPath: string, content: string, edit: FileEdit): Promise<EditResult> {
+    const occurrences = content.split(edit.search).length - 1;
+
+    // Apply replacement
+    let newContent: string;
+    if (edit.replaceAll && occurrences > 1) {
+      newContent = content.split(edit.search).join(edit.replace);
+      console.log(c.muted(`Replacing all ${occurrences} occurrences`));
+    } else {
+      if (occurrences > 1 && !edit.replaceAll) {
+        console.log(
+          c.warning(
+            `Pattern found ${occurrences} times, replacing first only. Use replaceAll="true" for all.`,
+          ),
+        );
+      }
+      newContent = content.replace(edit.search, edit.replace);
+    }
+
+    // Idempotency check
+    if (newContent === content) {
+      console.log(c.muted(`Edit already applied: ${edit.path}`));
+      return {
+        success: true,
+        status: 'already_applied',
+        message: 'Edit already applied (no change needed)',
+      };
+    }
+
+    await Bun.write(fullPath, newContent);
+
+    const fileName = edit.path.split('/').pop() || edit.path;
+    
+    console.log(
+      c.success(
+        `Modified: ${edit.path}${edit.replaceAll && occurrences > 1 ? `` : ''}`,
+      ),
+    );
+    return { success: true, status: 'applied', message: `Modified: ${edit.path}` };
+  }
+
+  /**
+   * Try to find the search pattern with normalized whitespace
+   */
+  private findNormalizedMatch(content: string, search: string): string | null {
+    // Normalize both for comparison
+    const normalizeWs = (s: string) => s.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
+    const normalizedSearch = normalizeWs(search);
+    const normalizedContent = normalizeWs(content);
+
+    if (!normalizedContent.includes(normalizedSearch)) {
+      return null;
+    }
+
+    // Find the actual text in original content that matches
+    const searchLines = search.split('\n');
+    const contentLines = content.split('\n');
+
+    // Find first line match
+    const firstSearchLine = searchLines[0].trim();
+    if (!firstSearchLine) return null;
+
+    for (let i = 0; i < contentLines.length; i++) {
+      if (contentLines[i].trim() === firstSearchLine) {
+        // Check if all lines match
+        let matches = true;
+        for (let j = 0; j < searchLines.length && i + j < contentLines.length; j++) {
+          if (contentLines[i + j].trim() !== searchLines[j].trim()) {
+            matches = false;
+            break;
+          }
+        }
+        if (matches) {
+          // Return the original content slice
+          return contentLines.slice(i, i + searchLines.length).join('\n');
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Find similar patterns to help debug failed matches
+   */
+  private findSimilarPatterns(content: string, search: string): string[] {
+    const suggestions: string[] = [];
+    const lines = content.split('\n');
+    const searchLines = search.split('\n');
+    const firstSearchLine = searchLines[0].trim();
+
+    if (!firstSearchLine || firstSearchLine.length < 5) return suggestions;
+
+    // Find lines that contain significant parts of the first search line
+    const keywords = firstSearchLine.split(/\s+/).filter(w => w.length > 3);
+
+    for (let i = 0; i < lines.length && suggestions.length < 3; i++) {
+      const line = lines[i];
+      const matchedKeywords = keywords.filter(kw => line.includes(kw));
+
+      if (matchedKeywords.length >= Math.ceil(keywords.length * 0.5)) {
+        // Found a similar line - get context
+        const contextStart = i;
+        const contextEnd = Math.min(i + searchLines.length, lines.length);
+        const context = lines.slice(contextStart, contextEnd).join('\n');
+
+        if (!suggestions.includes(context)) {
+          suggestions.push(context);
+        }
+      }
+    }
+
+    return suggestions;
+  }
+
+  /**
+   * Apply multiple edits atomically - all succeed or none applied
+   */
+  async multiEditFile(
+    filePath: string,
+    edits: Array<{ search: string; replace: string; replaceAll?: boolean }>,
+  ): Promise<EditResult> {
+    try {
+      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(this.workDir, filePath);
+      const file = Bun.file(fullPath);
+
+      if (!(await file.exists())) {
+        return { success: false, status: 'not_found', message: `File not found: ${filePath}` };
+      }
+
+      let content = await file.text();
+      const originalContent = content;
+      const appliedEdits: string[] = [];
+
+      // Validate all edits first (dry run)
+      for (let i = 0; i < edits.length; i++) {
+        const edit = edits[i];
+        if (!content.includes(edit.search)) {
+          // Try normalized match
+          const normalized = this.findNormalizedMatch(content, edit.search);
+          if (!normalized) {
+            return {
+              success: false,
+              status: 'not_found',
+              message: `Edit ${i + 1}/${edits.length} failed: pattern not found. Aborting all edits.`,
+            };
+          }
+          // Update the edit with normalized search for actual application
+          edits[i] = { ...edit, search: normalized };
+        }
+      }
+
+      // Apply all edits
+      for (const edit of edits) {
+        if (edit.replaceAll) {
+          content = content.split(edit.search).join(edit.replace);
+        } else {
+          content = content.replace(edit.search, edit.replace);
+        }
+        appliedEdits.push(edit.search.split('\n')[0].slice(0, 30));
+      }
+
+      // Check if anything changed
+      if (content === originalContent) {
+        return {
+          success: true,
+          status: 'already_applied',
+          message: 'All edits already applied',
+        };
+      }
+
+      await Bun.write(fullPath, content);
+      console.log(c.success(`Applied ${edits.length} edits to ${filePath}`));
+
+      return {
+        success: true,
+        status: 'applied',
+        message: `Applied ${edits.length} edits to ${filePath}`,
+      };
+    } catch (error) {
+      return { success: false, status: 'error', message: `Multi-edit error: ${error}` };
     }
   }
 
@@ -304,3 +430,5 @@ export class CodeEditor {
 export function createCodeEditor(workDir?: string): CodeEditor {
   return new CodeEditor(workDir);
 }
+
+

@@ -16,45 +16,11 @@ import {
   type ParsedCron,
 } from './cron';
 import { getLocalSlashbotDir, getLocalTasksFile } from '../constants';
+import { DANGEROUS_PATTERNS } from '../config/constants';
+import type { EventBus } from '../events/EventBus';
 
 const SLASHBOT_DIR = getLocalSlashbotDir();
 const TASKS_FILE = getLocalTasksFile();
-
-// Dangerous patterns to block - NEVER allow these
-const DANGEROUS_PATTERNS = [
-  // rm on root directory itself or wildcards on root
-  /rm\s+(-[a-zA-Z]+\s+)*\/\s*$/,
-  /rm\s+(-[a-zA-Z]+\s+)*\/\*/,
-  // rm on system directories
-  /rm\s+.*\/etc\b/,
-  /rm\s+.*\/boot\b/,
-  /rm\s+.*\/usr\b/,
-  /rm\s+.*\/var\b/,
-  /rm\s+.*\/bin\b/,
-  /rm\s+.*\/sbin\b/,
-  /rm\s+.*\/lib\b/,
-  // System destruction
-  />\s*\/dev\/sd[a-z]/,
-  /dd\s+.*of=\/dev\/sd[a-z]/,
-  /mkfs/,
-  /:(){ :|:& };:/,
-  /chmod\s+(-R\s+)?777\s+\//,
-  /chown\s+.*\s+\//,
-  />\s*\/etc\//,
-  /shutdown/,
-  /reboot/,
-  /init\s+0/,
-  /halt/,
-  /poweroff/,
-  // Git destructive operations
-  /git\s+push\s+.*--force/,
-  /git\s+push\s+-f/,
-  /git\s+reset\s+--hard/,
-  /git\s+clean\s+-fd/,
-];
-
-// Suspicious patterns (warning only, but still execute)
-const SUSPICIOUS_PATTERNS = [/sudo/, /su\s+-/, /passwd/, />\s*\//, /eval/, /\$\(/, /`.*`/];
 
 export interface ScheduledTask {
   id: string;
@@ -94,9 +60,18 @@ export class TaskScheduler {
   private lastCheck: Date = new Date();
   private onTaskComplete: (() => void) | null = null;
   private llmHandler: LLMHandler | null = null;
+  private eventBus: EventBus | null = null;
+
+  /**
+   * Set event bus for emitting task events
+   */
+  setEventBus(eventBus: EventBus): void {
+    this.eventBus = eventBus;
+  }
 
   /**
    * Set callback to run after task completes (e.g., to redraw prompt)
+   * @deprecated Use EventBus instead
    */
   setOnTaskComplete(callback: () => void): void {
     this.onTaskComplete = callback;
@@ -162,13 +137,6 @@ export class TaskScheduler {
       }
     }
 
-    for (const pattern of SUSPICIOUS_PATTERNS) {
-      if (pattern.test(command)) {
-        result.safe = false;
-        result.warnings.push(`Suspicious pattern: ${pattern.toString()}`);
-      }
-    }
-
     return result;
   }
 
@@ -208,11 +176,6 @@ export class TaskScheduler {
         console.log(c.error(`[SECURITY] Command blocked!`));
         console.log(c.error(security.blockedReason || 'Dangerous command'));
         return null;
-      }
-
-      if (security.warnings.length > 0) {
-        console.log(c.warning(`[SECURITY] Warnings:`));
-        security.warnings.forEach(w => console.log(c.warning(`  - ${w}`)));
       }
     }
 
@@ -474,6 +437,15 @@ export class TaskScheduler {
     const startTime = Date.now();
     const isPromptTask = !!task.prompt && !task.command;
 
+    // Emit task started event
+    if (this.eventBus) {
+      this.eventBus.emit({
+        type: 'task:started',
+        taskId: task.id,
+        taskName: task.name,
+      });
+    }
+
     // Display task start
     console.log('');
     console.log(`${colors.violet}┌─ CRON ${colors.reset}${c.bold(task.name)}`);
@@ -569,7 +541,28 @@ export class TaskScheduler {
       await this.saveTasks();
     }
 
-    // Trigger prompt redraw callback if set
+    // Emit task complete/error event
+    if (this.eventBus) {
+      if (task.lastSuccess) {
+        this.eventBus.emit({
+          type: 'task:complete',
+          taskId: task.id,
+          taskName: task.name,
+          output: output || '',
+        });
+      } else {
+        this.eventBus.emit({
+          type: 'task:error',
+          taskId: task.id,
+          taskName: task.name,
+          error: output || 'Unknown error',
+        });
+      }
+      // Also emit prompt:redraw for UI update
+      this.eventBus.emit({ type: 'prompt:redraw' });
+    }
+
+    // Trigger legacy callback if set (deprecated)
     if (this.onTaskComplete) {
       this.onTaskComplete();
     }

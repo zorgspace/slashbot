@@ -14,7 +14,11 @@
     "install-global": "bun run build && sudo cp dist/slashbot /usr/local/bin/slashbot",
     "start": "./dist/slashbot",
     "tsc": "tsc",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "clipboardy": "^4.0.0",

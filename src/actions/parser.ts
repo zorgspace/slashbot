@@ -27,6 +27,7 @@ import type {
   SkillAction,
   SkillInstallAction,
   TaskAction,
+  ExploreAction,
   PlanAction,
   PlanItemStatus,
   ExecAction,
@@ -65,6 +66,7 @@ function fixTruncatedTags(content: string): string {
     'skill',
     'skill-install',
     'task',
+    'explore',
     'plan',
     'ps',
     'kill',
@@ -186,6 +188,10 @@ const PATTERNS = {
   // ===== Sub-task Spawning =====
   // <task description="...">prompt</task>
   task: /<task(?:\s+[^>]*)?\s*>([\s\S]+?)<\/task>/gi,
+
+  // ===== Parallel Exploration =====
+  // <explore query="..." path="src/" depth="medium"/>
+  explore: /<explore\s+[^>]*\/?>/gi,
 
   // ===== Plan Management =====
   // <plan operation="add" content="..." description="..."/>
@@ -600,6 +606,23 @@ export function parseActions(content: string): Action[] {
         prompt,
         description: description || undefined,
       } as TaskAction);
+    }
+  }
+
+  // Parse explore actions (parallel code search)
+  const exploreRegex = new RegExp(PATTERNS.explore.source, 'gi');
+  while ((match = exploreRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const query = extractAttr(fullTag, 'query');
+    const path = extractAttr(fullTag, 'path');
+    const depth = extractAttr(fullTag, 'depth');
+    if (query) {
+      actions.push({
+        type: 'explore',
+        query,
+        path: path || undefined,
+        depth: (depth as ExploreAction['depth']) || undefined,
+      } as ExploreAction);
     }
   }
 

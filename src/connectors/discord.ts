@@ -15,6 +15,7 @@ import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './bas
 import { getTranscriptionService } from '../services/transcription';
 import { imageBuffer } from '../code/imageBuffer';
 import { acquireLock, releaseLock } from './locks';
+import type { EventBus } from '../events/EventBus';
 
 export interface DiscordConfig {
   botToken: string;
@@ -29,6 +30,7 @@ export class DiscordConnector implements Connector {
   private channelId: string;
   private replyTargetChannelId: string; // Track where to send replies
   private messageHandler: MessageHandler | null = null;
+  private eventBus: EventBus | null = null;
   private running = false;
 
   constructor(config: DiscordConfig) {
@@ -170,6 +172,10 @@ export class DiscordConnector implements Connector {
     this.messageHandler = handler;
   }
 
+  setEventBus(eventBus: EventBus): void {
+    this.eventBus = eventBus;
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
 
@@ -189,6 +195,9 @@ export class DiscordConnector implements Connector {
     try {
       await this.client.login((this.client as any)._token);
       this.running = true;
+      if (this.eventBus) {
+        this.eventBus.emit({ type: 'connector:connected', source: 'discord' });
+      }
     } catch (error) {
       await releaseLock('discord');
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -203,6 +212,9 @@ export class DiscordConnector implements Connector {
     this.running = false;
     // Release lock asynchronously
     releaseLock('discord').catch(() => {});
+    if (this.eventBus) {
+      this.eventBus.emit({ type: 'connector:disconnected', source: 'discord' });
+    }
   }
 
   /**

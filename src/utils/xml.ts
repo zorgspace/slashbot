@@ -12,6 +12,25 @@ const ACTION_TAG_PATTERNS = [
   // Shell commands
   /<bash[^>]*>[\s\S]*?<\/bash>/g,
   /<exec\s*>[\s\S]*?<\/exec>/g,
+  /<explore[^>]*\/>/g,
+  /<grep[^>]*\/>/g,
+  /<glob[^>]*\/>/g,
+  /<ls[^>]*\/>/g,
+  /<read[^>]*\/>/g,
+  /<edit[^>]*\/>/g,
+  /<write[^>]*\/>/g,
+  /<multi-edit[^>]*>[\s\S]*?<\/multi-edit>/g,
+  /<plan[^>]*\/>/g,
+  /<git[^>]*\/>/g,
+  /<format[^>]*\/>/g,
+  /<typecheck[^>]*\/>/g,
+  /<fetch[^>]*\/>/g,
+  /<search[^>]*\/>/g,
+  /<notify[^>]*\/>/g,
+  /<schedule[^>]*\/>/g,
+  /<task[^>]*\/>/g,
+  /<skill[^>]*\/>/g,
+  /<skill-install[^>]*\/>/g,
   // File operations
   /<read[^>]*\/>/g,
   /<read[^>]*>[\s\S]*?<\/read>/g,
@@ -77,11 +96,11 @@ export function cleanXmlTags(content: string | unknown): string {
   }
   // Catch any remaining action-like XML tags (opening and closing)
   result = result.replace(
-    /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|ps|kill|telegram-config|discord-config|replace)[^>]*\/?>/gi,
+    /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|replace)[^>]*\/?>/gi,
     '',
   );
   result = result.replace(
-    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|ps|kill|telegram-config|discord-config|replace)>/gi,
+    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|replace)>/gi,
     '',
   );
   return result.trim();
