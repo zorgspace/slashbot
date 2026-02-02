@@ -175,6 +175,9 @@ export class GrokClient {
     let finalResponse = '';
     let finalThinking = '';
 
+    // Track ALL executed actions for response validation
+    const executedActions: Array<{ type: string; description: string; success: boolean }> = [];
+
     // Track files read in this conversation to prevent duplicate reads
     const filesReadThisTurn = new Set<string>();
     let duplicateReadCount = 0;
@@ -268,6 +271,15 @@ export class GrokClient {
 
       const actionResults = await executeActions(actions, this.actionHandlers);
 
+      // Track executed actions for response validation
+      for (const result of actionResults) {
+        executedActions.push({
+          type: result.action.split('(')[0].trim(), // e.g., "bash" from "bash(git push)"
+          description: result.action,
+          success: result.success,
+        });
+      }
+
       // If no actions were executed, check if LLM is hallucinating code instead of using actions
       if (actionResults.length === 0) {
         // Detect if model produced thinking but no actual content (reasoning model edge case)
@@ -310,6 +322,7 @@ export class GrokClient {
           });
           continue;
         }
+
         break;
       }
 
@@ -320,15 +333,17 @@ export class GrokClient {
         role: 'assistant',
         content: responseContent,
       });
-      // Build continuation prompt - be directive to keep LLM working
+      // Build continuation prompt with running action tally - LLM knows what's been done
       const hasErrors = actionResults.some(r => !r.success);
+      const actionTally = executedActions
+        .map(a => `${a.success ? '✓' : '✗'} ${a.description}`)
+        .join('\n');
       let continuationPrompt: string;
 
       if (hasErrors) {
-        // Generic error handling - let LLM figure out the appropriate fix
-        continuationPrompt = `${compressedResults}\n\n<system-instruction>ERROR DETECTED - You MUST fix it now. Read the action output above to find the file and line number, then use <read> and <edit> to fix it. Run the appropriate check command via bash to verify. Do NOT stop until the error is resolved.</system-instruction>`;
+        continuationPrompt = `${compressedResults}\n\n<session-actions>\n${actionTally}\n</session-actions>\n\n<system-instruction>ERROR DETECTED - fix it now.</system-instruction>`;
       } else {
-        continuationPrompt = `${compressedResults}\n\n<system-instruction>Continue with the next step.</system-instruction>`;
+        continuationPrompt = `${compressedResults}\n\n<session-actions>\n${actionTally}\n</session-actions>\n\n<system-instruction>Continue. Only claim actions that appear in session-actions.</system-instruction>`;
       }
 
       this.conversationHistory.push({
@@ -343,6 +358,20 @@ export class GrokClient {
       this.conversationHistory.push({
         role: 'assistant',
         content: finalResponse,
+      });
+    }
+
+    // Inject executed actions into context so LLM is aware of what was actually done
+    // This ensures the final response accurately reflects reality
+    if (executedActions.length > 0) {
+      const actionSummary = executedActions
+        .map(a => `- ${a.success ? '✓' : '✗'} ${a.description}`)
+        .join('\n');
+
+      // Add action summary to conversation for future context
+      this.conversationHistory.push({
+        role: 'user',
+        content: `<session-actions>\n${actionSummary}\n</session-actions>`,
       });
     }
 
@@ -830,15 +859,15 @@ export class GrokClient {
 
       this.conversationHistory.push({ role: 'assistant', content });
 
-      // Build continuation prompt - be directive to keep LLM working
+      // Build continuation prompt with action tally - LLM knows what's been done
       const hasErrors = actionResults.some(r => !r.success);
+      const actionTally = actionsSummary.join('\n');
       let continuationPrompt: string;
 
       if (hasErrors) {
-        // Generic error handling - let LLM figure out the appropriate fix
-        continuationPrompt = `${compressedResults}\n\n<system-instruction>ERROR DETECTED - You MUST fix it now. Read the action output above to find the file and line number, then use <read> and <edit> to fix it. Run the appropriate check command via bash to verify. Do NOT stop until the error is resolved.</system-instruction>`;
+        continuationPrompt = `${compressedResults}\n\n<session-actions>\n${actionTally}\n</session-actions>\n\n<system-instruction>ERROR DETECTED - fix it now.</system-instruction>`;
       } else {
-        continuationPrompt = `${compressedResults}\n\n<system-instruction>Continue with the next step.</system-instruction>`;
+        continuationPrompt = `${compressedResults}\n\n<session-actions>\n${actionTally}\n</session-actions>\n\n<system-instruction>Continue. Only claim actions that appear in session-actions.</system-instruction>`;
       }
 
       this.conversationHistory.push({
