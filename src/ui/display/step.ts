@@ -4,6 +4,23 @@
 
 import { colors } from '../core';
 
+// Maximum lines to display to user (full output kept for LLM context)
+const MAX_DISPLAY_LINES = 10;
+
+/**
+ * Truncate output to MAX_DISPLAY_LINES for user display
+ * Returns truncated text with indicator if content was cut
+ */
+function truncateForDisplay(text: string): string {
+  const lines = text.split('\n');
+  if (lines.length <= MAX_DISPLAY_LINES) {
+    return text;
+  }
+  const truncated = lines.slice(0, MAX_DISPLAY_LINES).join('\n');
+  const hiddenCount = lines.length - MAX_DISPLAY_LINES;
+  return `${truncated}\n${colors.muted}... (${hiddenCount} more lines)${colors.reset}`;
+}
+
 // Claude Code-style output formatting
 export const step = {
   // Assistant message/thought (violet bullet)
@@ -20,8 +37,10 @@ export const step = {
   },
 
   // Tool result: ⎿  Result text (indented, white for reads, green for success messages)
+  // Display truncated to MAX_DISPLAY_LINES, full output kept for LLM context
   result: (text: string, isError = false) => {
-    const lines = text.split('\n');
+    const truncated = truncateForDisplay(text);
+    const lines = truncated.split('\n');
     // Use green for success indicators, red for errors, white for general info
     const isSuccess =
       text.includes('No errors') ||
@@ -56,6 +75,7 @@ export const step = {
   },
 
   // Grep result: ⎿  Found N matches - white (read operation)
+  // Display truncated to MAX_DISPLAY_LINES, full output kept for LLM context
   grepResult: (matches: number, preview?: string) => {
     if (matches === 0) {
       console.log(`  ${colors.white}⎿  No matches found${colors.reset}`);
@@ -64,7 +84,8 @@ export const step = {
         `  ${colors.white}⎿  Found ${matches} match${matches > 1 ? 'es' : ''}${colors.reset}`,
       );
       if (preview) {
-        preview.split('\n').forEach(line => {
+        const truncated = truncateForDisplay(preview);
+        truncated.split('\n').forEach(line => {
           console.log(`     ${colors.white}${line}${colors.reset}`);
         });
       }
@@ -79,6 +100,7 @@ export const step = {
   },
 
   // Bash result: ⎿  output - white for general, green for success, red for errors
+  // Display truncated to MAX_DISPLAY_LINES, full output kept for LLM context
   bashResult: (command: string, output: string, exitCode = 0) => {
     const isError = exitCode !== 0 || output.startsWith('Error:');
     const isSuccess =
@@ -93,7 +115,8 @@ export const step = {
       console.log(`  ${colors.white}⎿  $ ${command}${colors.reset}`);
     }
     if (output) {
-      const lines = output.split('\n');
+      const truncated = truncateForDisplay(output);
+      const lines = truncated.split('\n');
       lines.forEach(line => {
         const lineColor = isError ? colors.error : colors.white;
         console.log(`     ${lineColor}${line}${colors.reset}`);

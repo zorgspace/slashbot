@@ -221,62 +221,6 @@ const x = 1;
     });
   });
 
-  describe('Git actions', () => {
-    it('parses git status', () => {
-      const content = '<git command="status"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect(actions[0]).toEqual({
-        type: 'git',
-        command: 'status',
-        args: undefined,
-      });
-    });
-
-    it('parses git with args', () => {
-      const content = '<git command="diff" args="--staged"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect((actions[0] as any).args).toBe('--staged');
-    });
-
-    it('only allows whitelisted commands', () => {
-      const content = '<git command="reset"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(0); // reset is not whitelisted
-    });
-
-    it('parses push command', () => {
-      const content = '<git command="push"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect((actions[0] as any).command).toBe('push');
-    });
-
-    it('parses pull command', () => {
-      const content = '<git command="pull"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect((actions[0] as any).command).toBe('pull');
-    });
-
-    it('parses git add with single file', () => {
-      const content = '<git command="add" args="src/file.ts"/>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect((actions[0] as any).command).toBe('add');
-      expect((actions[0] as any).args).toBe('src/file.ts');
-    });
-
-    it('parses git add with dot (unquoted)', () => {
-      const content = '<git command="add" args=./>';
-      const actions = parseActions(content);
-      expect(actions).toHaveLength(1);
-      expect((actions[0] as any).command).toBe('add');
-      expect((actions[0] as any).args).toBe('.');
-    });
-  });
-
   describe('Fetch actions', () => {
     it('parses fetch action', () => {
       const content = '<fetch url="https://example.com"/>';

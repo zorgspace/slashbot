@@ -5,17 +5,20 @@
 /**
  * Format action results for LLM context
  * No truncation - send full results to the LLM
+ * Clearly labeled to distinguish from user input
  */
 export function compressActionResults(
   results: Array<{ action: string; result: string; success: boolean; error?: string }>,
 ): string {
-  return results
+  const formattedResults = results
     .map(r => {
       const status = r.success ? '✓' : '✗';
       const errorNote = r.error ? ` (${r.error})` : '';
       return `[${status}] ${r.action}${errorNote}\n${r.result}`;
     })
     .join('\n\n');
+
+  return `<action-output>\n${formattedResults}\n</action-output>`;
 }
 
 /**

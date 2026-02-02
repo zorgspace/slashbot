@@ -326,9 +326,9 @@ export class GrokClient {
 
       if (hasErrors) {
         // Generic error handling - let LLM figure out the appropriate fix
-        continuationPrompt = `${compressedResults}\n\nERROR DETECTED - You MUST fix it now. Read the error output above to find the file and line number, then use <read> and <edit> to fix it. Run the appropriate check command via bash to verify. Do NOT stop until the error is resolved.`;
+        continuationPrompt = `${compressedResults}\n\n<system-instruction>ERROR DETECTED - You MUST fix it now. Read the action output above to find the file and line number, then use <read> and <edit> to fix it. Run the appropriate check command via bash to verify. Do NOT stop until the error is resolved.</system-instruction>`;
       } else {
-        continuationPrompt = `${compressedResults}\n\nContinue with the next step.`;
+        continuationPrompt = `${compressedResults}\n\n<system-instruction>Continue with the next step.</system-instruction>`;
       }
 
       this.conversationHistory.push({
@@ -385,6 +385,24 @@ export class GrokClient {
     // Start thinking animation and thinking display stream
     thinking.start('Thinking...', this.workDir);
     thinkingDisplay.startStream();
+
+    // Set up keyboard listener during streaming for Ctrl+O (toggle thinking) and Ctrl+C (abort)
+    const wasRaw = process.stdin.isRaw;
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+    }
+    const keyHandler = (data: Buffer) => {
+      const key = data.toString();
+      if (key === '\x0f') {
+        // Ctrl+O - toggle thinking display
+        thinkingDisplay.toggle();
+      } else if (key === '\x03') {
+        // Ctrl+C - abort request
+        this.abortController?.abort();
+      }
+    };
+    process.stdin.on('data', keyHandler);
 
     // Track request
     this.usage.requests++;
@@ -501,6 +519,12 @@ export class GrokClient {
         }
       }
     } finally {
+      // Clean up keyboard listener
+      process.stdin.off('data', keyHandler);
+      if (process.stdin.isTTY && !wasRaw) {
+        process.stdin.setRawMode(false);
+      }
+
       // Stop thinking animation if still running (no content received)
       if (this.currentThinking) {
         const duration = thinking.stop();
@@ -805,9 +829,9 @@ export class GrokClient {
 
       if (hasErrors) {
         // Generic error handling - let LLM figure out the appropriate fix
-        continuationPrompt = `${compressedResults}\n\nERROR DETECTED - You MUST fix it now. Read the error output above to find the file and line number, then use <read> and <edit> to fix it. Run the appropriate check command via bash to verify. Do NOT stop until the error is resolved.`;
+        continuationPrompt = `${compressedResults}\n\n<system-instruction>ERROR DETECTED - You MUST fix it now. Read the action output above to find the file and line number, then use <read> and <edit> to fix it. Run the appropriate check command via bash to verify. Do NOT stop until the error is resolved.</system-instruction>`;
       } else {
-        continuationPrompt = `${compressedResults}\n\nContinue with the next step.`;
+        continuationPrompt = `${compressedResults}\n\n<system-instruction>Continue with the next step.</system-instruction>`;
       }
 
       this.conversationHistory.push({
