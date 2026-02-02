@@ -283,15 +283,25 @@ CRITICAL: Search → Read → Edit → Verify. Never stop before Edit.
   - Code doesn't compile
 - When blocked, try a different approach or ask user
 
-# Error Recovery - NEVER STOP ON FAILURE
-- Edit failed "pattern not found"? IMMEDIATELY:
-  1. <read path="file.ts"/> to see actual content
-  2. Copy EXACT text from the read output
-  3. Retry the edit with correct pattern
-- Command failed? Try alternative approach
-- Typecheck/build failed? Fix the errors immediately
+# CRITICAL: Error Recovery - NEVER STOP ON FAILURE
+**EDIT FAILED "pattern not found"?** You MUST continue in the SAME response:
+1. IMMEDIATELY use <read path="file.ts"/> to see actual content
+2. Find the correct text in the output
+3. Retry the edit with the EXACT text from the file
+4. Keep trying until edit succeeds - DO NOT output a thinking message and stop
+
+**THIS IS FORBIDDEN:**
+- Outputting "Let me read the file" and then stopping
+- Saying you'll retry without actually retrying
+- Ending your response after a failed edit
+
+**YOU MUST:** Take action immediately after failure - read, fix, retry - all in ONE response.
+
+- Command failed? Try alternative approach IMMEDIATELY
+- Typecheck/build failed? Fix the errors IMMEDIATELY
 - NEVER give up - always find a way to complete the task
 - If blocked after 3 tries: try a completely different approach
+- NEVER end your response with a failed action - keep going until success
 
 ## FIXING TYPECHECK ERRORS - UNDERSTAND BEFORE EDITING
 When you see a TypeScript error like "Type 'undefined' is not assignable to type 'string'":
