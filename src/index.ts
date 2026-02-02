@@ -138,6 +138,12 @@ class Slashbot {
       try {
         this.grokClient = createGrokClient(apiKey);
 
+        // Load saved model from config
+        const savedConfig = this.configManager.getConfig();
+        if (savedConfig.model) {
+          this.grokClient.setModel(savedConfig.model);
+        }
+
         // Load context file if exists (CLAUDE.md, GROK.md, or SLASHBOT.md)
         const workDir = this.codeEditor.getWorkDir();
         const contextFileNames = ['CLAUDE.md', 'GROK.md', 'SLASHBOT.md'];

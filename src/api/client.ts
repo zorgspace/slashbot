@@ -202,6 +202,14 @@ export class GrokClient {
     return 'normal';
   }
 
+  setModel(model: string): void {
+    this.config.model = model;
+  }
+
+  getCurrentModel(): string {
+    return this.config.model || GROK_CONFIG.MODEL;
+  }
+
   abort(): void {
     if (this.abortController) {
       this.abortController.abort();
