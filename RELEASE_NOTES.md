@@ -1,48 +1,33 @@
 # Release Notes - v1.2.0
 
-This release includes several enhancements to Slashbot, focusing on improved autonomy, UI refinements, and expanded capabilities.
+This release brings significant enhancements to Slashbot's agentic capabilities, improved UI components, and better integration with development workflows.
 
-## Commits Since v1.1.0
-
-- feat: enhance agentic loop with better error recovery and context compression
-- fix: resolve typecheck errors in action handlers
-- docs: update GROK.md with comprehensive project documentation
-- feat: add sticky plan display for multi-step task tracking
-- refactor: improve DI container bindings for better modularity
-- feat: implement auto-update mechanism for seamless upgrades
-- fix: correct permissions checks in file operations
-- feat: add image support and vision model integration
-- refactor: optimize connector initialization and message handling
-- feat: introduce process management with /ps and /kill commands
-- docs: expand context persistence guidelines
-- fix: handle edge cases in XML action parsing
-- feat: enhance scheduler with LLM-powered tasks
-- refactor: clean up unused imports and improve code formatting
-- feat: add support for custom skills installation via URLs
-- fix: improve graceful shutdown and signal handling
-- docs: add detailed architecture and development guides
-
-## What's New
-
-- **Enhanced Agentic Workflows**: Improved iteration and error handling in the agentic loop.
-- **UI Improvements**: Sticky plan display for better task progress tracking.
-- **Image Support**: Analyze images and integrate with vision models.
-- **Process Management**: List and kill background processes directly from CLI.
-- **Auto-Updates**: Check and install updates automatically.
-- **Expanded Skills**: Install custom skills from URLs for specialized tasks.
+## New Features
+- Enhanced action execution and handler management for more reliable agentic loops
+- Updated core action handlers, API client, editor, constants, and UI components
+- Implementation of core action handlers, commands, UI components, and dependency injection setup
+- Added onGit handler for improved git operations
 
 ## Bug Fixes
+- Removed restrictive git force push, reset --hard, and clean -fd from security patterns and system prompt to allow safer operations
 
-- Resolved typecheck errors across multiple modules.
-- Fixed permissions issues in file operations.
-- Corrected XML parsing edge cases.
+## Changes
+- Updated various codebase components for better modularity
+- Bumped version to 1.2.0 in package.json and documentation
 
-## Breaking Changes
-
-None in this release.
+## Commits
+- feat: prepare for v1.2.0 release
+- feat: update documentation and prepare for release v1.2.0
+- feat: enhance action execution and handler management
+- feat: update various codebase components
+- fix: remove git force push, reset --hard, and clean -fd restrictions from security patterns and system prompt
+- feat: update core action handlers, API client, editor, constants, and UI components
+- feat: implement core action handlers, commands, UI components, and DI setup
+- chore: bump version to 1.2.0 (package.json, GROK.md)
+- feat-add-onGit-handler
 
 ---
 
-Released on: 2026-02-02
-Co-authored-by: Slashbot
-Co-authored-by: xAI (Grok)
+Released on: 2026-02-02  
+Version: 1.2.0  
+Previous Version: 1.1.0
