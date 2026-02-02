@@ -247,6 +247,159 @@ class ProcessManager {
     return killed;
   }
 
+  /**
+   * Kill all slashbot processes system-wide (including this one)
+   */
+  async killAllSlashbotInstances(): Promise<number> {
+    try {
+      // Use pgrep to find all slashbot processes
+      const pgrep = spawn('pgrep', ['-f', 'slashbot'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let pids: number[] = [];
+      let stderr = '';
+
+      pgrep.stdout?.on('data', (data: Buffer) => {
+        const lines = data.toString().trim().split('\n').filter(l => l.trim());
+        pids.push(...lines.map(l => parseInt(l.trim())).filter(n => !isNaN(n)));
+      });
+
+      pgrep.stderr?.on('data', (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        pgrep.on('close', (code) => {
+          if (code === 0 || code === 1) { // 1 means no processes found
+            resolve();
+          } else {
+            reject(new Error(`pgrep failed: ${stderr}`));
+          }
+        });
+        pgrep.on('error', reject);
+      });
+
+      // Filter out our own process
+      pids = pids.filter(pid => pid !== process.pid);
+
+      let killed = 0;
+      for (const pid of pids) {
+        try {
+          // Kill process group to kill children too
+          process.kill(-pid, 'SIGTERM');
+          killed++;
+        } catch {
+          try {
+            // Fallback to killing just the process
+            process.kill(pid, 'SIGTERM');
+            killed++;
+          } catch {
+            // Process might already be dead
+          }
+        }
+      }
+
+      // Force kill any remaining after 2 seconds
+      if (killed > 0) {
+        setTimeout(() => {
+          for (const pid of pids) {
+            try {
+              process.kill(-pid, 'SIGKILL');
+            } catch {
+              try {
+                process.kill(pid, 'SIGKILL');
+              } catch {
+                // Ignore
+              }
+            }
+          }
+        }, 2000);
+      }
+
+      return killed;
+    } catch {
+      // Fallback: try to use ps command
+      try {
+        const ps = spawn('ps', ['aux'], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        let output = '';
+        let stderr = '';
+
+        ps.stdout?.on('data', (data: Buffer) => {
+          output += data.toString();
+        });
+
+        ps.stderr?.on('data', (data: Buffer) => {
+          stderr += data.toString();
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          ps.on('close', (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`ps failed: ${stderr}`));
+            }
+          });
+          ps.on('error', reject);
+        });
+
+        // Parse ps output to find slashbot processes
+        const lines = output.split('\n');
+        const pids: number[] = [];
+
+        for (const line of lines) {
+          if (line.includes('slashbot') && !line.includes('ps aux')) {
+            const parts = line.trim().split(/\s+/);
+            const pid = parseInt(parts[1]);
+            if (!isNaN(pid) && pid !== process.pid) {
+              pids.push(pid);
+            }
+          }
+        }
+
+        let killed = 0;
+        for (const pid of pids) {
+          try {
+            process.kill(-pid, 'SIGTERM');
+            killed++;
+          } catch {
+            try {
+              process.kill(pid, 'SIGTERM');
+              killed++;
+            } catch {
+              // Ignore
+            }
+          }
+        }
+
+        // Force kill after 2 seconds
+        if (killed > 0) {
+          setTimeout(() => {
+            for (const pid of pids) {
+              try {
+                process.kill(-pid, 'SIGKILL');
+              } catch {
+                try {
+                  process.kill(pid, 'SIGKILL');
+                } catch {
+                  // Ignore
+                }
+              }
+            }
+          }, 2000);
+        }
+
+        return killed;
+      } catch {
+        return 0;
+      }
+    }
+  }
+
   private formatUptime(startedAt: Date): string {
     const seconds = Math.floor((Date.now() - startedAt.getTime()) / 1000);
     if (seconds < 60) return `${seconds}s`;

@@ -37,7 +37,7 @@ export function setupSignalHandlers(context: SignalContext): () => void {
     }
 
     // Not thinking - handle double Ctrl+C to exit
-    if (now - lastCtrlC < 500) {
+    if (now - lastCtrlC < 2000) {
       console.log(c.violet('\n\nSee you soon!'));
       // Stop the bot (and scheduler) before exiting
       bot?.stop();

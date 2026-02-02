@@ -261,8 +261,33 @@ export class GrokClient {
         responseContent = result.content;
         thinkingContent = result.thinking;
       } catch (error: any) {
-        console.error(`\n${c.error('[API Error]')} ${error.message || error}`);
-        throw error;
+        // Check if it's a token limit error
+        if (error.message && error.message.includes("maximum prompt length")) {
+          console.log(`\n${c.warning('[Token limit reached]')} Creating condensed context and coming back fresh...`);
+
+          // Create condensed summary of entire conversation
+          const condensedSummary = this.condenseHistory();
+          console.log(c.muted(`[Context] Condensed ${this.conversationHistory.length} messages into 1 summary`));
+
+          // Start fresh with condensed context
+          this.conversationHistory = [
+            this.conversationHistory[0], // Keep system prompt
+            { role: 'user', content: condensedSummary }
+          ];
+
+          // Retry with condensed context
+          try {
+            const result = await this.streamResponse();
+            responseContent = result.content;
+            thinkingContent = result.thinking;
+          } catch (retryError: any) {
+            console.error(`\n${c.error('[API Error after condensation]')} ${retryError.message || retryError}`);
+            throw retryError;
+          }
+        } else {
+          console.error(`\n${c.error('[API Error]')} ${error.message || error}`);
+          throw error;
+        }
       }
       finalResponse = responseContent;
       finalThinking += thinkingContent;
@@ -814,6 +839,43 @@ export class GrokClient {
     console.log(
       c.muted(`[Context] Compressed: ${messages.length} → ${recentMessages.length} messages`),
     );
+  }
+
+  private condenseHistory(): string {
+    const messages = this.conversationHistory.slice(1); // Skip system prompt
+    let summary = 'Conversation Summary:\n';
+
+    // Extract user messages and key actions
+    const userMessages: string[] = [];
+    const actions: string[] = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        const content = typeof msg.content === 'string' ? msg.content : msg.content?.[0]?.text || '';
+        if (content && !content.includes('<session-actions>') && !content.includes('<system-instruction>')) {
+          userMessages.push(content.split('\n')[0]); // First line only
+        }
+      } else if (msg.role === 'assistant') {
+        // Look for actions in assistant responses
+        const actionMatches = (msg.content as string).match(/<(bash|read|edit|write|grep|explore)\b[^>]*>/g);
+        if (actionMatches) {
+          actions.push(...actionMatches.slice(0, 3)); // Limit actions
+        }
+      }
+    }
+
+    if (userMessages.length > 0) {
+      summary += `User requests: ${userMessages.slice(-5).join('; ')}\n`; // Last 5 user messages
+    }
+
+    if (actions.length > 0) {
+      summary += `Actions performed: ${actions.slice(-5).join(', ')}\n`; // Last 5 actions
+    }
+
+    summary += `Total messages: ${messages.length}\n`;
+    summary += 'Please continue from this point.';
+
+    return summary;
   }
 
   // Usage tracking methods

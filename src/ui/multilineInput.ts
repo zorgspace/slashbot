@@ -6,7 +6,7 @@
  * - Enter submits the input
  * - Arrow keys navigate within text
  * - Paste is supported via bracketed paste mode
- * - Ctrl+Shift+V pastes images from clipboard
+ * - Ctrl+V pastes images from clipboard
  */
 
 import { expandPaste, readImageFromClipboard } from './pasteHandler';
@@ -26,11 +26,8 @@ const SHIFT_ENTER_SEQUENCES = [
 ];
 
 // Image paste sequences
-// Ctrl+Shift+V varies by terminal, Ctrl+P is more universal
 const IMAGE_PASTE_SEQUENCES = [
-  '\x10', // Ctrl+P (universal - P for Paste image)
-  '\x1b[118;6u', // Kitty keyboard protocol: Ctrl+Shift+V
-  '\x1b[27;6;118~', // xterm modifyOtherKeys: Ctrl+Shift+V
+  '\x16', // Ctrl+V (universal - V for paste image)
 ];
 
 // Bracketed paste mode sequences
@@ -69,17 +66,10 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     // Save terminal state
     const wasRaw = process.stdin.isRaw;
 
-    // Separate sticky plan from input prompt for proper redraw
-    // If prompt contains newline, the part before is the sticky plan (displayed once)
-    // and the part after is the actual input prompt (used for redraws)
-    const promptParts = options.prompt.split('\n');
-    const hasStickyPlan = promptParts.length > 1;
-    const inputLinePrompt = hasStickyPlan ? promptParts[promptParts.length - 1] : options.prompt;
+    const inputLinePrompt = options.prompt;
 
-    // Print initial prompt (includes sticky plan if present)
-    process.stdout.write(options.prompt);
-    // Hide native terminal cursor
-    process.stdout.write('\x1b[?25l');
+    // Write initial prompt
+    process.stdout.write(inputLinePrompt);
 
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
@@ -288,7 +278,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     };
 
     const processInput = (str: string) => {
-      // Check for Ctrl+C - clear current input and start fresh
+      // Check for Ctrl+C - emit SIGINT to let signal handler manage exit
       if (str === '\x03') {
         // Clear the current line display
         process.stdout.write('\r\x1b[K');
@@ -301,9 +291,8 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         currentLine = '';
         cursorPos = 0;
         historyIndex = -1;
-        // Show canceled indicator and redraw fresh prompt
-        process.stdout.write(`${colors.muted}^C${colors.reset}\n`);
-        process.stdout.write(inputLinePrompt);
+        // Emit SIGINT so the signal handler can track double Ctrl+C for exit
+        process.emit('SIGINT', 'SIGINT');
         resetCursorBlink();
         redrawCurrentLine();
         return;
@@ -331,7 +320,7 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         }
       }
 
-      // Check for image paste sequences (Ctrl+P or Ctrl+Shift+V)
+      // Check for image paste sequences (Ctrl+V or Ctrl+Shift+V)
       for (const seq of IMAGE_PASTE_SEQUENCES) {
         if (str === seq || str.includes(seq)) {
           // Async clipboard read - need to handle carefully

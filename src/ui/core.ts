@@ -20,6 +20,9 @@ export const colors = {
   error: `${ESC}38;5;124m`, // Darker red
   red: `${ESC}38;5;124m`, // Darker red
   warning: `${ESC}38;5;214m`, // Orange
+  yellow: `${ESC}38;5;226m`, // Yellow
+  cyan: `${ESC}38;5;39m`, // Cyan
+  blue: `${ESC}38;5;27m`, // Blue
   info: `${ESC}38;5;39m`, // Cyan
   muted: `${ESC}38;5;244m`, // Gray
   white: `${ESC}38;5;255m`, // White
@@ -37,6 +40,10 @@ export const colors = {
   dim: `${ESC}2m`,
   italic: `${ESC}3m`,
   underline: `${ESC}4m`,
+  strikethrough: `${ESC}9m`,
+
+  // Background colors
+  bgGray: `${ESC}48;5;240m`, // Gray background
 
   // Reset
   reset: RESET,
@@ -51,10 +58,16 @@ export const c = {
   green: (text: string) => `${colors.green}${text}${RESET}`,
   error: (text: string) => `${colors.error}${text}${RESET}`,
   warning: (text: string) => `${colors.warning}${text}${RESET}`,
+  yellow: (text: string) => `${colors.yellow}${text}${RESET}`,
+  cyan: (text: string) => `${colors.cyan}${text}${RESET}`,
+  blue: (text: string) => `${colors.blue}${text}${RESET}`,
   info: (text: string) => `${colors.info}${text}${RESET}`,
   muted: (text: string) => `${colors.muted}${text}${RESET}`,
   white: (text: string) => `${colors.white}${text}${RESET}`,
   bold: (text: string) => `${colors.bold}${text}${RESET}`,
   dim: (text: string) => `${colors.dim}${text}${RESET}`,
   italic: (text: string) => `${colors.italic}${text}${RESET}`,
+  underline: (text: string) => `${colors.underline}${text}${RESET}`,
+  strikethrough: (text: string) => `${colors.strikethrough}${text}${RESET}`,
+  bgGray: (text: string) => `${colors.bgGray}${text}${RESET}`,
 };
