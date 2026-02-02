@@ -21,33 +21,6 @@ import type { GrokClient } from '../api/grok';
 export class ActionHandlerService {
   private grokClient: GrokClient | null = null;
 
-  async onGit(command: string, args?: string): Promise<string> {
-    const fullCmd =  ${args};
-    const lowerCmd = fullCmd.toLowerCase();
-
-    // Safety checks per git policy
-    const forbidden = [
-      'push --force',
-      'push -f',
-      'reset --hard',
-      'clean -fd'
-    ];
-    if (forbidden.some(p => lowerCmd.includes(p))) {
-      return ;
-    }
-
-    // Before commit, check status
-    if (command.toLowerCase() === 'commit') {
-      const status = await this.onBash('git status');
-      if (!status.includes('Changes to be committed')) {
-        return \\n${status.slice(0, 1000)}\n\\``;
-      }
-    }
-
-    // Execute via bash handler
-    return await this.onBash(fullCmd);
-  }
-
   constructor(
     @inject(TYPES.TaskScheduler) private scheduler: TaskScheduler,
     @inject(TYPES.CodeEditor) private codeEditor: CodeEditor,
@@ -275,10 +248,20 @@ export class ActionHandlerService {
           'commit',
           'checkout',
           'stash',
+          'push',
+          'pull',
         ];
 
         if (!allowedCommands.includes(command)) {
           return `Error: Git command '${command}' not allowed`;
+        }
+
+        // Safety check for dangerous push flags
+        if (command === 'push' && args) {
+          const lowerArgs = args.toLowerCase();
+          if (lowerArgs.includes('--force') || lowerArgs.includes('-f')) {
+            return `Error: Force push is not allowed. Use regular push or ask user explicitly.`;
+          }
         }
 
         let gitCmd = `git ${command}`;
@@ -298,7 +281,20 @@ export class ActionHandlerService {
             cwd: workDir,
             timeout: 30000,
           });
-          return stdout || stderr || 'OK';
+
+          // For push, always show both stdout and stderr for clarity
+          // "Everything up-to-date" goes to stderr, not stdout
+          if (command === 'push') {
+            const output = [stdout, stderr].filter(s => s?.trim()).join('\n');
+            if (!output || output.includes('Everything up-to-date')) {
+              return 'Nothing to push - local branch matches remote (no new commits)';
+            }
+            return output;
+          }
+
+          // For other commands, combine stdout and stderr
+          const output = [stdout, stderr].filter(s => s?.trim()).join('\n');
+          return output || 'OK';
         } catch (error: any) {
           return `Error: ${error.message || error}`;
         }
@@ -318,22 +314,6 @@ export class ActionHandlerService {
           return stdout || stderr || 'Formatted';
         } catch (error: any) {
           return `Error: ${error.message || error}`;
-        }
-      },
-
-      onTypecheck: async () => {
-        const workDir = this.codeEditor.getWorkDir();
-        try {
-          const { exec } = await import('child_process');
-          const { promisify } = await import('util');
-          const execAsync = promisify(exec);
-          const { stdout, stderr } = await execAsync('npx tsc --noEmit', {
-            cwd: workDir,
-            timeout: 60000,
-          });
-          return stdout || stderr || 'No errors';
-        } catch (error: any) {
-          return error.stdout || error.stderr || error.message || 'Typecheck failed';
         }
       },
 

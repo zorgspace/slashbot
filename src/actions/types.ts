@@ -16,7 +16,6 @@ export type ActionType =
   | 'search'
   | 'git'
   | 'format'
-  | 'typecheck'
   | 'schedule'
   | 'notify'
   | 'skill'
@@ -118,7 +117,17 @@ export interface ExecAction {
 
 export interface GitAction {
   type: 'git';
-  command: 'status' | 'diff' | 'log' | 'branch' | 'add' | 'commit' | 'checkout' | 'stash';
+  command:
+    | 'status'
+    | 'diff'
+    | 'log'
+    | 'branch'
+    | 'add'
+    | 'commit'
+    | 'checkout'
+    | 'stash'
+    | 'push'
+    | 'pull';
   args?: string;
 }
 
@@ -142,10 +151,6 @@ export interface SearchAction {
 export interface FormatAction {
   type: 'format';
   path?: string;
-}
-
-export interface TypecheckAction {
-  type: 'typecheck';
 }
 
 // ===== Scheduling & Notifications =====
@@ -258,7 +263,6 @@ export type Action =
   | FetchAction
   | SearchAction
   | FormatAction
-  | TypecheckAction
   | ScheduleAction
   | NotifyAction
   | SkillAction
@@ -332,7 +336,6 @@ export interface ActionHandlers {
     options?: { allowedDomains?: string[]; blockedDomains?: string[] },
   ) => Promise<{ response: string; citations: string[] }>;
   onFormat?: (path?: string) => Promise<string>;
-  onTypecheck?: () => Promise<string>;
   onSchedule?: (
     cron: string,
     commandOrPrompt: string,
@@ -347,7 +350,13 @@ export interface ActionHandlers {
   // Plan management
   onPlan?: (
     operation: 'add' | 'update' | 'complete' | 'remove' | 'show' | 'clear' | 'ask',
-    options?: { id?: string; content?: string; description?: string; status?: PlanItemStatus; question?: string },
+    options?: {
+      id?: string;
+      content?: string;
+      description?: string;
+      status?: PlanItemStatus;
+      question?: string;
+    },
   ) => Promise<{ success: boolean; message: string; plan?: PlanItem[]; question?: string }>;
   // Process management
   onPs?: () => Promise<string>;

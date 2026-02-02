@@ -1,4 +1,5 @@
 # Slashbot
+
 Autonomous AI Agent for Development, Automation & More
 
 Slashbot is an ultra-powerful autonomous AI agent capable of executing shell commands, reading/editing files, managing Git securely, installing extensible skills, planning tasks, sending notifications, and more. It self-improves and works independently in your dev environment.
@@ -45,11 +46,13 @@ bun install
 ## 🏃‍♂️ Running
 
 ### Dev mode (hot-reload)
+
 ```bash
 bun run dev
 ```
 
 ### Production
+
 ```bash
 bun run build
 bun dist/index.js  # or node dist/index.js
@@ -69,10 +72,12 @@ Slashbot starts in interactive mode (stdin) or configure Telegram/Discord for ch
      ```
 
 2. **Messaging connectors** (in Slashbot chat):
+
    ```
    <telegram-config bot_token="123:ABC..."/>  <!-- Create bot via @BotFather -->
    <discord-config bot_token="MTk..." channel_id="123456"/>
    ```
+
    **Restart Slashbot** after config.
 
 3. **Permissions**: Edit `.slashbot/permissions.json` if needed.
@@ -99,6 +104,7 @@ Search "best TypeScript practices 2024"
 - **Persistent context**: Saved in `.slashbot/context/topic/`.
 
 ### Advanced Examples
+
 - **Automation**: `<schedule cron="0 9 * * *" name="backup">git add . && git commit -m 'Daily'</schedule>`
 - **Notify**: `<notify>Task done!</notify>`
 
@@ -145,4 +151,4 @@ MIT – Fork, improve, deploy!
 
 ---
 
-*Slashbot: Your AI agent that codes for you. 🚀*
+_Slashbot: Your AI agent that codes for you. 🚀_

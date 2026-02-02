@@ -21,7 +21,6 @@ import {
   executeFetch,
   executeSearch,
   executeFormat,
-  executeTypecheck,
   executeSchedule,
   executeNotify,
   executeSkill,
@@ -61,6 +60,18 @@ export async function executeActions(
       results.push(result);
       console.log('');
     }
+  }
+
+  // If actions were skipped due to oneAtATime, add a notice to the last result
+  if (oneAtATime && actions.length > 1 && results.length > 0) {
+    const skippedCount = actions.length - 1;
+    const skippedActions = actions.slice(1).map(a => {
+      if (a.type === 'git') return `git ${(a as any).command}`;
+      if (a.type === 'exec') return `exec: ${(a as any).command}`;
+      return a.type;
+    });
+    const skippedNote = `\n\n[PENDING: ${skippedCount} action(s) not yet executed: ${skippedActions.join(', ')}. Execute them one at a time in subsequent responses.]`;
+    results[results.length - 1].result += skippedNote;
   }
 
   return results;
@@ -110,8 +121,6 @@ async function executeAction(
     // Code Quality
     case 'format':
       return executeFormat(action, handlers);
-    case 'typecheck':
-      return executeTypecheck(action, handlers);
 
     // Scheduling & Notifications
     case 'schedule':

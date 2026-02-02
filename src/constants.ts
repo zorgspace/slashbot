@@ -118,7 +118,6 @@ export const ACTION_TAGS = [
   'fetch',
   'search',
   'format',
-  'typecheck',
   'schedule',
   'notify',
   'skill',

@@ -21,7 +21,6 @@ import type {
   FetchAction,
   SearchAction,
   FormatAction,
-  TypecheckAction,
   ScheduleAction,
   NotifyAction,
   SkillAction,
@@ -60,7 +59,6 @@ function fixTruncatedTags(content: string): string {
     'fetch',
     'search',
     'format',
-    'typecheck',
     'schedule',
     'notify',
     'skill',
@@ -109,12 +107,20 @@ function fixTruncatedTags(content: string): string {
 
 // Flexible attribute extractor - handles any order and whitespace
 function extractAttr(tag: string, name: string): string | null {
-  // Try quoted: attr="value" or attr='value'
-  const quotedMatch = tag.match(new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, 'i'));
-  if (quotedMatch) return quotedMatch[1];
+  // Try double-quoted: attr="value" (allows single quotes inside)
+  const doubleQuotedMatch = tag.match(new RegExp(`${name}\\s*=\\s*"([^"]*)"`, 'i'));
+  if (doubleQuotedMatch) return doubleQuotedMatch[1];
+  // Try single-quoted: attr='value' (allows double quotes inside)
+  const singleQuotedMatch = tag.match(new RegExp(`${name}\\s*=\\s*'([^']*)'`, 'i'));
+  if (singleQuotedMatch) return singleQuotedMatch[1];
   // Try unquoted: attr=value (word chars only)
   const unquotedMatch = tag.match(new RegExp(`${name}\\s*=\\s*(\\S+)`, 'i'));
-  if (unquotedMatch) return unquotedMatch[1];
+  if (unquotedMatch) {
+    let value = unquotedMatch[1];
+    // Remove trailing /> or > from tag closing that got captured
+    value = value.replace(/>$/, '').replace(/\/$/, '');
+    return value;
+  }
   return null;
 }
 
@@ -168,8 +174,6 @@ const PATTERNS = {
   // ===== Code Quality =====
   // <format/> or <format path="..."/>
   format: /<format(?:\s+[^>]*)?\s*\/?>/gi,
-  // <typecheck/>
-  typecheck: /<typecheck\s*\/?>/gi,
 
   // ===== Scheduling & Notifications =====
   // <schedule cron="..." name="...">command</schedule>
@@ -452,7 +456,18 @@ export function parseActions(content: string): Action[] {
     const args = extractAttr(fullTag, 'args');
     if (
       command &&
-      ['status', 'diff', 'log', 'branch', 'add', 'commit', 'checkout', 'stash'].includes(command)
+      [
+        'status',
+        'diff',
+        'log',
+        'branch',
+        'add',
+        'commit',
+        'checkout',
+        'stash',
+        'push',
+        'pull',
+      ].includes(command)
     ) {
       actions.push({
         type: 'git',
@@ -513,14 +528,6 @@ export function parseActions(content: string): Action[] {
       type: 'format',
       path: path || undefined,
     } as FormatAction);
-  }
-
-  // Parse typecheck actions
-  const typecheckRegex = new RegExp(PATTERNS.typecheck.source, 'gi');
-  while ((match = typecheckRegex.exec(safeContent)) !== null) {
-    actions.push({
-      type: 'typecheck',
-    } as TypecheckAction);
   }
 
   // ===== Scheduling & Notifications =====
@@ -631,7 +638,10 @@ export function parseActions(content: string): Action[] {
   while ((match = planRegex.exec(safeContent)) !== null) {
     const fullTag = match[0];
     const operation = extractAttr(fullTag, 'operation') || extractAttr(fullTag, 'op');
-    if (operation && ['add', 'update', 'complete', 'remove', 'show', 'clear', 'ask'].includes(operation)) {
+    if (
+      operation &&
+      ['add', 'update', 'complete', 'remove', 'show', 'clear', 'ask'].includes(operation)
+    ) {
       const id = extractAttr(fullTag, 'id');
       const content = extractAttr(fullTag, 'content') || extractAttr(fullTag, 'task');
       const description = extractAttr(fullTag, 'description') || extractAttr(fullTag, 'desc');

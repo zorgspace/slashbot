@@ -5,6 +5,8 @@
 
 import { c, colors, fileViewer } from '../ui/colors';
 import * as path from 'path';
+import * as fs from 'fs';
+import { promises as fsPromises } from 'fs';
 import type { EditResult, EditStatus, GrepOptions } from '../actions/types';
 import { EXCLUDED_DIRS, EXCLUDED_FILES } from '../config/constants';
 
@@ -118,8 +120,7 @@ export class CodeEditor {
   async readFile(filePath: string): Promise<string | null> {
     try {
       const fullPath = path.isAbsolute(filePath) ? filePath : path.join(this.workDir, filePath);
-      const file = Bun.file(fullPath);
-      return await file.text();
+      return await fsPromises.readFile(fullPath, 'utf8');
     } catch {
       return null;
     }
@@ -128,14 +129,13 @@ export class CodeEditor {
   async editFile(edit: FileEdit): Promise<EditResult> {
     try {
       const fullPath = path.isAbsolute(edit.path) ? edit.path : path.join(this.workDir, edit.path);
-      const file = Bun.file(fullPath);
 
-      if (!(await file.exists())) {
+      if (!fs.existsSync(fullPath)) {
         console.log(c.error(`File not found: ${edit.path}`));
         return { success: false, status: 'not_found', message: `File not found: ${edit.path}` };
       }
 
-      const content = await file.text();
+      const content = await fsPromises.readFile(fullPath, 'utf8');
 
       // Try exact match first
       if (content.includes(edit.search)) {
@@ -204,15 +204,9 @@ export class CodeEditor {
       };
     }
 
-    await Bun.write(fullPath, newContent);
+    await fsPromises.writeFile(fullPath, newContent, 'utf8');
 
-    const fileName = edit.path.split('/').pop() || edit.path;
-    
-    console.log(
-      c.success(
-        `Modified: ${edit.path}${edit.replaceAll && occurrences > 1 ? `` : ''}`,
-      ),
-    );
+    console.log(c.success(`Modified: ${edit.path}${edit.replaceAll && occurrences > 1 ? `` : ''}`));
     return { success: true, status: 'applied', message: `Modified: ${edit.path}` };
   }
 
@@ -299,13 +293,12 @@ export class CodeEditor {
   ): Promise<EditResult> {
     try {
       const fullPath = path.isAbsolute(filePath) ? filePath : path.join(this.workDir, filePath);
-      const file = Bun.file(fullPath);
 
-      if (!(await file.exists())) {
+      if (!fs.existsSync(fullPath)) {
         return { success: false, status: 'not_found', message: `File not found: ${filePath}` };
       }
 
-      let content = await file.text();
+      let content = await fsPromises.readFile(fullPath, 'utf8');
       const originalContent = content;
       const appliedEdits: string[] = [];
 
@@ -346,7 +339,7 @@ export class CodeEditor {
         };
       }
 
-      await Bun.write(fullPath, content);
+      await fsPromises.writeFile(fullPath, content, 'utf8');
       console.log(c.success(`Applied ${edits.length} edits to ${filePath}`));
 
       return {
@@ -365,10 +358,9 @@ export class CodeEditor {
 
       // Create directory if needed
       const dir = path.dirname(fullPath);
-      const { mkdir } = await import('fs/promises');
-      await mkdir(dir, { recursive: true });
+      await fsPromises.mkdir(dir, { recursive: true });
 
-      await Bun.write(fullPath, content);
+      await fsPromises.writeFile(fullPath, content, 'utf8');
 
       // Display preview of created file
       const previewContent = content.split('\n').slice(0, 10).join('\n');
@@ -430,5 +422,3 @@ export class CodeEditor {
 export function createCodeEditor(workDir?: string): CodeEditor {
   return new CodeEditor(workDir);
 }
-
-

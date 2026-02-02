@@ -7,6 +7,8 @@
     "jsx": "react-jsx",
     "allowJs": true,
     "strict": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
     "noImplicitAny": false,
     "skipLibCheck": true,
     "esModuleInterop": true,

@@ -10,6 +10,7 @@ Slashbot is a production-ready (v1.2.0) autonomous CLI AI agent inspired by Clau
 **Version**: 1.2.0 (stable, with recent enhancements like sticky plan display, auto-updates, image support, and process management).  
 **Purpose**: A lightweight, autonomous CLI coding assistant that executes real file/system operations via an "agentic loop." Unlike chat-only AIs, Slashbot parses LLM responses for XML action tags (e.g., `<read path="file.ts"/>`), executes them iteratively, and feeds results back until tasks complete. It solves the problem of bridging LLMs with real-world code editing/automation without heavy setups like VS Code extensions.  
 **Key Features**:
+
 - **Agentic Execution**: LLM plans → actions (read/edit/bash/git) → results → iterate.
 - **Multi-Modal**: Image analysis (paste base64/images), voice transcription (OpenAI optional).
 - **Connectors**: Telegram/Discord for remote control.
@@ -19,6 +20,7 @@ Slashbot is a production-ready (v1.2.0) autonomous CLI AI agent inspired by Clau
 - **Secure**: Permissions system, process isolation, no destructive ops by default.
 
 **Target Users**:
+
 - Developers: Autonomous code editing, debugging, refactoring.
 - DevOps: Git automation, scheduled tasks, notifications.
 - Remote Teams: Telegram/Discord bots for code reviews/tasks.
@@ -54,7 +56,8 @@ Slashbot is a production-ready (v1.2.0) autonomous CLI AI agent inspired by Clau
 
 ## 3. ARCHITECTURE & DESIGN PATTERNS
 
-**High-Level Architecture**: **Modular Monolith** (single binary). Core: **REPL Loop** → Command Parser → GrokClient (agentic loop) → Actions → Services.  
+**High-Level Architecture**: **Modular Monolith** (single binary). Core: **REPL Loop** → Command Parser → GrokClient (agentic loop) → Actions → Services.
+
 - **Layers**:
   1. **CLI/UI** (`src/ui/*`, `src/app/*`): Input (multiline, paste), output (spinner, markdown, sticky plan).
   2. **Commands** (`src/commands/*`): `/login`, `/init` → Handlers.
@@ -66,24 +69,25 @@ Slashbot is a production-ready (v1.2.0) autonomous CLI AI agent inspired by Clau
   8. **Persistence**: `~/.slashbot/` (config, history, context, skills, tasks).
 
 **Design Patterns**:
-- **Dependency Injection (Inversify)**: Services injected via tokens. *Why*: Testable, loose coupling. Ex: `initializeContainer()` → `getService(TYPES.FileSystem)`.
+
+- **Dependency Injection (Inversify)**: Services injected via tokens. _Why_: Testable, loose coupling. Ex: `initializeContainer()` → `getService(TYPES.FileSystem)`.
   ```typescript
   // src/di/container.ts (excerpt)
   container.bind<TaskScheduler>(TYPES.TaskScheduler).to(Scheduler).inSingletonScope();
   ```
-- **Agentic Loop** (in `GrokClient.chat()`): LLM → Parse XML actions → Execute → Compress results → Feed back → Repeat. *Why*: Autonomous until complete (no fixed iterations). Handles errors/duplicates.
+- **Agentic Loop** (in `GrokClient.chat()`): LLM → Parse XML actions → Execute → Compress results → Feed back → Repeat. _Why_: Autonomous until complete (no fixed iterations). Handles errors/duplicates.
   ```typescript
   // src/api/client.ts (agentic loop excerpt)
   while (true) {
     responseContent = await this.streamResponse();
     actions = parseActions(responseContent);
     actionResults = await executeActions(actions, this.actionHandlers);
-    if (actionResults.length === 0) break;  // Done
+    if (actionResults.length === 0) break; // Done
     // Compress + continue
   }
   ```
-- **Factory/Registry**: `ConnectorRegistry`, `CommandRegistry`, `SkillManager`. *Why*: Dynamic plugins.
-- **Observer/EventBus** (`src/events/EventBus.ts`): Pub/sub for redraws/tasks. *Why*: Decouples UI/scheduler.
+- **Factory/Registry**: `ConnectorRegistry`, `CommandRegistry`, `SkillManager`. _Why_: Dynamic plugins.
+- **Observer/EventBus** (`src/events/EventBus.ts`): Pub/sub for redraws/tasks. _Why_: Decouples UI/scheduler.
 - **State Management**: Simple in-memory (history, imageBuffer). Signals (`src/app/signals.ts`) for graceful shutdown.
 - **Data Flow**: User input → `parseInput()` → Command or Grok → Actions → Results → Stream/UI.
 - **Error Handling**: Try/catch everywhere, abortable fetches, permissions checks. Logs via `errorBlock()`. Fallbacks (e.g., duplicate reads filtered).
@@ -93,6 +97,7 @@ Slashbot is a production-ready (v1.2.0) autonomous CLI AI agent inspired by Clau
 ## 4. DIRECTORY STRUCTURE
 
 **Root**:
+
 ```
 slashbot/
 ├── .slashbot/          # User data (gitignore'd): config.json, credentials.json, history, context/, skills/, tasks/, locks/
@@ -106,6 +111,7 @@ slashbot/
 ```
 
 **src/** (Entry: `index.ts` bootstraps DI → services → REPL):
+
 ```
 src/
 ├── index.ts            # Main: Slashbot class, REPL loop, connectors init
@@ -172,12 +178,14 @@ src/
 ```
 
 **Bootstrapping Flow** (`index.ts`):
+
 1. DI init → Services (scheduler, config, editor...).
 2. Load config/history/Grok.
 3. Start scheduler/connectors.
 4. Banner → REPL (`readMultilineInput()`).
 
 **Where to Find**:
+
 - Routes: N/A (CLI).
 - Models: `actions/types.ts`.
 - Utils: `src/utils/*`.
@@ -188,20 +196,25 @@ src/
 **Formatting** (Prettier): 100-char width, semi:true, singleQuote, trailingComma:all, tabWidth:2, no tabs.  
 **Naming**: camelCase (vars/functions), PascalCase (classes/interfaces), snake_case (none). Paths kebab-case.  
 **Imports**: Auto-sorted by ESLint. Relative for local, named for deps. No side-effects first.  
-  Ex: `import { c } from './ui/colors';`  
+ Ex: `import { c } from './ui/colors';`  
 **Comments**: JSDoc for public methods. Inline for why (e.g., security).  
 **Types**: Strict TS (noImplicitAny:false but noFloatingPromises:error). Interfaces everywhere (Action, Message).  
 **Error Handling**: `try/catch`, abort controllers, `errorBlock(msg)`. Permissions pre-checks.  
 **ESLint Rules** (key): unused-imports error, no-floating-promises, prefer-nullish-coalescing warn. Project-aware parser.  
 **Patterns**:
+
 - **Single Responsibility**: Handlers per action/command.
 - **Async Everywhere**: Promises for FS/shell/API.
 - **Constants**: `src/config/constants.ts` (GROK_CONFIG.MAX_RESULT_CHARS=8000).
 - **Logs**: `c.success()`, `c.muted()` (chalk wrappers).
 
 Ex: Clean handler (`src/actions/handlers/file.ts` excerpt):
+
 ```typescript
-export async function executeRead(path: string, options?: { offset?: number; limit?: number }): Promise<string> {
+export async function executeRead(
+  path: string,
+  options?: { offset?: number; limit?: number },
+): Promise<string> {
   try {
     // Permissions + read
     const content = await secureFS.readFile(path, options);
@@ -215,6 +228,7 @@ export async function executeRead(path: string, options?: { offset?: number; lim
 ## 6. HOW TO USE (for developers)
 
 **Installation**:
+
 ```bash
 git clone <repo> slashbot
 cd slashbot
@@ -232,6 +246,7 @@ bun run install-global  # sudo cp to /usr/local/bin (Linux/macOS)
 | Discord: `/discord-config <botToken> <channelId>` | Dev Portal token + channel ID. | No |
 
 **Running**:
+
 - Dev: `bun run dev` (src/index.ts).
 - Prod: `./dist/slashbot` or `slashbot`.
 - Global: `slashbot`.
@@ -245,12 +260,14 @@ Ex: First run → Banner shows version, dir, tasks, connectors.
 ## 7. HOW TO DEVELOP & EXTEND
 
 **Adding Features**:
+
 - New Service: Interface → DI bind → Inject (e.g., `TYPES.NewService`).
 - New Action: `actions/types.ts` (union), `actions/handlers/new.ts` (handler), register in `ActionHandlerService`.
 
 **Adding API Endpoints**: N/A (CLI). For custom: Extend `GrokClient.chat()`.
 
 **Adding New Slash Command** (step-by-step):
+
 1. `src/commands/handlers/new.ts`: Handler func.
    ```typescript
    // Ex: src/commands/handlers/images.ts
@@ -264,6 +281,7 @@ Ex: First run → Banner shows version, dir, tasks, connectors.
 4. Test: `vitest src/commands/handlers/new.test.ts`.
 
 **Adding Components/Modules**:
+
 - UI: `src/ui/components/new.ts` (chalk/box/spinner).
 - Skill: `.slashbot/skills/new.md` (prompt) or `<skill-install url="..."/>`.
 - Connector: Extend `base.ts` → `connectors/new.ts` → Registry.
@@ -271,6 +289,7 @@ Ex: First run → Banner shows version, dir, tasks, connectors.
 **Database Changes**: No DB (file-based). Edit `ConfigManager` for JSON.
 
 **Testing**:
+
 - Unit: `vitest src/actions/executor.test.ts` (mocks DI).
 - Coverage: `--coverage` (V8, HTML/LCOV).
 - Mock DI: `vi.mock('./di/container')`.
@@ -280,6 +299,7 @@ Ex: First run → Banner shows version, dir, tasks, connectors.
 ## 8. COMMON TASKS & PATTERNS
 
 **Authentication**: `/login` → Prompts API key → Saves to `~/.slashbot/credentials.json`.
+
 ```bash
 slashbot
 /login  # Interactive
@@ -289,29 +309,34 @@ slashbot
 Ex: LLM auto: `<read path="src/index.ts"/>`.
 
 **UI Components** (add/modify):
+
 ```typescript
 // src/ui/components/banner.ts (ex)
 export function banner(info: BannerInfo): string {
   return c.banner(`Slashbot v${info.version} | ${info.workingDir}`);
 }
 ```
+
 Use: `console.log(banner({version: '1.2.0', ...}))`.
 
 **CLI Commands** (in REPL):
+
 - `/help`: All commands.
 - `/init`: Codebase analysis → CLAUDE.md.
 - `/ps`: Processes.
 - `/kill <id>`: Stop proc.
 
 **Patterns**:
+
 - **Agentic Fix**: "Fix bug in login" → LLM reads → edits → typecheck → iterates.
 - **Multi-Line**: Shift+Enter.
 - **Paste**: Cmd+V → `[pasted:1:3 lines]`, expands on send.
 - **Images**: Paste base64/path → Vision model auto-switches.
 
 Ex: Shell action result compression (`src/api/utils.ts`):
+
 ```typescript
-compressActionResults([{action: 'bash ls', result: 'file1\nfile2', success: true}])
+compressActionResults([{ action: 'bash ls', result: 'file1\nfile2', success: true }]);
 // "[✓] bash ls\nfile1\nfile2"
 ```
 
@@ -320,9 +345,10 @@ compressActionResults([{action: 'bash ls', result: 'file1\nfile2', success: true
 **Runtime Deps**: Minimal (clipboardy, discord.js, etc.). Bun required.  
 **Database**: None (JSON in `~/.slashbot/`).  
 **API Keys**:
+
 - **Required**: Grok (x.ai/api).
 - **Optional**: OpenAI (transcription).
-**External Services**:
+  **External Services**:
 - xAI Grok API (chat/completions, responses for search).
 - Telegram/Discord (bots).
 - No Docker.
@@ -332,17 +358,20 @@ compressActionResults([{action: 'bash ls', result: 'file1\nfile2', success: true
 ## 10. GOTCHAS & IMPORTANT NOTES
 
 **Non-Obvious**:
+
 - **Image Model Switch**: Auto-uses vision model if images in buffer/history.
 - **Paste Expansion**: CLI-only; expands `[pasted:1:...]` on send.
 - **Duplicate Reads**: Filtered in agent loop (max 3 warnings).
 - **History**: `~/.slashbot/history` (last 500).
 
 **Performance**:
+
 - Context: 256k tokens, compresses results (MAX_RESULT_CHARS=8000).
 - Streaming: Real-time output, thinking spinner.
 - Procs: Detached (setsid/nohup), max 100 output lines.
 
 **Security**:
+
 - Permissions (`src/security/permissions.ts`): Blocks rm/git push --force.
 - Scheduled LLM: Restricted prompt wrapper.
 - FS: WorkDir-bound, authorize via `/authorize`.
@@ -350,6 +379,7 @@ compressActionResults([{action: 'bash ls', result: 'file1\nfile2', success: true
 
 **Breaking Changes**: v1.2.0: Enhanced UX/stability. Check commits.
 **Known Issues**:
+
 - Linux images: xclip/wl-paste required.
 - Telegram: Restart after config.
 - No Windows native (Bun focus).
@@ -370,6 +400,7 @@ compressActionResults([{action: 'bash ls', result: 'file1\nfile2', success: true
 | `test:coverage` | Coverage report. |
 
 **Slash Commands** (in REPL):
+
 - `/help`, `/?`: List all.
 - `/login`: API key.
 - `/logout`: Clear key.
@@ -383,10 +414,12 @@ compressActionResults([{action: 'bash ls', result: 'file1\nfile2', success: true
 - `/telegram-config`, `/discord-config`.
 
 **CLI Args** (`slashbot --help`):
+
 - `--version`: Print v1.2.0.
 - `--login`: Interactive key.
 
 **Common Dev**:
+
 ```bash
 bun run dev  # REPL
 slashbot /init  # Analyze

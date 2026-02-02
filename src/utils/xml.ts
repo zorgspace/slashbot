@@ -23,7 +23,6 @@ const ACTION_TAG_PATTERNS = [
   /<plan[^>]*\/>/g,
   /<git[^>]*\/>/g,
   /<format[^>]*\/>/g,
-  /<typecheck[^>]*\/>/g,
   /<fetch[^>]*\/>/g,
   /<search[^>]*\/>/g,
   /<notify[^>]*\/>/g,
@@ -56,8 +55,6 @@ const ACTION_TAG_PATTERNS = [
   // Code quality
   /<format[^>]*\/>/g,
   /<format[^>]*>[\s\S]*?<\/format>/g,
-  /<typecheck[^>]*\/>/g,
-  /<typecheck[^>]*>[\s\S]*?<\/typecheck>/g,
   // Scheduling & notifications
   /<schedule[^>]*>[\s\S]*?<\/schedule>/g,
   /<notify[^>]*\/>/g,
@@ -96,11 +93,11 @@ export function cleanXmlTags(content: string | unknown): string {
   }
   // Catch any remaining action-like XML tags (opening and closing)
   result = result.replace(
-    /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|replace)[^>]*\/?>/gi,
+    /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|replace)[^>]*\/?>/gi,
     '',
   );
   result = result.replace(
-    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|typecheck|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|replace)>/gi,
+    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|replace)>/gi,
     '',
   );
   return result.trim();
