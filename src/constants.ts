@@ -80,9 +80,6 @@ export const SCHEDULER = {
 
 // === Security: Dangerous Patterns ===
 export const DANGEROUS_COMMANDS = [
-  'git push --force',
-  'git reset --hard',
-  'git clean -fd',
   'chmod -R 777',
   'dd if=',
   '> /dev/',

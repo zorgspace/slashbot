@@ -58,11 +58,7 @@ export const DANGEROUS_PATTERNS: readonly RegExp[] = [
   /init\s+0/,
   /halt/,
   /poweroff/,
-  // Git destructive operations
-  /git\s+push\s+.*--force/,
-  /git\s+push\s+-f/,
-  /git\s+reset\s+--hard/,
-  /git\s+clean\s+-fd/,
+
 ];
 
 // ============================================================================

@@ -102,7 +102,6 @@ Co-authored-by: xAI (Grok)'"/>
 - If unsure about a key: test it first, don't blindly replace
 
 # FORBIDDEN (will be blocked)
-- git push --force, git reset --hard, git clean -fd
 - rm on system dirs (/etc, /boot, /usr, /var, /bin, /sbin, /lib)
 
 # CRITICAL: Action Execution
