@@ -399,14 +399,14 @@ export class CodeEditor {
 
     // List project structure
     const allFiles = await this.listFiles();
-    context.push('## Fichiers du projet:\n' + allFiles.slice(0, 30).join('\n'));
+    context.push('## Fichiers du projet:\n' + allFiles.slice(0, 50).join('\n'));
 
-    // Read specified files
+    // Read specified files (full content, no truncation)
     if (files) {
-      for (const file of files.slice(0, 5)) {
+      for (const file of files.slice(0, 10)) {
         const content = await this.readFile(file);
         if (content) {
-          context.push(`\n## ${file}:\n\`\`\`\n${content.slice(0, 2000)}\n\`\`\``);
+          context.push(`\n## ${file}:\n\`\`\`\n${content}\n\`\`\``);
         }
       }
     }

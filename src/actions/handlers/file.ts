@@ -34,8 +34,8 @@ export async function executeRead(
   if (fileContent) {
     const lineCount = fileContent.split('\n').length;
     step.readResult(lineCount);
-    const preview = fileContent.length > 1000 ? fileContent.slice(0, 1000) + '...' : fileContent;
-    return { action: `Read: ${action.path}`, success: true, result: preview };
+    // Send full content to LLM (no truncation)
+    return { action: `Read: ${action.path}`, success: true, result: fileContent };
   } else {
     step.error('File not found');
     return {

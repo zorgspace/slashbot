@@ -11,7 +11,7 @@
 
 import { expandPaste, readImageFromClipboard } from './pasteHandler';
 import { addImage, imageBuffer } from '../code/imageBuffer';
-import { c } from './colors';
+import { c, thinkingDisplay } from './colors';
 
 // Shift+Enter sequences (varies by terminal)
 const SHIFT_ENTER_SEQUENCES = [
@@ -445,6 +445,21 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         currentLine = newBefore + after;
         cursorPos = newBefore.length;
         redrawCurrentLine();
+        return;
+      }
+
+      // Ctrl+O - toggle thinking display
+      if (str === '\x0f') {
+        // Clear current line, show thinking, then redraw prompt
+        process.stdout.write('\r\x1b[K');
+        thinkingDisplay.toggle();
+        // Redraw prompt and current input
+        if (lines.length > 0) {
+          process.stdout.write('   ');
+        } else {
+          process.stdout.write(options.prompt);
+        }
+        process.stdout.write(currentLine);
         return;
       }
 

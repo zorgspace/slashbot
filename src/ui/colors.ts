@@ -46,6 +46,9 @@ export { step, statusLine, buildStatus } from './display/step';
 export { FileViewer, fileViewer } from './display/file-viewer';
 export type { DiffLine } from './display/file-viewer';
 
+// Thinking display
+export { thinkingDisplay } from './display/thinking';
+
 // Plan display
 export { PlanDisplay, planDisplay, planStep } from './plan/display';
 export type { PlanItemStatus, PlanDisplayItem } from './plan/display';

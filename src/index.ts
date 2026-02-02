@@ -12,6 +12,7 @@ import {
   errorBlock,
   connectorMessage,
   connectorResponse,
+  thinkingDisplay,
 } from './ui/colors';
 
 import { setupSignalHandlers } from './app/signals';
@@ -280,8 +281,10 @@ class Slashbot {
         return response;
       }
 
-      // For CLI, stream to console
+      // For CLI, stream to console (thinking is streamed in real-time via thinkingDisplay)
       await this.grokClient.chat(trimmed);
+      // Show indicator if thinking was hidden during streaming
+      thinkingDisplay.showCollapsedIndicator();
       console.log(inputClose());
     } catch (error) {
       // Don't show error for aborted requests

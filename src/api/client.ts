@@ -2,7 +2,7 @@
  * Grok API Client with Streaming and Thinking Mode
  */
 
-import { colors, c, ThinkingAnimation } from '../ui/colors';
+import { colors, c, ThinkingAnimation, thinkingDisplay } from '../ui/colors';
 import {
   imageBuffer,
   getRecentImages,
@@ -173,6 +173,7 @@ export class GrokClient {
     const messageHasImages = recentImages.length > 0;
 
     let finalResponse = '';
+    let finalThinking = '';
 
     // Track files read in this conversation to prevent duplicate reads
     const filesReadThisTurn = new Set<string>();
@@ -182,13 +183,17 @@ export class GrokClient {
     // Agentic loop: execute actions and feed results back (no iteration limit)
     while (true) {
       let responseContent: string;
+      let thinkingContent: string;
       try {
-        responseContent = await this.streamResponse();
+        const result = await this.streamResponse();
+        responseContent = result.content;
+        thinkingContent = result.thinking;
       } catch (error: any) {
         console.error(`\n${c.error('[API Error]')} ${error.message || error}`);
         throw error;
       }
       finalResponse = responseContent;
+      finalThinking += thinkingContent;
 
       // Clear images after first API call (they've been sent, don't need image model anymore)
       if (messageHasImages && hasImagesInBuffer()) {
@@ -324,11 +329,11 @@ export class GrokClient {
 
     return {
       response: cleanResponse,
-      thinking: '',
+      thinking: finalThinking,
     };
   }
 
-  private async streamResponse(): Promise<string> {
+  private async streamResponse(): Promise<{ content: string; thinking: string }> {
     const now = new Date().toLocaleTimeString('fr-FR', {
       hour: '2-digit',
       minute: '2-digit',
@@ -344,17 +349,20 @@ export class GrokClient {
     };
 
     let responseContent = '';
+    let thinkingContent = '';
     let displayedContent = '';
     let buffer = '';
     const thinking = new ThinkingAnimation();
     this.currentThinking = thinking;
     let firstChunk = true;
+    let thinkingStreamStarted = false;
 
     // Create abort controller for this request
     this.abortController = new AbortController();
 
-    // Start thinking animation
+    // Start thinking animation and thinking display stream
     thinking.start('Thinking...', this.workDir);
+    thinkingDisplay.startStream();
 
     // Track request
     this.usage.requests++;
@@ -408,9 +416,17 @@ export class GrokClient {
               this.usage.totalTokens += parsed.usage.total_tokens || 0;
             }
 
-            // Skip reasoning/thinking content from reasoning models
+            // Capture reasoning/thinking content from reasoning models
             if (delta?.reasoning_content) {
-              continue;
+              // Stop spinner on first thinking chunk only if thinking display is visible (so it doesn't conflict)
+              if (!thinkingStreamStarted && this.currentThinking && thinkingDisplay.isVisible()) {
+                thinking.stop();
+                this.currentThinking = null;
+                thinkingStreamStarted = true;
+              }
+              thinkingContent += delta.reasoning_content;
+              // Stream thinking content in real-time
+              thinkingDisplay.streamChunk(delta.reasoning_content);
             }
 
             if (content) {
@@ -441,12 +457,16 @@ export class GrokClient {
                 const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
                 const newContent = normalized.slice(displayedContent.length);
                 if (newContent) {
-                  // Stop thinking animation only when we have actual content to display
+                  // Stop thinking animation and close thinking box when content arrives
                   if (firstChunk) {
-                    const duration = thinking.stop();
-                    this.currentThinking = null;
+                    // Stop spinner if still running
+                    if (this.currentThinking) {
+                      thinking.stop();
+                      this.currentThinking = null;
+                    }
+                    // Close thinking box before showing response
+                    thinkingDisplay.endStream();
                     firstChunk = false;
-                    process.stdout.write(`${colors.muted}${duration}${colors.reset} `);
                   }
                   process.stdout.write(newContent);
                   displayedContent = normalized;
@@ -463,7 +483,14 @@ export class GrokClient {
       if (this.currentThinking) {
         const duration = thinking.stop();
         this.currentThinking = null;
-        process.stdout.write(`${colors.muted}${duration}${colors.reset} `);
+        // End thinking stream first, then show duration
+        if (thinkingDisplay.isStreaming()) {
+          thinkingDisplay.endStream();
+        }
+        process.stdout.write(`\n${colors.muted}${duration}${colors.reset}`);
+      } else if (thinkingDisplay.isStreaming()) {
+        // Edge case: thinking stream still active but animation already stopped
+        thinkingDisplay.endStream();
       }
       this.abortController = null;
     }
@@ -480,7 +507,7 @@ export class GrokClient {
     // Always add newline after streaming (ensures spacing before actions)
     process.stdout.write('\n');
 
-    return responseContent;
+    return { content: responseContent, thinking: thinkingContent };
   }
 
   clearHistory(): void {
