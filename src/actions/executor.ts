@@ -17,7 +17,6 @@ import {
   executeGlob,
   executeGrep,
   executeLS,
-  executeGit,
   executeFetch,
   executeSearch,
   executeFormat,
@@ -65,7 +64,6 @@ export async function executeActions(
   if (oneAtATime && actions.length > 1 && results.length > 0) {
     const skippedCount = actions.length - 1;
     const skippedActions = actions.slice(1).map(a => {
-      if (a.type === 'git') return `git ${(a as any).command}`;
       if (a.type === 'exec') return `exec: ${(a as any).command}`;
       return a.type;
     });
@@ -106,10 +104,6 @@ async function executeAction(
       return executeGrep(action, handlers);
     case 'ls':
       return executeLS(action, handlers);
-
-    // Git Operations
-    case 'git':
-      return executeGit(action, handlers);
 
     // Web Operations
     case 'fetch':

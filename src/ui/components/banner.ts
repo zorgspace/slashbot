@@ -22,6 +22,7 @@ export interface BannerOptions {
   telegram?: boolean;
   discord?: boolean;
   voice?: boolean;
+  cookTime?: number;
 }
 
 export function banner(options: BannerOptions = {}): string {
@@ -33,6 +34,7 @@ export function banner(options: BannerOptions = {}): string {
     telegram,
     discord,
     voice,
+    cookTime,
   } = options;
   const cwd = workingDir || process.cwd();
   const shortCwd = cwd.replace(process.env.HOME || '', '~');
@@ -74,6 +76,11 @@ export function banner(options: BannerOptions = {}): string {
   // Add border
   const width = Math.min(process.stdout.columns || 80, 60);
   result += `${colors.muted}${'─'.repeat(width)}${colors.reset}\n`;
+
+  // Add cook time if provided
+  if (cookTime !== undefined) {
+    result += `${colors.muted}Cooked for ${cookTime}s${colors.reset}\n`;
+  }
 
   return result;
 }

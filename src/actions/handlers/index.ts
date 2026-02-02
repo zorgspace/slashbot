@@ -11,9 +11,6 @@ export { executeRead, executeEdit, executeMultiEdit, executeWrite, executeCreate
 // Search handlers
 export { executeGlob, executeGrep, executeLS } from './search';
 
-// Git handlers
-export { executeGit } from './git';
-
 // Web handlers
 export { executeFetch, executeSearch } from './web';
 

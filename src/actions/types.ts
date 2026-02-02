@@ -14,7 +14,6 @@ export type ActionType =
   | 'ls'
   | 'fetch'
   | 'search'
-  | 'git'
   | 'format'
   | 'schedule'
   | 'notify'
@@ -111,24 +110,6 @@ export interface BashAction {
 export interface ExecAction {
   type: 'exec';
   command: string;
-}
-
-// ===== Git Operations =====
-
-export interface GitAction {
-  type: 'git';
-  command:
-    | 'status'
-    | 'diff'
-    | 'log'
-    | 'branch'
-    | 'add'
-    | 'commit'
-    | 'checkout'
-    | 'stash'
-    | 'push'
-    | 'pull';
-  args?: string;
 }
 
 // ===== Web Operations =====
@@ -259,7 +240,6 @@ export type Action =
   | LSAction
   | BashAction
   | ExecAction
-  | GitAction
   | FetchAction
   | SearchAction
   | FormatAction
@@ -329,7 +309,6 @@ export interface ActionHandlers {
   onGlob?: (pattern: string, basePath?: string) => Promise<string[]>;
   onGrep?: (pattern: string, options?: GrepOptions) => Promise<string>;
   onLS?: (path: string, ignore?: string[]) => Promise<string[]>;
-  onGit?: (command: string, args?: string) => Promise<string>;
   onFetch?: (url: string, prompt?: string) => Promise<string>;
   onSearch?: (
     query: string,

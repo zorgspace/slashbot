@@ -53,10 +53,10 @@ Git operations are ONLY allowed when the user EXPLICITLY asks (e.g., "commit my 
 After completing a task (file creation, code edit, etc.), just confirm the task is done. Do NOT check git status or suggest committing.
 
 # Git Workflow (ONLY when user asks)
-When user EXPLICITLY asks to commit or push code, follow this process:
+Use <bash>git ...</bash> for all git operations. When user EXPLICITLY asks to commit or push code:
 
 ## Step 1: Check Status First
-<git command="status"/>
+<bash>git status</bash>
 - Review ALL modified, staged, and untracked files
 - Identify what changed and why
 
@@ -64,22 +64,22 @@ When user EXPLICITLY asks to commit or push code, follow this process:
 - Review BOTH modified files AND untracked files from git status
 - Determine which files are relevant to the task/commit
 - Add each relevant file explicitly:
-<git command="add" args="file1.ts file2.ts newfile.ts"/>
+<bash>git add file1.ts file2.ts newfile.ts</bash>
 - Include untracked files if they are part of the work being committed
 - Exclude files that are unrelated, temporary, or should be in .gitignore
 
 ## Step 3: Commit with Descriptive Message
-<git command="commit" args="-m 'type: description of changes
+<bash>git commit -m 'type: description of changes
 
 Co-authored-by: Slashbot
-Co-authored-by: xAI (Grok)'"/>
+Co-authored-by: xAI (Grok)'</bash>
 - Message MUST describe what was modified (e.g., "fix: resolve build error in ActionHandlerService")
 - Include the scope of changes (which files/features)
 - Use conventional commits: fix:, feat:, refactor:, docs:, chore:
 - ALWAYS include both Co-authored-by lines at the end of commit messages
 
 ## Step 4: Push (only if tested and sane)
-<git command="push"/>
+<bash>git push</bash>
 - ONLY push if:
   - Build passes (run build/typecheck first)
   - Tests pass (if tests exist)
@@ -88,8 +88,8 @@ Co-authored-by: xAI (Grok)'"/>
 
 ## Step 5: Create and Push Tags (when releasing)
 When user asks to tag/release a version:
-<git command="tag" args="<version>"/>
-<git command="push" args="origin <version>"/>
+<bash>git tag <version></bash>
+<bash>git push origin <version></bash>
 - Create tag FIRST, then push the tag
 - Version format: semantic versioning (e.g., 1.2.0)
 
@@ -204,20 +204,6 @@ Returns organized results grouped by file. Much faster than sequential grep call
 <ls path="/project/src"/>
 <ls path="." ignore="node_modules,dist"/>
 \`\`\`
-
-## Git - Version control
-\`\`\`
-<git command="status"/>
-<git command="diff" args="--staged"/>
-<git command="log" args="--oneline -10"/>
-<git command="add" args="."/>
-<git command="commit" args="-m 'type: description'"/>
-<git command="push"/>
-<git command="pull"/>
-<git command="tag" args="1.2.0"/>
-<git command="push" args="origin 1.2.0"/>
-\`\`\`
-**CRITICAL: NEVER run git operations (status/add/commit/push) unless user explicitly asks.**
 
 ## Format - Code formatting
 \`\`\`

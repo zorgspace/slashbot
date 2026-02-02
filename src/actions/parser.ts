@@ -17,7 +17,6 @@ import type {
   GlobAction,
   GrepAction,
   LSAction,
-  GitAction,
   FetchAction,
   SearchAction,
   FormatAction,
@@ -55,7 +54,6 @@ function fixTruncatedTags(content: string): string {
     'glob',
     'grep',
     'ls',
-    'git',
     'fetch',
     'search',
     'format',
@@ -160,10 +158,6 @@ const PATTERNS = {
   grep: /<grep\s+[^>]*(?:\/>|>[\s\S]*?<\/grep>)/gi,
   // <ls path="/dir"/> or <ls path="/dir" ignore="node_modules,dist"/>
   ls: /<ls\s+[^>]*\/?>/gi,
-
-  // ===== Git Operations =====
-  // <git command="status"/> or <git command="diff" args="--staged"/>
-  git: /<git\s+[^>]*\/?>/gi,
 
   // ===== Web Operations =====
   // <fetch url="..."/> or <fetch url="..." prompt="..."/>
@@ -443,37 +437,6 @@ export function parseActions(content: string): Action[] {
         path,
         ignore: ignoreStr ? ignoreStr.split(',').map(s => s.trim()) : undefined,
       } as LSAction);
-    }
-  }
-
-  // ===== Git Operations =====
-
-  // Parse git actions
-  const gitRegex = new RegExp(PATTERNS.git.source, 'gi');
-  while ((match = gitRegex.exec(safeContent)) !== null) {
-    const fullTag = match[0];
-    const command = extractAttr(fullTag, 'command');
-    const args = extractAttr(fullTag, 'args');
-    if (
-      command &&
-      [
-        'status',
-        'diff',
-        'log',
-        'branch',
-        'add',
-        'commit',
-        'checkout',
-        'stash',
-        'push',
-        'pull',
-      ].includes(command)
-    ) {
-      actions.push({
-        type: 'git',
-        command: command as GitAction['command'],
-        args: args || undefined,
-      } as GitAction);
     }
   }
 

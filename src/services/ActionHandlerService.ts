@@ -233,45 +233,6 @@ export class ActionHandlerService {
         }
       },
 
-      onGit: async (command, args) => {
-        const workDir = this.codeEditor.getWorkDir();
-
-        let gitCmd = `git ${command}`;
-        if (args) {
-          gitCmd += ` ${args}`;
-        }
-
-        if (command === 'log' && !args?.includes('-n') && !args?.includes('--oneline')) {
-          gitCmd += ' -n 20';
-        }
-
-        try {
-          const { exec } = await import('child_process');
-          const { promisify } = await import('util');
-          const execAsync = promisify(exec);
-          const { stdout, stderr } = await execAsync(gitCmd, {
-            cwd: workDir,
-            timeout: 30000,
-          });
-
-          // For push, always show both stdout and stderr for clarity
-          // "Everything up-to-date" goes to stderr, not stdout
-          if (command === 'push') {
-            const output = [stdout, stderr].filter(s => s?.trim()).join('\n');
-            if (!output || output.includes('Everything up-to-date')) {
-              return 'Nothing to push - local branch matches remote (no new commits)';
-            }
-            return output;
-          }
-
-          // For other commands, combine stdout and stderr
-          const output = [stdout, stderr].filter(s => s?.trim()).join('\n');
-          return output || 'OK';
-        } catch (error: any) {
-          return `Error: ${error.message || error}`;
-        }
-      },
-
       onFormat: async path => {
         const workDir = this.codeEditor.getWorkDir();
         try {
