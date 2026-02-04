@@ -4,6 +4,9 @@
  * A Claude Code-inspired terminal assistant using X.AI's Grok API.
  */
 
+// Must be first: suppress bigint-buffer native binding warning
+import './patches/suppress-bigint-warning';
+
 import {
   banner,
   inputPrompt,
