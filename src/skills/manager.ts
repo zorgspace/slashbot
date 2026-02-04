@@ -218,10 +218,12 @@ export function createSkillManager(_basePath?: string): SkillManager {
 
         for (const entry of entries) {
           if (entry.isDirectory()) {
-            // Check for skill.md inside directory
-            const skillPath = path.join(skillsDir, entry.name, 'skill.md');
-            const file = Bun.file(skillPath);
-            if (await file.exists()) {
+            // Check for skill.md inside directory (case-insensitive)
+            const dirEntries = await readdir(path.join(skillsDir, entry.name));
+            const skillFile = dirEntries.find(f => f.toLowerCase() === 'skill.md');
+            if (skillFile) {
+              const skillPath = path.join(skillsDir, entry.name, skillFile);
+              const file = Bun.file(skillPath);
               const content = await file.text();
               const { metadata } = parseSkillMetadata(content);
               skills.push({
@@ -252,20 +254,27 @@ export function createSkillManager(_basePath?: string): SkillManager {
     },
 
     async getSkill(name: string): Promise<Skill | null> {
+      const { readdir } = await import('fs/promises');
       const normalizedName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
-      // Check for directory-based skill first
-      const dirPath = path.join(skillsDir, normalizedName, 'skill.md');
-      const dirFile = Bun.file(dirPath);
-      if (await dirFile.exists()) {
-        const content = await dirFile.text();
-        const { metadata } = parseSkillMetadata(content);
-        return {
-          name: normalizedName,
-          path: dirPath,
-          content,
-          metadata,
-        };
+      // Check for directory-based skill first (case-insensitive skill.md lookup)
+      const skillDirPath = path.join(skillsDir, normalizedName);
+      try {
+        const dirEntries = await readdir(skillDirPath);
+        const skillFile = dirEntries.find(f => f.toLowerCase() === 'skill.md');
+        if (skillFile) {
+          const dirPath = path.join(skillDirPath, skillFile);
+          const content = await Bun.file(dirPath).text();
+          const { metadata } = parseSkillMetadata(content);
+          return {
+            name: normalizedName,
+            path: dirPath,
+            content,
+            metadata,
+          };
+        }
+      } catch {
+        // Directory doesn't exist, continue to file-based check
       }
 
       // Check for file-based skill
@@ -553,17 +562,23 @@ export function createSkillManager(_basePath?: string): SkillManager {
       }
 
       let prompt = '\n\n# Installed Skills\n';
+      prompt += 'The following skills are installed locally. Use them when the user request matches their purpose or triggers.\n\n';
 
       for (const skill of skills) {
         const desc = skill.metadata?.description || 'No description';
         const version = skill.metadata?.version ? ` v${skill.metadata.version}` : '';
-        prompt += `- **${skill.name}**${version}: ${desc}\n`;
+        const triggers = skill.metadata?.triggers?.length
+          ? ` (triggers: ${skill.metadata.triggers.join(', ')})`
+          : '';
+        prompt += `- **${skill.name}**${version}: ${desc}${triggers}\n`;
       }
 
-      prompt +=
-        '\nTo use: [[skill name="skill_name"/]] → then execute curl commands from the loaded content.\n';
-      prompt +=
-        '\n**IMPORTANT:** When using a skill, follow its documentation completely. Do NOT search for additional information unless the skill file explicitly lacks what you need. The skill documentation is your primary and authoritative source.\n';
+      prompt += '\n## How to use skills\n';
+      prompt += '- Load a skill with: <skill name="skill_name"/>\n';
+      prompt += '- The skill content will be returned, then follow its instructions\n';
+      prompt += '- BEFORE doing a web search, check if an installed skill can answer the question\n';
+      prompt += '- When a user request matches a skill\'s triggers or purpose, load that skill first\n';
+      prompt += '\n**IMPORTANT:** When using a skill, follow its documentation completely. The skill is your primary and authoritative source - do NOT search for additional information unless the skill explicitly lacks what you need.\n';
 
       return prompt;
     },

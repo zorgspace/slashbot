@@ -4,13 +4,89 @@
 
 import { colors } from '../core';
 
+// Clear current line (removes any prompt character before output)
+const clearLine = () => process.stdout.write('\r\x1b[K');
+
 // No display limit - show full output
 function truncateForDisplay(text: string): string {
   return text; // No truncation
 }
 
+/**
+ * Macro function for displaying step actions
+ * @param actionName - The name of the action (e.g., "Read", "Say", "Grep")
+ * @param actionParam - The parameter(s) to display (e.g., file path, pattern)
+ * @param output - Optional output/result to display below the action
+ * @param options - Display options
+ */
+export function stepAction(
+  actionName: string,
+  actionParam: string,
+  output?: string,
+  options: {
+    bullet?: 'filled' | 'empty'; // ● or ○
+    color?: string; // Color for action name (default: violet)
+    outputColor?: string; // Color for output (default: white)
+    outputPrefix?: string; // Prefix for output (default: "⎿  ")
+  } = {},
+): void {
+  const {
+    bullet = 'filled',
+    color = colors.violet,
+    outputColor = colors.white,
+    outputPrefix = '⎿  ',
+  } = options;
+
+  const bulletChar = bullet === 'filled' ? '●' : '○';
+  const bulletColor = bullet === 'filled' ? color : colors.white;
+
+  // Display action line: ● ActionName(param)
+  console.log(
+    `${bulletColor}${bulletChar}${colors.reset} ${color}${actionName}${colors.reset}(${actionParam})`,
+  );
+
+  // Display output if provided
+  if (output !== undefined) {
+    const lines = output.split('\n');
+    lines.forEach((line, i) => {
+      const prefix = i === 0 ? outputPrefix : '   ';
+      console.log(`  ${outputColor}${prefix}${line}${colors.reset}`);
+    });
+  }
+}
+
+/**
+ * Shorthand for common action patterns
+ */
+export const stepMacro = {
+  /** Display action with violet bullet and optional output */
+  action: (name: string, param: string, output?: string) =>
+    stepAction(name, param, output, { bullet: 'filled', color: colors.violet }),
+
+  /** Display action with white empty bullet (for say/message actions) */
+  message: (name: string, param: string, output?: string) =>
+    stepAction(name, param, output, { bullet: 'empty', color: colors.white }),
+
+  /** Display action with info/blue bullet */
+  info: (name: string, param: string, output?: string) =>
+    stepAction(name, param, output, { bullet: 'filled', color: colors.info }),
+
+  /** Display success output */
+  success: (name: string, param: string, output: string) =>
+    stepAction(name, param, `✓ ${output}`, { bullet: 'filled', color: colors.violet, outputColor: colors.green }),
+
+  /** Display error output */
+  error: (name: string, param: string, output: string) =>
+    stepAction(name, param, `Error: ${output}`, { bullet: 'filled', color: colors.violet, outputColor: colors.error }),
+};
+
 // Claude Code-style output formatting
 export const step = {
+  // Add a blank line for visual separation between action groups
+  newline: () => {
+    console.log();
+  },
+
   // Assistant message/thought (blue bullet)
   message: (text: string) => {
     console.log(`${colors.info}●${colors.reset} ${text}`);
@@ -18,6 +94,7 @@ export const step = {
 
   // Tool call: ● ToolName(args) - blue bullet and name
   tool: (toolName: string, args?: string) => {
+    clearLine(); // Clear any prompt before output
     const argsStr = args ? `(${args})` : '';
     console.log(
       `${colors.info}●${colors.reset} ${colors.info}${toolName}${colors.reset}${argsStr}`,
@@ -27,6 +104,7 @@ export const step = {
   // Tool result: ⎿  Result text (indented, white for reads, green for success messages)
   // Display truncated to MAX_DISPLAY_LINES, full output kept for LLM context
   result: (text: string, isError = false) => {
+    clearLine(); // Clear any prompt before output
     const truncated = truncateForDisplay(text);
     const lines = truncated.split('\n');
     // Use green for success indicators, red for errors, white for general info
@@ -45,10 +123,8 @@ export const step = {
   },
 
   // Read action: ● Read(file_path) - violet bullet and name
-  read: (filePath: string) => {
-    console.log(
-      `${colors.violet}●${colors.reset} ${colors.violet}Read${colors.reset}(${filePath})`,
-    );
+  read: (filePath: string, output?: string) => {
+    stepAction('Read', filePath, output);
   },
 
   // Read result: ⎿  Read N lines - white
@@ -57,9 +133,9 @@ export const step = {
   },
 
   // Grep action: ● Grep(pattern, file) - violet bullet and name
-  grep: (pattern: string, filePattern?: string) => {
+  grep: (pattern: string, filePattern?: string, output?: string) => {
     const args = filePattern ? `"${pattern}", "${filePattern}"` : `"${pattern}"`;
-    console.log(`${colors.violet}●${colors.reset} ${colors.violet}Grep${colors.reset}(${args})`);
+    stepAction('Grep', args, output);
   },
 
   // Grep result: ⎿  Found N matches - white (read operation)
@@ -81,10 +157,8 @@ export const step = {
   },
 
   // Bash/Exec action: ● Exec(command) - violet bullet and name
-  bash: (command: string) => {
-    console.log(
-      `${colors.violet}●${colors.reset} ${colors.violet}Exec${colors.reset}(${command})`,
-    );
+  bash: (command: string, output?: string) => {
+    stepAction('Exec', command, output);
   },
 
   // Bash result: just show status (output is streamed in real-time)
@@ -103,10 +177,8 @@ export const step = {
   },
 
   // Edit/Update action: ● Edit(file_path) - violet bullet
-  update: (filePath: string) => {
-    console.log(
-      `${colors.violet}●${colors.reset} ${colors.violet}Edit${colors.reset}(${filePath})`,
-    );
+  update: (filePath: string, output?: string) => {
+    stepAction('Edit', filePath, output);
   },
 
   // Edit result indicator - golf green
@@ -124,10 +196,8 @@ export const step = {
   },
 
   // Create action: ● Create(file_path) - violet bullet
-  write: (filePath: string) => {
-    console.log(
-      `${colors.violet}●${colors.reset} ${colors.violet}Create${colors.reset}(${filePath})`,
-    );
+  write: (filePath: string, output?: string) => {
+    stepAction('Create', filePath, output);
   },
 
   // Create result - golf green
@@ -141,15 +211,13 @@ export const step = {
   },
 
   // Schedule action - violet bullet
-  schedule: (name: string, cron: string) => {
-    console.log(
-      `${colors.violet}●${colors.reset} ${colors.violet}Schedule${colors.reset}(${name}, "${cron}")`,
-    );
+  schedule: (name: string, cron: string, output?: string) => {
+    stepAction('Schedule', `${name}, "${cron}"`, output);
   },
 
   // Skill action - violet bullet
-  skill: (name: string) => {
-    console.log(`${colors.violet}●${colors.reset} ${colors.violet}Skill${colors.reset}(${name})`);
+  skill: (name: string, output?: string) => {
+    stepAction('Skill', name, output);
   },
 
   // Success result - golf green with checkmark
@@ -198,7 +266,62 @@ export const step = {
 
   // Thinking/status message
   thinking: (text: string) => {
+    clearLine(); // Clear any prompt before output
     console.log(`${colors.white}●${colors.reset} ${colors.muted}${text}${colors.reset}`);
+  },
+
+  // Image loaded action: ● Image(source, size) - violet bullet
+  image: (source: string, sizeKB: number, output?: string) => {
+    stepAction('Image', `${source}, ${sizeKB}KB`, output);
+  },
+
+  // Image result - green
+  imageResult: () => {
+    console.log(`  ${colors.green}⎿  Ready${colors.reset}`);
+  },
+
+  // Connector action: ● Telegram(action) - cyan bullet
+  connector: (source: string, action: string, output?: string) => {
+    clearLine(); // Clear any prompt before output
+    const sourceName = source.charAt(0).toUpperCase() + source.slice(1);
+    stepAction(sourceName, action, output, { bullet: 'filled', color: colors.info });
+  },
+
+  // Connector result - white
+  connectorResult: (message: string) => {
+    clearLine(); // Clear any prompt/spinner before output
+    process.stdout.write('\n'); // Ensure we're on a new line after any spinner
+    console.log(`  ${colors.white}⎿  ${message}${colors.reset}`);
+  },
+
+  // Say action: ○ Say() in white, then ⎿ message
+  say: (message: string) => {
+    stepAction('Say', '', message, { bullet: 'empty', color: colors.white });
+  },
+
+  // Heartbeat action: ● Heartbeat(mode) - blue circle
+  heartbeat: (mode: string = 'reflection') => {
+    clearLine();
+    stepAction('Heartbeat', mode, undefined, { bullet: 'filled', color: colors.blue });
+  },
+
+  // Heartbeat result - blue for OK, yellow for alert
+  heartbeatResult: (_isOk: boolean) => {
+  },
+
+  // Heartbeat update action: ● HeartbeatUpdate() - blue circle
+  heartbeatUpdate: () => {
+    clearLine();
+    stepAction('HeartbeatUpdate', 'HEARTBEAT.md', undefined, { bullet: 'filled', color: colors.blue });
+  },
+
+  // Heartbeat update result - green for success, red for failure
+  heartbeatUpdateResult: (success: boolean) => {
+    if (success) {
+      console.log(`  ${colors.green}⎿  Updated HEARTBEAT.md${colors.reset}`);
+    } else {
+      console.log(`  ${colors.error}⎿  Failed to update HEARTBEAT.md${colors.reset}`);
+    }
   },
 
   end: () => {},

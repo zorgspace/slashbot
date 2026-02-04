@@ -9,8 +9,6 @@ import type { CommandHandler, CommandContext } from '../registry';
 const AVAILABLE_MODELS = [
   'grok-4-1-fast-reasoning',
   'grok-4-1-fast-non-reasoning',
-  'grok-3-fast',
-  'grok-3-mini-fast',
   'grok-code-fast-1',
 ] as const;
 

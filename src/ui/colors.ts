@@ -41,7 +41,7 @@ export {
 export { ThinkingAnimation } from './animations/thinking';
 
 // Step display
-export { step, statusLine, buildStatus } from './display/step';
+export { step, stepAction, stepMacro, statusLine, buildStatus } from './display/step';
 
 // File viewer
 export { FileViewer, fileViewer } from './display/file-viewer';

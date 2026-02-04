@@ -17,7 +17,8 @@ export class ThinkingAnimation {
     this.frameIndex = 0;
     this.startTime = Date.now();
     this.contextPath = contextPath || '';
-    process.stdout.write(`${colors.violetLight}${this.frames[0]} ${this.text}${colors.reset}`);
+    // Clear line before starting to prevent flicker from existing content
+    process.stdout.write(`\r\x1b[K${colors.violetLight}${this.frames[0]} ${this.text}${colors.reset}`);
 
     this.interval = setInterval(() => {
       this.frameIndex = (this.frameIndex + 1) % this.frames.length;

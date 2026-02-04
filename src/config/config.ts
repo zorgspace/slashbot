@@ -14,13 +14,16 @@ export interface TelegramConfig {
 
 export interface DiscordConfig {
   botToken: string;
-  channelId: string;
+  channelId: string; // Primary channel
+  channelIds?: string[]; // Additional authorized channels
+  ownerId?: string; // Owner user ID for private threads
 }
 
 export interface SlashbotConfig {
   apiKey?: string;
   openaiApiKey?: string;
   model?: string;
+  paymentMode?: string;
   telegram?: TelegramConfig;
   discord?: DiscordConfig;
 }
@@ -183,17 +186,81 @@ export class ConfigManager {
     return this.telegram;
   }
 
-  async saveDiscordConfig(botToken: string, channelId: string): Promise<void> {
+  async saveDiscordConfig(botToken: string, channelId: string, channelIds?: string[], ownerId?: string): Promise<void> {
     const { mkdir } = await import('fs/promises');
     await mkdir(CONFIG_DIR, { recursive: true });
 
     this.discord = { botToken, channelId };
+    if (channelIds && channelIds.length > 0) {
+      this.discord.channelIds = channelIds;
+    }
+    if (ownerId) {
+      this.discord.ownerId = ownerId;
+    }
 
     // Preserve other credentials
     const creds: any = { discord: this.discord };
     if (this.config.apiKey) creds.apiKey = this.config.apiKey;
     if (this.telegram) creds.telegram = this.telegram;
     await Bun.write(CREDENTIALS_FILE, JSON.stringify(creds, null, 2));
+  }
+
+  async addDiscordChannel(channelId: string): Promise<void> {
+    if (!this.discord) {
+      throw new Error('Discord not configured');
+    }
+
+    if (!this.discord.channelIds) {
+      this.discord.channelIds = [];
+    }
+
+    if (!this.discord.channelIds.includes(channelId) && channelId !== this.discord.channelId) {
+      this.discord.channelIds.push(channelId);
+      await this.saveDiscordConfig(
+        this.discord.botToken,
+        this.discord.channelId,
+        this.discord.channelIds,
+        this.discord.ownerId
+      );
+    }
+  }
+
+  async removeDiscordChannel(channelId: string): Promise<boolean> {
+    if (!this.discord || !this.discord.channelIds) {
+      return false;
+    }
+
+    // Don't remove primary channel
+    if (channelId === this.discord.channelId) {
+      return false;
+    }
+
+    const idx = this.discord.channelIds.indexOf(channelId);
+    if (idx > -1) {
+      this.discord.channelIds.splice(idx, 1);
+      await this.saveDiscordConfig(
+        this.discord.botToken,
+        this.discord.channelId,
+        this.discord.channelIds,
+        this.discord.ownerId
+      );
+      return true;
+    }
+    return false;
+  }
+
+  async setDiscordOwnerId(ownerId: string): Promise<void> {
+    if (!this.discord) {
+      throw new Error('Discord not configured');
+    }
+
+    this.discord.ownerId = ownerId;
+    await this.saveDiscordConfig(
+      this.discord.botToken,
+      this.discord.channelId,
+      this.discord.channelIds,
+      ownerId
+    );
   }
 
   async clearDiscordConfig(): Promise<void> {

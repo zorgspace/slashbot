@@ -2,15 +2,17 @@
  * Discord Connector for Slashbot
  *
  * RULES:
- * - Messages are only accepted from the authorized channelId
+ * - Messages are accepted from any authorized channel in channelIds
  * - Responses are ALWAYS sent back to the same channel that sent the message
  * - Voice attachments (ogg/mp3/wav) are transcribed and processed as text
  * - Max message length: 2000 chars (auto-split if longer)
  * - Only one instance can run Discord at a time (uses lock file)
+ * - Bot can create private threads with authorized users
  */
 
-import { Client, GatewayIntentBits, Message as DiscordMessage } from 'discord.js';
+import { Client, GatewayIntentBits, Message as DiscordMessage, ChannelType, ThreadAutoArchiveDuration, TextChannel, PermissionFlagsBits } from 'discord.js';
 import { c } from '../ui/colors';
+import { step } from '../ui/display/step';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
 import { getTranscriptionService } from '../services/transcription';
 import { imageBuffer } from '../code/imageBuffer';
@@ -19,7 +21,9 @@ import type { EventBus } from '../events/EventBus';
 
 export interface DiscordConfig {
   botToken: string;
-  channelId: string; // Authorized channel ID
+  channelId: string; // Primary channel ID (for backwards compatibility)
+  channelIds?: string[]; // Multiple authorized channel IDs
+  ownerId?: string; // Owner user ID for creating private threads
 }
 
 export class DiscordConnector implements Connector {
@@ -27,8 +31,10 @@ export class DiscordConnector implements Connector {
   readonly config = PLATFORM_CONFIGS.discord;
 
   private client: Client;
-  private channelId: string;
+  private channelIds: Set<string>; // All authorized channel IDs
+  private primaryChannelId: string; // Primary channel for backwards compatibility
   private replyTargetChannelId: string; // Track where to send replies
+  private ownerId: string | null = null; // Owner user ID
   private messageHandler: MessageHandler | null = null;
   private eventBus: EventBus | null = null;
   private running = false;
@@ -42,22 +48,34 @@ export class DiscordConnector implements Connector {
         GatewayIntentBits.DirectMessages,
       ],
     });
-    this.channelId = config.channelId;
-    this.replyTargetChannelId = config.channelId; // Default to configured channelId
+
+    // Build set of authorized channels
+    this.channelIds = new Set<string>();
+    this.primaryChannelId = config.channelId;
+    this.channelIds.add(config.channelId);
+    if (config.channelIds) {
+      for (const id of config.channelIds) {
+        this.channelIds.add(id);
+      }
+    }
+
+    this.replyTargetChannelId = config.channelId; // Default to primary channel
+    this.ownerId = config.ownerId || null;
     this.setupHandlers(config.botToken);
   }
 
   private setupHandlers(token: string): void {
     this.client.once('ready', () => {
-      console.log(c.success(`[Discord] Connected as ${this.client.user?.tag}`));
+      step.connector('discord', 'connected');
+      step.connectorResult(this.client.user?.tag || 'unknown');
     });
 
     this.client.on('messageCreate', async (message: DiscordMessage) => {
       // Ignore bot messages
       if (message.author.bot) return;
 
-      // Only respond in authorized channel
-      if (message.channelId !== this.channelId) return;
+      // Only respond in authorized channels
+      if (!this.channelIds.has(message.channelId)) return;
 
       if (!this.messageHandler) {
         await message.reply('Bot not fully initialized');
@@ -92,7 +110,7 @@ export class DiscordConnector implements Connector {
           // Process images and add to context
           for (const imgAtt of imageAttachments.values()) {
             try {
-              console.log(c.muted('[Discord] Downloading image...'));
+              step.connector('discord', 'image');
               const imageResponse = await fetch(imgAtt.url);
               const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString(
                 'base64',
@@ -100,13 +118,9 @@ export class DiscordConnector implements Connector {
               const mimeType = imgAtt.contentType || 'image/jpeg';
               const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
               imageBuffer.push(dataUrl);
-              console.log(
-                c.muted(
-                  `[Discord] Image added to context (${Math.round(imageBuffer64.length / 1024)}KB)`,
-                ),
-              );
+              step.connectorResult(`${Math.round(imageBuffer64.length / 1024)}KB`);
             } catch (imgErr) {
-              console.log(c.error(`[Discord] Failed to download image: ${imgErr}`));
+              step.error(`Failed to download: ${imgErr}`);
             }
           }
 
@@ -126,7 +140,7 @@ export class DiscordConnector implements Connector {
               return;
             }
 
-            console.log(c.muted('[Discord] Transcribing voice message...'));
+            step.connector('discord', 'transcribe');
             const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
 
             if (!result || !result.text) {
@@ -134,7 +148,7 @@ export class DiscordConnector implements Connector {
               return;
             }
 
-            console.log(c.muted(`[Discord] Voice: "${result.text.slice(0, 50)}..."`));
+            step.connectorResult(`"${result.text}"`);
             textContent = result.text;
           }
 
@@ -145,8 +159,10 @@ export class DiscordConnector implements Connector {
 
           if (!textContent) return;
 
-          // Process message
-          const response = await this.messageHandler(textContent, 'discord');
+          // Process message with channel-specific session
+          const response = await this.messageHandler(textContent, 'discord', {
+            sessionId: `discord:${message.channelId}`,
+          });
 
           if (response) {
             await this.sendMessageToChannel(message.channelId, response);
@@ -161,7 +177,8 @@ export class DiscordConnector implements Connector {
     });
 
     this.client.on('error', err => {
-      console.log(c.error(`[Discord] Error: ${err.message}`));
+      step.connector('discord', 'error');
+      step.error(err.message);
     });
 
     // Store token for start()
@@ -182,13 +199,8 @@ export class DiscordConnector implements Connector {
     // Try to acquire lock - only one instance can run Discord
     const lock = await acquireLock('discord');
     if (!lock.acquired) {
-      console.log(
-        c.warning(`[Discord] Another instance is already running (PID ${lock.existingPid})`),
-      );
-      if (lock.existingWorkDir) {
-        console.log(c.muted(`  Running in: ${lock.existingWorkDir}`));
-      }
-      console.log(c.muted(`  Discord connector disabled for this instance`));
+      step.connector('discord', 'locked');
+      step.connectorResult(`PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}`);
       return;
     }
 
@@ -200,8 +212,8 @@ export class DiscordConnector implements Connector {
       }
     } catch (error) {
       await releaseLock('discord');
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.log(c.error(`[Discord] Failed to start: ${errorMsg}`));
+      step.connector('discord', 'error');
+      step.error(error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
@@ -242,6 +254,138 @@ export class DiscordConnector implements Connector {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Create a private thread in a channel and optionally add the owner
+   * @param channelId - The text channel to create the thread in
+   * @param name - Name of the thread
+   * @param message - Optional initial message to send
+   * @returns The thread channel ID
+   */
+  async createPrivateThread(channelId: string, name: string, message?: string): Promise<string> {
+    if (!this.running) {
+      throw new Error('Discord bot not running');
+    }
+
+    const channel = await this.client.channels.fetch(channelId);
+    if (!channel || !(channel instanceof TextChannel)) {
+      throw new Error('Invalid text channel');
+    }
+
+    // Create a private thread
+    const thread = await channel.threads.create({
+      name,
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+      type: ChannelType.PrivateThread,
+      reason: 'Slashbot private conversation',
+    });
+
+    // Add the owner to the thread if configured
+    if (this.ownerId) {
+      try {
+        await thread.members.add(this.ownerId);
+      } catch {
+        // Owner might not be in the guild or other permission issue
+      }
+    }
+
+    // Automatically authorize this thread
+    this.channelIds.add(thread.id);
+
+    // Send initial message if provided
+    if (message) {
+      const chunks = splitMessage(message, this.config.maxMessageLength);
+      for (const chunk of chunks) {
+        await thread.send(chunk);
+      }
+    }
+
+    return thread.id;
+  }
+
+  /**
+   * Create a thread from a message (public or private based on permissions)
+   * @param messageId - The message to create thread from
+   * @param channelId - The channel containing the message
+   * @param name - Name of the thread
+   */
+  async createThreadFromMessage(messageId: string, channelId: string, name: string): Promise<string> {
+    if (!this.running) {
+      throw new Error('Discord bot not running');
+    }
+
+    const channel = await this.client.channels.fetch(channelId);
+    if (!channel || !(channel instanceof TextChannel)) {
+      throw new Error('Invalid text channel');
+    }
+
+    const message = await channel.messages.fetch(messageId);
+    const thread = await message.startThread({
+      name,
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+    });
+
+    // Authorize this thread
+    this.channelIds.add(thread.id);
+
+    return thread.id;
+  }
+
+  /**
+   * Add a channel to the authorized channels list
+   */
+  addChannel(channelId: string): void {
+    this.channelIds.add(channelId);
+  }
+
+  /**
+   * Remove a channel from the authorized channels list
+   */
+  removeChannel(channelId: string): boolean {
+    // Don't remove the primary channel
+    if (channelId === this.primaryChannelId) {
+      return false;
+    }
+    return this.channelIds.delete(channelId);
+  }
+
+  /**
+   * Get all authorized channel IDs
+   */
+  getChannelIds(): string[] {
+    return Array.from(this.channelIds);
+  }
+
+  /**
+   * Get the primary channel ID
+   */
+  getPrimaryChannelId(): string {
+    return this.primaryChannelId;
+  }
+
+  /**
+   * Send a message to a specific channel (must be authorized)
+   */
+  async sendToChannel(channelId: string, text: string): Promise<void> {
+    if (!this.channelIds.has(channelId)) {
+      throw new Error('Channel not authorized');
+    }
+    await this.sendMessageToChannel(channelId, text);
+  }
+
+  /**
+   * Set the owner user ID for private threads
+   */
+  setOwnerId(ownerId: string): void {
+    this.ownerId = ownerId;
+  }
+
+  /**
+   * Get the Discord client (for advanced operations)
+   */
+  getClient(): Client {
+    return this.client;
   }
 }
 

@@ -22,6 +22,8 @@ export interface BannerOptions {
   telegram?: boolean;
   discord?: boolean;
   voice?: boolean;
+  heartbeat?: boolean;
+  wallet?: boolean;
   cookTime?: number;
 }
 
@@ -34,6 +36,8 @@ export function banner(options: BannerOptions = {}): string {
     telegram,
     discord,
     voice,
+    heartbeat,
+    wallet,
     cookTime,
   } = options;
   const cwd = workingDir || process.cwd();
@@ -45,6 +49,12 @@ export function banner(options: BannerOptions = {}): string {
     badges.push(`${colors.green}●${colors.reset} ${colors.muted}Telegram${colors.reset}`);
   if (discord) badges.push(`${colors.green}●${colors.reset} ${colors.muted}Discord${colors.reset}`);
   if (voice) badges.push(`${colors.green}●${colors.reset} ${colors.muted}Voice${colors.reset}`);
+  // Heartbeat: green if active, red if inactive
+  const hbColor = heartbeat ? colors.green : colors.red;
+  badges.push(`${hbColor}●${colors.reset} ${colors.muted}Heartbeat${colors.reset}`);
+  // Wallet: green if unlocked, grey if locked
+  const walletColor = wallet ? colors.green : colors.muted;
+  badges.push(`${walletColor}●${colors.reset} ${colors.muted}Wallet${colors.reset}`);
   const statusLine = badges.length > 0 ? badges.join('  ') : '';
 
   // Skull logo - 9 chars wide (space + 7 blocks + space for alignment)

@@ -25,6 +25,7 @@ import type { SecureFileSystem } from '../fs/filesystem';
 import type { ConfigManager } from '../config/config';
 import type { CodeEditor } from '../code/editor';
 import type { SkillManager } from '../skills/manager';
+import type { HeartbeatService } from '../services/heartbeat';
 import type { Interface as ReadlineInterface } from 'readline';
 
 export interface CommandContext {
@@ -34,6 +35,7 @@ export interface CommandContext {
   configManager: ConfigManager;
   codeEditor: CodeEditor;
   skillManager: SkillManager;
+  heartbeatService?: HeartbeatService;
   connectors: Map<string, ConnectorHandle>;
   reinitializeGrok: () => Promise<void>;
   rl?: ReadlineInterface;

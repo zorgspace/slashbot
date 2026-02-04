@@ -40,7 +40,7 @@ function isRegexQuery(query: string): boolean {
 function generateWorkers(
   query: string,
   basePath: string,
-  depth: 'quick' | 'medium' | 'deep',
+  depth: 'quick' | 'medium' | 'deep' | 'comprehensive',
 ): SearchWorker[] {
   const workers: SearchWorker[] = [];
 
@@ -155,6 +155,165 @@ function generateWorkers(
       glob: '*.{json,yaml,yml,toml}',
       headLimit: 15,
       lineNumbers: true,
+    });
+  }
+
+  // Comprehensive: exhaustive search across all file types and contexts
+  if (depth === 'comprehensive') {
+    // Core code searches with maximum context
+    addWorker('main', patterns.main, {
+      path: basePath,
+      headLimit: 100,
+      lineNumbers: true,
+      context: 5,
+    });
+    addWorker('case-insensitive', patterns.main, {
+      path: basePath,
+      headLimit: 60,
+      lineNumbers: true,
+      context: 4,
+      caseInsensitive: true,
+    });
+
+    // Function and class definitions
+    addWorker('functions', patterns.funcDef, {
+      path: basePath,
+      headLimit: 40,
+      lineNumbers: true,
+      context: 4,
+    });
+    addWorker('classes', patterns.classDef, {
+      path: basePath,
+      headLimit: 30,
+      lineNumbers: true,
+      context: 4,
+    });
+    addWorker('methods', simpleQuery ? `(async\\s+)?\\w+\\s*\\([^)]*\\)\\s*{` : null, {
+      path: basePath,
+      headLimit: 30,
+      lineNumbers: true,
+      context: 2,
+    });
+
+    // Imports and exports
+    addWorker('imports', patterns.imports, { path: basePath, headLimit: 25, lineNumbers: true });
+    addWorker('exports', simpleQuery ? `(export|module\\.exports).*${simpleQuery}` : null, {
+      path: basePath,
+      headLimit: 20,
+      lineNumbers: true,
+    });
+
+    // Types and interfaces
+    addWorker('types', patterns.types, {
+      path: basePath,
+      headLimit: 25,
+      lineNumbers: true,
+      context: 3,
+    });
+    addWorker('enums', simpleQuery ? `enum\\s+\\w*${simpleQuery}\\w*` : null, {
+      path: basePath,
+      headLimit: 15,
+      lineNumbers: true,
+      context: 3,
+    });
+
+    // Comments and documentation
+    addWorker('comments', simpleQuery ? `//.*${simpleQuery}|/\\*.*${simpleQuery}` : null, {
+      path: basePath,
+      headLimit: 20,
+      lineNumbers: true,
+      context: 1,
+    });
+    addWorker('todos', `(TODO|FIXME|XXX|HACK).*${searchPattern}`, {
+      path: basePath,
+      headLimit: 15,
+      lineNumbers: true,
+      caseInsensitive: true,
+    });
+
+    // Error handling
+    addWorker('error-handling', `(catch|throw|try).*${searchPattern}|${searchPattern}.*(error|Error|exception)`, {
+      path: basePath,
+      headLimit: 20,
+      lineNumbers: true,
+      context: 2,
+      caseInsensitive: true,
+    });
+
+    // Config files
+    addWorker('config-json', patterns.main, {
+      path: basePath,
+      glob: '*.{json,package.json,tsconfig.json}',
+      headLimit: 20,
+      lineNumbers: true,
+    });
+    addWorker('config-yaml', patterns.main, {
+      path: basePath,
+      glob: '*.{yaml,yml}',
+      headLimit: 15,
+      lineNumbers: true,
+    });
+    addWorker('config-toml', patterns.main, {
+      path: basePath,
+      glob: '*.toml',
+      headLimit: 15,
+      lineNumbers: true,
+    });
+
+    // Documentation and text files
+    addWorker('docs', patterns.main, {
+      path: basePath,
+      glob: '*.{md,markdown,txt,readme*,changelog*,license*}',
+      headLimit: 25,
+      lineNumbers: true,
+      caseInsensitive: true,
+    });
+
+    // Shell and build scripts
+    addWorker('scripts', patterns.main, {
+      path: basePath,
+      glob: '*.{sh,bash,zsh,ps1,Makefile,makefile}',
+      headLimit: 20,
+      lineNumbers: true,
+    });
+
+    // Docker and deployment
+    addWorker('docker', patterns.main, {
+      path: basePath,
+      glob: 'Dockerfile*',
+      headLimit: 15,
+      lineNumbers: true,
+    });
+    addWorker('docker-compose', patterns.main, {
+      path: basePath,
+      glob: 'docker-compose*.{yml,yaml}',
+      headLimit: 15,
+      lineNumbers: true,
+    });
+
+    // Environment and secrets
+    addWorker('env-files', patterns.main, {
+      path: basePath,
+      glob: '.env*',
+      headLimit: 10,
+      lineNumbers: true,
+    });
+
+    // Test files
+    addWorker('tests', patterns.main, {
+      path: basePath,
+      glob: '*.{test,spec}.{js,ts,py,java,go,rs}',
+      headLimit: 25,
+      lineNumbers: true,
+      context: 3,
+    });
+
+    // Constants and variables
+    addWorker('constants', simpleQuery ? `(const|let|var|static|final)\\s+\\w*${simpleQuery}\\w*` : null, {
+      path: basePath,
+      headLimit: 20,
+      lineNumbers: true,
+      context: 2,
     });
   }
 

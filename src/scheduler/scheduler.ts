@@ -6,7 +6,7 @@
  * Tasks are stored locally per project in .slashbot/tasks.json
  */
 
-import { c, colors } from '../ui/colors';
+import { c, colors, step } from '../ui/colors';
 import {
   parseCron,
   matchesCron,
@@ -448,13 +448,7 @@ export class TaskScheduler {
 
     // Display task start
     console.log('');
-    console.log(`${colors.violet}┌─ CRON ${colors.reset}${c.bold(task.name)}`);
-    console.log(`${colors.muted}│ ${describeCron(task.cron)}${colors.reset}`);
-    if (isPromptTask) {
-      console.log(`${colors.muted}│ 🤖 ${task.prompt}${colors.reset}`);
-    } else {
-      console.log(`${colors.muted}│ $ ${task.command}${colors.reset}`);
-    }
+    step.schedule(task.name, describeCron(task.cron));
 
     let success = false;
     let output = '';
@@ -498,21 +492,11 @@ export class TaskScheduler {
 
       // Display output
       if (output) {
-        const lines = output.split('\n').slice(0, 10);
-        lines.forEach(line => {
-          console.log(`${colors.muted}│${colors.reset} ${line}`);
-        });
-        if (output.split('\n').length > 10) {
-          console.log(
-            `${colors.muted}│ ... (${output.split('\n').length - 10} more lines)${colors.reset}`,
-          );
-        }
+        const preview = output.split('\n').slice(0, 3).join(' ').slice(0, 100);
+        step.success(`Done: ${preview}${output.length > 100 ? '...' : ''}`);
+      } else {
+        step.success('Done');
       }
-
-      console.log(
-        `${colors.violet}└─${colors.reset} ${c.success('✓')} ${colors.muted}${duration}ms${colors.reset}`,
-      );
-      console.log('');
     } catch (error: any) {
       const duration = Date.now() - startTime;
       const errorMsg = error.stderr || error.message || String(error);
@@ -525,15 +509,8 @@ export class TaskScheduler {
       task.runCount++;
 
       // Display error
-      const lines = errorMsg.trim().split('\n').slice(0, 5);
-      lines.forEach((line: string) => {
-        console.log(`${colors.muted}│${colors.reset} ${c.error(line)}`);
-      });
-
-      console.log(
-        `${colors.violet}└─${colors.reset} ${c.error('✗')} ${colors.muted}${duration}ms${colors.reset}`,
-      );
-      console.log('');
+      const preview = errorMsg.trim().split('\n').slice(0, 2).join(' ').slice(0, 80);
+      step.error(preview);
     }
 
     // Save updated task state (only if task still exists - may have been deleted during execution)

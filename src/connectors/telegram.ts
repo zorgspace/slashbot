@@ -10,7 +10,8 @@
  */
 
 import { Telegraf } from 'telegraf';
-import { c, connectorStatus } from '../ui/colors';
+import { c } from '../ui/colors';
+import { step } from '../ui/display/step';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
 import { getTranscriptionService } from '../services/transcription';
 import { imageBuffer } from '../code/imageBuffer';
@@ -71,10 +72,12 @@ export class TelegramConnector implements Connector {
           this.bot.telegram.sendChatAction(chatId, 'typing').catch(() => {});
         }, 4000);
 
-        // Process message through slashbot
+        // Process message through slashbot with chat-specific session
         let response: string | void;
         try {
-          response = await this.messageHandler(message, 'telegram');
+          response = await this.messageHandler(message, 'telegram', {
+            sessionId: `telegram:${ctx.chat.id}`,
+          });
         } finally {
           clearInterval(typingInterval);
         }
@@ -124,20 +127,26 @@ export class TelegramConnector implements Connector {
           const file = await ctx.telegram.getFile(fileId);
           const fileUrl = `https://api.telegram.org/file/bot${this.bot.telegram.token}/${file.file_path}`;
 
-          // Transcribe
-          console.log(connectorStatus('telegram', 'Transcribing voice message...'));
+          // Hide cursor and transcribe
+          process.stdout.write('\x1b[?25l\r\x1b[K');
+          step.connector('telegram', 'transcribe');
           const result = await transcriptionService.transcribeFromUrl(fileUrl);
 
           if (!result || !result.text) {
+            process.stdout.write('\x1b[?25h');
             await ctx.reply('Could not transcribe voice message');
             return;
           }
 
-          const preview = result.text.length > 40 ? result.text.slice(0, 40) + '...' : result.text;
-          console.log(connectorStatus('telegram', `Voice: "${preview}"`));
+          step.connectorResult(`"${result.text}"`);
+          process.stdout.write('\n'); // Add spacing before actions
 
-          // Process transcribed text
-          const response = await this.messageHandler(result.text, 'telegram');
+          // Process transcribed text (already displayed via step.connectorResult)
+          const response = await this.messageHandler(result.text, 'telegram', {
+            alreadyDisplayed: true,
+            sessionId: `telegram:${ctx.chat.id}`,
+          });
+          process.stdout.write('\x1b[?25h'); // Show cursor again
           if (response) {
             await this.sendMessage(response);
           }
@@ -176,7 +185,7 @@ export class TelegramConnector implements Connector {
           const fileUrl = `https://api.telegram.org/file/bot${this.bot.telegram.token}/${file.file_path}`;
 
           // Download and convert to base64 data URL
-          console.log(connectorStatus('telegram', 'Downloading image...'));
+          step.connector('telegram', 'image');
           const imageResponse = await fetch(fileUrl);
           const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString('base64');
           const mimeType = file.file_path?.endsWith('.png') ? 'image/png' : 'image/jpeg';
@@ -184,13 +193,15 @@ export class TelegramConnector implements Connector {
 
           // Add to image buffer for vision context
           imageBuffer.push(dataUrl);
-          console.log(connectorStatus('telegram', `Image added (${Math.round(imageBuffer64.length / 1024)}KB)`));
+          step.connectorResult(`${Math.round(imageBuffer64.length / 1024)}KB`);
 
           // Use caption or default prompt
           const message = ctx.message.caption || 'What is in this image?';
 
           // Process with the image in context
-          const response = await this.messageHandler(message, 'telegram');
+          const response = await this.messageHandler(message, 'telegram', {
+            sessionId: `telegram:${ctx.chat.id}`,
+          });
           if (response) {
             await this.sendMessage(response);
           }
@@ -206,7 +217,8 @@ export class TelegramConnector implements Connector {
 
     // Handle errors
     this.bot.catch(err => {
-      console.log(c.error(`[Telegram] Error: ${err}`));
+      step.connector('telegram', 'error');
+      step.error(String(err));
     });
   }
 
@@ -234,13 +246,8 @@ export class TelegramConnector implements Connector {
     // Try to acquire lock - only one instance can run Telegram
     const lock = await acquireLock('telegram');
     if (!lock.acquired) {
-      console.log(
-        c.warning(`[Telegram] Another instance is already running (PID ${lock.existingPid})`),
-      );
-      if (lock.existingWorkDir) {
-        console.log(c.muted(`  Running in: ${lock.existingWorkDir}`));
-      }
-      console.log(c.muted(`  Telegram connector disabled for this instance`));
+      step.connector('telegram', 'locked');
+      step.connectorResult(`PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}`);
       return;
     }
 
@@ -278,7 +285,8 @@ export class TelegramConnector implements Connector {
 
       // Launch bot in background (non-blocking)
       this.bot.launch().catch(err => {
-        console.log(c.error(`[Telegram] Error: ${err}`));
+        step.connector('telegram', 'error');
+        step.error(String(err));
         releaseLock('telegram');
         if (this.eventBus) {
           this.eventBus.emit({ type: 'connector:disconnected', source: 'telegram' });
@@ -291,8 +299,8 @@ export class TelegramConnector implements Connector {
       }
     } catch (error) {
       await releaseLock('telegram');
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.log(c.error(`[Telegram] Failed to start: ${errorMsg}`));
+      step.connector('telegram', 'error');
+      step.error(error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
@@ -321,8 +329,7 @@ export class TelegramConnector implements Connector {
 
     const targetChat = this.replyTargetChatId;
     const chunks = splitMessage(text, this.config.maxMessageLength);
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = i === 0 ? "🔵 " + chunks[i] : chunks[i];
+    for (const chunk of chunks) {
       await this.bot.telegram
         .sendMessage(targetChat, chunk, {
           parse_mode: 'Markdown',

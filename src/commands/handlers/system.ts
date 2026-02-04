@@ -3,8 +3,12 @@
  */
 
 import { c } from '../../ui/colors';
+import { banner } from '../../ui/colors';
 import { getLocalHistoryFile } from '../../constants';
+import * as fs from 'fs';
+import pkg from '../../../package.json';
 import type { CommandHandler, CommandContext } from '../registry';
+import { isSessionActive } from '../../services/wallet';
 
 // Reference to command registry for help command (set by registry)
 let commandsRef: Map<string, CommandHandler> | null = null;
@@ -49,7 +53,7 @@ export const helpCommand: CommandHandler = {
       { title: 'Files', cmds: ['read', 'write'] },
       { title: 'API', cmds: ['usage', 'context'] },
       { title: 'Personality', cmds: ['depressed', 'sarcasm', 'normal', 'unhinged'] },
-      { title: 'Other', cmds: ['update', 'history', 'clear', 'exit'] },
+      { title: 'Other', cmds: ['banner', 'update', 'history', 'clear', 'exit'] },
     ];
 
     for (const group of cmdGroups) {
@@ -123,9 +127,42 @@ export const exitCommand: CommandHandler = {
   },
 };
 
+export const bannerCommand: CommandHandler = {
+  name: 'banner',
+  description: 'Display the Slashbot banner',
+  usage: '/banner',
+  execute: async (_, context) => {
+    // Gather status information
+    const tasks = context.scheduler.listTasks();
+    const heartbeatStatus = context.heartbeatService?.getStatus();
+
+    // Check voice status (enabled if OpenAI API key is configured)
+    const voiceEnabled = !!context.configManager.getOpenAIApiKey();
+
+    // Check wallet status
+    const walletUnlocked = isSessionActive();
+
+    console.log(
+      banner({
+        version: pkg.version,
+        workingDir: context.codeEditor.getWorkDir(),
+        tasksCount: tasks.length,
+        telegram: context.connectors.has('telegram'),
+        discord: context.connectors.has('discord'),
+        voice: voiceEnabled,
+        heartbeat: heartbeatStatus?.running && heartbeatStatus.enabled,
+        wallet: walletUnlocked,
+      }),
+    );
+
+    return true;
+  },
+};
+
 export const systemHandlers: CommandHandler[] = [
   helpCommand,
   clearCommand,
   historyCommand,
   exitCommand,
+  bannerCommand,
 ];

@@ -8,6 +8,7 @@ import 'reflect-metadata';
 import { injectable } from 'inversify';
 import { EventEmitter } from 'events';
 import type { ConnectorSource } from '../connectors/base';
+import type { HeartbeatResult } from '../services/heartbeat/types';
 
 /**
  * All possible events in the system
@@ -22,7 +23,13 @@ export type SlashbotEvent =
   | { type: 'connector:disconnected'; source: ConnectorSource }
   | { type: 'grok:initialized' }
   | { type: 'grok:disconnected' }
-  | { type: 'prompt:redraw' };
+  | { type: 'prompt:redraw' }
+  // Heartbeat events
+  | { type: 'heartbeat:started' }
+  | { type: 'heartbeat:complete'; result: HeartbeatResult }
+  | { type: 'heartbeat:alert'; content: string }
+  | { type: 'heartbeat:ok'; content?: string }
+  | { type: 'heartbeat:error'; error: string };
 
 /**
  * Extract event types as string union

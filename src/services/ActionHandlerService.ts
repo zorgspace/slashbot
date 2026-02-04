@@ -16,10 +16,12 @@ import type { SkillManager } from '../skills/manager';
 import type { ConfigManager } from '../config/config';
 import type { ConnectorRegistry } from './ConnectorRegistry';
 import type { GrokClient } from '../api/grok';
+import type { HeartbeatService } from './heartbeat';
 
 @injectable()
 export class ActionHandlerService {
   private grokClient: GrokClient | null = null;
+  private heartbeatService: HeartbeatService | null = null;
 
   constructor(
     @inject(TYPES.TaskScheduler) private scheduler: TaskScheduler,
@@ -29,6 +31,13 @@ export class ActionHandlerService {
     @inject(TYPES.ConfigManager) private configManager: ConfigManager,
     @inject(TYPES.ConnectorRegistry) private connectorRegistry: ConnectorRegistry,
   ) {}
+
+  /**
+   * Set the Heartbeat service reference
+   */
+  setHeartbeatService(service: HeartbeatService): void {
+    this.heartbeatService = service;
+  }
 
   /**
    * Set the Grok client reference (for sub-task and search handlers)
@@ -470,6 +479,22 @@ ${prompt.replace(/"""/g, "'''")}`;
         } catch (error: any) {
           return { success: false, message: error.message || 'Configuration failed' };
         }
+      },
+
+      onHeartbeat: async (prompt) => {
+        if (!this.heartbeatService) {
+          throw new Error('Heartbeat service not available');
+        }
+        const result = await this.heartbeatService.execute({ prompt });
+        return { type: result.type, content: result.content };
+      },
+
+      onHeartbeatUpdate: async (content) => {
+        if (!this.heartbeatService) {
+          throw new Error('Heartbeat service not available');
+        }
+        await this.heartbeatService.updateHeartbeatMd(content);
+        return true;
       },
     };
   }
