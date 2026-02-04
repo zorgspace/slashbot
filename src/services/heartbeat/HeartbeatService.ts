@@ -44,6 +44,7 @@ export class HeartbeatService {
   private state: HeartbeatState = { consecutiveOks: 0, totalRuns: 0, totalAlerts: 0 };
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private executing = false; // Guard against concurrent executions
   private lastTick: Date = new Date();
   private llmHandler: HeartbeatLLMHandler | null = null;
   private grokClient: GrokClient | null = null;
@@ -220,6 +221,18 @@ export class HeartbeatService {
    * Execute a heartbeat immediately (manual or scheduled)
    */
   async execute(options?: { prompt?: string; target?: HeartbeatTarget }): Promise<HeartbeatResult> {
+    // Prevent concurrent executions - if already running, skip this one
+    if (this.executing) {
+      return {
+        type: 'ok',
+        content: 'Skipped - heartbeat already in progress',
+        timestamp: new Date(),
+        duration: 0,
+        target: options?.target || this.config.target || 'cli',
+      };
+    }
+
+    this.executing = true;
     const startTime = Date.now();
     const target = options?.target || this.config.target || 'cli';
 
@@ -314,6 +327,9 @@ export class HeartbeatService {
         type: 'heartbeat:error',
         error: errorMsg,
       } as any);
+    } finally {
+      // Always reset executing flag to allow future heartbeats
+      this.executing = false;
     }
 
     // Redraw prompt

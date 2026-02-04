@@ -897,6 +897,16 @@ export class GrokClient {
     // Clean and return final response (remove action tags and internal monologue)
     const cleanResponse = cleanSelfDialogue(cleanXmlTags(finalResponse));
 
+    // Defensive cleanup: ensure thinking animation and display are stopped
+    // This handles edge cases where streamResponse's finally block might not fully clean up
+    if (this.currentThinking) {
+      this.currentThinking.stop();
+      this.currentThinking = null;
+    }
+    if (thinkingDisplay.isStreaming()) {
+      thinkingDisplay.endStream();
+    }
+
     return {
       response: cleanResponse,
       thinking: finalThinking,
@@ -1317,7 +1327,14 @@ export class GrokClient {
 
       // Check timeout
       if (Date.now() - startTime > timeout) {
-        thinkingDisplay.endStream();
+        // Cleanup before early return
+        if (this.currentThinking) {
+          this.currentThinking.stop();
+          this.currentThinking = null;
+        }
+        if (thinkingDisplay.isStreaming()) {
+          thinkingDisplay.endStream();
+        }
         const summary =
           actionsSummary.length > 0
             ? `Timeout after ${Math.round(timeout / 1000)}s. Completed: ${actionsSummary.join(', ')}`
@@ -1374,6 +1391,14 @@ export class GrokClient {
         // Display the final response with bullet
         const sayMessage = sayResult?.result || 'Done.';
         process.stdout.write(`\r\x1b[K\n${colors.white}●${colors.reset} ${sayMessage}\n`);
+        // Cleanup before early return
+        if (this.currentThinking) {
+          this.currentThinking.stop();
+          this.currentThinking = null;
+        }
+        if (thinkingDisplay.isStreaming()) {
+          thinkingDisplay.endStream();
+        }
         return sayMessage;
       }
 
@@ -1385,6 +1410,14 @@ export class GrokClient {
           const failedActions = actionResults.map(r => r.action).join(', ');
           const errorMsg = `Stopped after ${MAX_CONSECUTIVE_ERRORS} consecutive failures. Last errors: ${failedActions}`;
           process.stdout.write(`\n${colors.error}●${colors.reset} ${errorMsg}\n`);
+          // Cleanup before early return
+          if (this.currentThinking) {
+            this.currentThinking.stop();
+            this.currentThinking = null;
+          }
+          if (thinkingDisplay.isStreaming()) {
+            thinkingDisplay.endStream();
+          }
           return errorMsg;
         }
       } else {
@@ -1415,6 +1448,15 @@ export class GrokClient {
         role: 'user',
         content: continuationPrompt,
       });
+    }
+
+    // Defensive cleanup: ensure thinking animation and display are stopped
+    if (this.currentThinking) {
+      this.currentThinking.stop();
+      this.currentThinking = null;
+    }
+    if (thinkingDisplay.isStreaming()) {
+      thinkingDisplay.endStream();
     }
 
     // Return clean text or actions summary
