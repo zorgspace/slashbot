@@ -3,6 +3,10 @@
  * All hardcoded values should be defined here for maintainability
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+
 // ============================================================================
 // GROK API CONFIGURATION
 // ============================================================================
@@ -26,6 +30,52 @@ export const GROK_CONFIG = {
   TIMEOUT_MS: 120000,
   /** Threshold for duplicate read detection */
   MAX_DUPLICATE_READS: 3,
+} as const;
+
+// ============================================================================
+// PROXY CONFIGURATION (slashbot-web)
+// ============================================================================
+
+const WALLET_CONFIG_PATH = path.join(os.homedir(), '.slashbot', 'wallet-config.json');
+
+interface WalletConfigFile {
+  walletAddress: string;
+  proxyUrl: string;
+  configuredAt: string;
+}
+
+/** Load wallet config from file */
+function loadWalletConfig(): WalletConfigFile | null {
+  try {
+    if (fs.existsSync(WALLET_CONFIG_PATH)) {
+      const data = fs.readFileSync(WALLET_CONFIG_PATH, 'utf-8');
+      return JSON.parse(data) as WalletConfigFile;
+    }
+  } catch {
+    // Ignore errors
+  }
+  return null;
+}
+
+const walletConfig = loadWalletConfig();
+
+export const PROXY_CONFIG = {
+  /** Proxy server URL */
+  BASE_URL: walletConfig?.proxyUrl || 'https://getslashbot.com',
+  /** Grok proxy endpoint */
+  GROK_ENDPOINT: '/api/grok',
+  /** Credits endpoint */
+  CREDITS_ENDPOINT: '/api/credits',
+  /** Whether to use proxy mode (requires wallet) */
+  ENABLED: !!walletConfig?.walletAddress,
+  /** User's Solana wallet address for billing */
+  WALLET_ADDRESS: walletConfig?.walletAddress || '',
+  /** Treasury address for deposits */
+  TREASURY_ADDRESS: 'DVGjCZVJ3jMw8gsHAQjuYFMj8xQJyVf17qKrciYCS9u7',
+  /** SLASHBOT token mint */
+  TOKEN_MINT: 'AtiFyHm6UMNLXCWJGLqhxSwvr3n3MgFKxppkKWUoBAGS',
+  /** Path to wallet config file */
+  CONFIG_PATH: WALLET_CONFIG_PATH,
 } as const;
 
 // ============================================================================

@@ -5,10 +5,12 @@
 
 import { c, colors, fileViewer } from '../ui/colors';
 import * as path from 'path';
+import * as os from 'os';
 import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import type { EditResult, EditStatus, GrepOptions } from '../actions/types';
 import { EXCLUDED_DIRS, EXCLUDED_FILES } from '../config/constants';
+import { smartMatcher, applySmartReplace } from './smartEdit';
 
 export interface SearchResult {
   file: string;
@@ -119,16 +121,35 @@ export class CodeEditor {
 
   async readFile(filePath: string): Promise<string | null> {
     try {
-      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(this.workDir, filePath);
+      const fullPath = this.resolvePath(filePath);
       return await fsPromises.readFile(fullPath, 'utf8');
     } catch {
       return null;
     }
   }
 
+  /**
+   * Resolve a file path, expanding ~ to home directory
+   */
+  private resolvePath(filePath: string): string {
+    // Expand tilde to home directory
+    if (filePath.startsWith('~/')) {
+      return path.join(os.homedir(), filePath.slice(2));
+    }
+    if (filePath === '~') {
+      return os.homedir();
+    }
+    // Handle absolute paths
+    if (path.isAbsolute(filePath)) {
+      return filePath;
+    }
+    // Relative path - join with workDir
+    return path.join(this.workDir, filePath);
+  }
+
   async editFile(edit: FileEdit): Promise<EditResult> {
     try {
-      const fullPath = path.isAbsolute(edit.path) ? edit.path : path.join(this.workDir, edit.path);
+      const fullPath = this.resolvePath(edit.path);
 
       if (!fs.existsSync(fullPath)) {
         console.log(c.error(`File not found: ${edit.path}`));
@@ -137,37 +158,45 @@ export class CodeEditor {
 
       const content = await fsPromises.readFile(fullPath, 'utf8');
 
-      // Try exact match first
-      if (content.includes(edit.search)) {
-        return this.applyEdit(fullPath, content, edit);
-      }
+      // Use smart matcher for intelligent pattern finding
+      const matchResult = smartMatcher.findMatch(content, edit.search);
 
-      // Try whitespace-normalized match
-      const normalizedMatch = this.findNormalizedMatch(content, edit.search);
-      if (normalizedMatch) {
-        console.log(c.muted(`Using whitespace-normalized match`));
+      if (matchResult.found) {
+        // Log match type for transparency
+        if (matchResult.matchType !== 'exact') {
+          const confidenceStr = matchResult.confidence ? ` (${Math.round(matchResult.confidence * 100)}% confidence)` : '';
+          console.log(c.muted(`Smart match: ${matchResult.matchType}${confidenceStr}`));
+          if (matchResult.startLine) {
+            console.log(c.muted(`  Lines ${matchResult.startLine}-${matchResult.endLine}`));
+          }
+        }
+
         return this.applyEdit(fullPath, content, {
           ...edit,
-          search: normalizedMatch,
+          search: matchResult.matchedText,
         });
       }
 
       // Pattern not found - provide helpful suggestions
       console.log(c.warning(`Pattern not found in ${edit.path}`));
-      const suggestions = this.findSimilarPatterns(content, edit.search);
+      const suggestions = smartMatcher.findSuggestions(content, edit.search);
 
       if (suggestions.length > 0) {
         console.log(c.muted(`Did you mean one of these?`));
         suggestions.forEach((s, i) => {
-          const preview = s.length > 80 ? s.slice(0, 77) + '...' : s;
-          console.log(c.muted(`  ${i + 1}. "${preview.replace(/\n/g, '\\n')}"`));
+          const lines = s.split('\n');
+          const preview = lines.length > 3
+            ? lines.slice(0, 3).join('\n') + `\n... (+${lines.length - 3} lines)`
+            : s;
+          console.log(c.muted(`\n  ${i + 1}. ─────────────────`));
+          console.log(c.muted(preview.split('\n').map(l => `     ${l}`).join('\n')));
         });
       }
 
       return {
         success: false,
         status: 'not_found',
-        message: `Pattern not found in ${edit.path}. ${suggestions.length > 0 ? 'Similar patterns exist - check whitespace/indentation.' : 'Use <read> to see actual content.'}`,
+        message: `Pattern not found in ${edit.path}. ${suggestions.length > 0 ? 'Similar patterns shown above - check whitespace/indentation.' : 'Use <read> to see actual content.'}`,
       };
     } catch (error) {
       console.log(c.error(`Edit error: ${error}`));
@@ -461,13 +490,14 @@ export class CodeEditor {
 
   /**
    * Apply multiple edits atomically - all succeed or none applied
+   * Returns detailed diff information for each edit
    */
   async multiEditFile(
     filePath: string,
     edits: Array<{ search: string; replace: string; replaceAll?: boolean }>,
-  ): Promise<EditResult> {
+  ): Promise<EditResult & { diffs?: Array<{ search: string[]; replace: string[]; startLine: number }> }> {
     try {
-      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(this.workDir, filePath);
+      const fullPath = this.resolvePath(filePath);
 
       if (!fs.existsSync(fullPath)) {
         return { success: false, status: 'not_found', message: `File not found: ${filePath}` };
@@ -475,34 +505,80 @@ export class CodeEditor {
 
       let content = await fsPromises.readFile(fullPath, 'utf8');
       const originalContent = content;
-      const appliedEdits: string[] = [];
 
-      // Validate all edits first (dry run)
+      // Store match info for diff display
+      const matchInfos: Array<{
+        search: string;
+        replace: string;
+        startLine: number;
+        matchType: string;
+        confidence: number;
+      }> = [];
+
+      // Validate all edits first (dry run) using smart matcher
       for (let i = 0; i < edits.length; i++) {
         const edit = edits[i];
-        if (!content.includes(edit.search)) {
-          // Try normalized match
-          const normalized = this.findNormalizedMatch(content, edit.search);
-          if (!normalized) {
-            return {
-              success: false,
-              status: 'not_found',
-              message: `Edit ${i + 1}/${edits.length} failed: pattern not found. Aborting all edits.`,
-            };
+        const matchResult = smartMatcher.findMatch(content, edit.search);
+
+        if (!matchResult.found) {
+          const suggestions = smartMatcher.findSuggestions(content, edit.search);
+          if (suggestions.length > 0) {
+            console.log(c.muted(`Did you mean:`));
+            suggestions.slice(0, 2).forEach((s, idx) => {
+              const preview = s.split('\n').slice(0, 2).join(' ').slice(0, 60);
+              console.log(c.muted(`  ${idx + 1}. ${preview}...`));
+            });
           }
-          // Update the edit with normalized search for actual application
-          edits[i] = { ...edit, search: normalized };
+          return {
+            success: false,
+            status: 'not_found',
+            message: `Edit ${i + 1}/${edits.length} failed: pattern not found. Aborting all edits.`,
+          };
         }
+
+        // Log smart match info
+        if (matchResult.matchType !== 'exact') {
+          const conf = Math.round((matchResult.confidence || 0) * 100);
+          console.log(c.muted(`  Edit ${i + 1}: ${matchResult.matchType} match (${conf}%) at line ${matchResult.startLine || '?'}`));
+        }
+
+        matchInfos.push({
+          search: matchResult.matchedText,
+          replace: edit.replace,
+          startLine: matchResult.startLine || 1,
+          matchType: matchResult.matchType,
+          confidence: matchResult.confidence || 1,
+        });
+
+        // Update edit with matched text
+        edits[i] = { ...edit, search: matchResult.matchedText };
       }
 
-      // Apply all edits
-      for (const edit of edits) {
+      // Apply all edits and collect diffs
+      const diffs: Array<{ search: string[]; replace: string[]; startLine: number }> = [];
+
+      for (let i = 0; i < edits.length; i++) {
+        const edit = edits[i];
+        const info = matchInfos[i];
+
+        // Find current line number (may shift after previous edits)
+        const beforeMatch = content.indexOf(edit.search);
+        const currentLine = beforeMatch >= 0
+          ? content.substring(0, beforeMatch).split('\n').length
+          : info.startLine;
+
+        diffs.push({
+          search: edit.search.split('\n'),
+          replace: edit.replace.split('\n'),
+          startLine: currentLine,
+        });
+
+        // Apply the edit
         if (edit.replaceAll) {
           content = content.split(edit.search).join(edit.replace);
         } else {
           content = content.replace(edit.search, edit.replace);
         }
-        appliedEdits.push(edit.search.split('\n')[0].slice(0, 30));
       }
 
       // Check if anything changed
@@ -511,16 +587,17 @@ export class CodeEditor {
           success: true,
           status: 'already_applied',
           message: 'All edits already applied',
+          diffs: [],
         };
       }
 
       await fsPromises.writeFile(fullPath, content, 'utf8');
-      console.log(c.success(`Applied ${edits.length} edits to ${filePath}`));
 
       return {
         success: true,
         status: 'applied',
         message: `Applied ${edits.length} edits to ${filePath}`,
+        diffs,
       };
     } catch (error) {
       return { success: false, status: 'error', message: `Multi-edit error: ${error}` };
@@ -529,7 +606,7 @@ export class CodeEditor {
 
   async createFile(filePath: string, content: string): Promise<boolean> {
     try {
-      const fullPath = path.isAbsolute(filePath) ? filePath : path.join(this.workDir, filePath);
+      const fullPath = this.resolvePath(filePath);
 
       // Create directory if needed
       const dir = path.dirname(fullPath);

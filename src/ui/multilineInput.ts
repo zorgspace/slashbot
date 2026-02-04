@@ -14,6 +14,7 @@ import { addImage, imageBuffer } from '../code/imageBuffer';
 import { c, thinkingDisplay, colors } from './colors';
 import { drawBox } from './components/box';
 import { getGroupedCommands } from '../commands/parser';
+import { state } from './state';
 
 // Cursor blink rate
 const CURSOR_BLINK_INTERVAL = 530; // ms - matches typical terminal blink rate
@@ -62,6 +63,10 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
     // Paste handling state
     let inPaste = false;
     let pasteBuffer = '';
+
+    // Track previous visual state for proper clearing
+    let prevDisplayedRows = 1;
+    let prevCursorRow = 0;
 
     // Save terminal state
     const wasRaw = process.stdin.isRaw;
@@ -112,29 +117,26 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       const promptWidth = getPromptWidth();
       const totalLength = promptWidth + currentLine.length;
 
-      // Calculate how many terminal rows the text occupies
-      const wrappedRows = Math.ceil(totalLength / termWidth) || 1;
+      // Calculate how many terminal rows the NEW text will occupy
+      const newWrappedRows = Math.ceil(totalLength / termWidth) || 1;
 
-      // Move cursor to the beginning of the first row of this logical line
-      // and clear all wrapped rows
-      if (wrappedRows > 1) {
-        const cursorTotal = promptWidth + cursorPos;
-        const currentRow = Math.floor(cursorTotal / termWidth);
-        if (currentRow > 0) {
-          process.stdout.write(`\x1b[${currentRow}A`);
-        }
+      // Use PREVIOUS state for clearing (where cursor actually is)
+      // Move up to the first row based on where we WERE
+      if (prevCursorRow > 0) {
+        process.stdout.write(`\x1b[${prevCursorRow}A`);
       }
 
       // Clear from the beginning of the line
       process.stdout.write('\r\x1b[K');
 
-      // Clear any additional wrapped rows below
-      for (let i = 1; i < wrappedRows; i++) {
+      // Clear all previously displayed rows (and any new ones we might need)
+      const rowsToClear = Math.max(prevDisplayedRows, newWrappedRows);
+      for (let i = 1; i < rowsToClear; i++) {
         process.stdout.write('\x1b[B\x1b[K'); // Move down and clear
       }
       // Move back up to the first row
-      if (wrappedRows > 1) {
-        process.stdout.write(`\x1b[${wrappedRows - 1}A`);
+      if (rowsToClear > 1) {
+        process.stdout.write(`\x1b[${rowsToClear - 1}A`);
       }
       process.stdout.write('\r');
 
@@ -158,6 +160,121 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
         process.stdout.write(charAtCursor);
       }
       process.stdout.write(afterCursor);
+
+      // Draw raw output panel if enabled
+      if (state.rawPanelEnabled) {
+        // Save cursor position
+        process.stdout.write('\x1b[s');
+        // Panel starts at 60% of terminal width
+        const panelCol = Math.floor(termWidth * 0.6);
+        const panelWidth = termWidth - panelCol;
+        // Draw panel border
+        process.stdout.write(`\x1b[1;${panelCol}H┌${'─'.repeat(panelWidth - 2)}┐`);
+        process.stdout.write(`\x1b[2;${panelCol}H│ Raw LLM Output${' '.repeat(panelWidth - 16)}│`);
+        process.stdout.write(`\x1b[3;${panelCol}H├${'─'.repeat(panelWidth - 2)}┤`);
+        // Draw content (last few lines)
+        const outputLines = state.rawOutputText.split('\n').slice(-5);
+        for (let i = 0; i < outputLines.length; i++) {
+          const line = outputLines[i].substring(0, panelWidth - 2).padEnd(panelWidth - 2);
+          process.stdout.write(`\x1b[${4 + i};${panelCol}H│${line}│`);
+        }
+        // Bottom border
+        const bottomRow = 4 + outputLines.length;
+        process.stdout.write(`\x1b[${bottomRow};${panelCol}H└${'─'.repeat(panelWidth - 2)}┘`);
+        // Restore cursor
+        process.stdout.write('\x1b[u');
+      }
+
+      // Update previous state for next redraw
+      prevDisplayedRows = newWrappedRows;
+      const newCursorTotal = promptWidth + cursorPos;
+      prevCursorRow = Math.floor(newCursorTotal / termWidth);
+    };
+
+    const clearAllLines = () => {
+      const termWidth = process.stdout.columns || 80;
+
+      // Calculate total rows including all previous lines using ACTUAL previous state
+      let totalRows = prevDisplayedRows;
+      for (const line of lines) {
+        const lineLength = 3 + line.length; // "   " continuation prefix
+        totalRows += Math.ceil(lineLength / termWidth) || 1;
+      }
+
+      // Move up from current cursor row to the first row
+      if (prevCursorRow > 0) {
+        process.stdout.write(`\x1b[${prevCursorRow}A`);
+      }
+
+      // Move up past all the previous multi-lines
+      if (lines.length > 0) {
+        const rowsForPrevLines = totalRows - prevDisplayedRows;
+        if (rowsForPrevLines > 0) {
+          process.stdout.write(`\x1b[${rowsForPrevLines}A`);
+        }
+      }
+
+      // Clear all lines from top to bottom
+      process.stdout.write('\r\x1b[K');
+      for (let i = 1; i < totalRows; i++) {
+        process.stdout.write('\x1b[B\x1b[K');
+      }
+
+      // Move back to the top
+      if (totalRows > 1) {
+        process.stdout.write(`\x1b[${totalRows - 1}A`);
+      }
+      process.stdout.write('\r');
+
+      // Reset tracking state
+      prevDisplayedRows = 1;
+      prevCursorRow = 0;
+    };
+
+    const redrawAllLines = () => {
+      const termWidth = process.stdout.columns || 80;
+
+      // Clear everything first
+      clearAllLines();
+
+      // Write all previous lines with prompts
+      if (lines.length > 0) {
+        // First line with main prompt
+        process.stdout.write(inputLinePrompt);
+        process.stdout.write(lines[0]);
+
+        // Continuation lines
+        for (let i = 1; i < lines.length; i++) {
+          process.stdout.write('\n   '); // continuation indent
+          process.stdout.write(lines[i]);
+        }
+
+        // Current line with continuation indent
+        process.stdout.write('\n   ');
+      } else {
+        // No previous lines, write main prompt
+        process.stdout.write(inputLinePrompt);
+      }
+
+      // Write current line content with cursor
+      const beforeCursor = currentLine.slice(0, cursorPos);
+      const charAtCursor = currentLine[cursorPos] || ' ';
+      const afterCursor = currentLine.slice(cursorPos + 1);
+
+      process.stdout.write(beforeCursor);
+      if (cursorVisible) {
+        process.stdout.write(`${colors.bgViolet}${colors.white}${charAtCursor}${colors.reset}`);
+      } else {
+        process.stdout.write(charAtCursor);
+      }
+      process.stdout.write(afterCursor);
+
+      // Update tracking for current line
+      const promptWidth = lines.length > 0 ? 3 : inputLinePrompt.replace(/\x1b\[[0-9;]*m/g, '').length;
+      const totalLength = promptWidth + currentLine.length;
+      prevDisplayedRows = Math.ceil(totalLength / termWidth) || 1;
+      const cursorTotal = promptWidth + cursorPos;
+      prevCursorRow = Math.floor(cursorTotal / termWidth);
     };
 
     // Reset cursor to visible state (call on any user input)
@@ -342,9 +459,9 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
                 addImage(dataUrl);
                 const sizeKB = Math.round(dataUrl.length / 1024);
                 process.stdout.write(
-                  `\n${c.success('🖼️  Image pasted from clipboard')} (${sizeKB}KB)\n`,
+                  `\n${colors.violet}●${colors.reset} ${colors.violet}Image${colors.reset}(clipboard, ${sizeKB}KB)\n`,
                 );
-                process.stdout.write(c.muted('   Now ask a question about the image\n'));
+                process.stdout.write(`  ${colors.green}⎿  Ready${colors.reset}\n`);
                 // Redraw prompt
                 if (lines.length > 0) {
                   process.stdout.write('   ');
@@ -421,12 +538,34 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       }
       if (str === '\x1b[A') {
         // Up arrow - history
-        if (lines.length === 0 && history.length > 0) {
-          if (historyIndex < history.length - 1) {
-            historyIndex++;
-            currentLine = history[history.length - 1 - historyIndex];
+        if (history.length > 0 && historyIndex < history.length - 1) {
+          // Clear existing multi-line content first
+          const hadMultipleLines = lines.length > 0;
+          if (hadMultipleLines) {
+            clearAllLines();
+          }
+
+          historyIndex++;
+          const historyItem = history[history.length - 1 - historyIndex];
+          lines.length = 0;
+
+          // Handle multi-line history items
+          if (historyItem.includes('\n')) {
+            const historyLines = historyItem.split('\n');
+            for (let i = 0; i < historyLines.length - 1; i++) {
+              lines.push(historyLines[i]);
+            }
+            currentLine = historyLines[historyLines.length - 1];
             cursorPos = currentLine.length;
             resetCursorBlink();
+            redrawAllLines();
+          } else {
+            currentLine = historyItem;
+            cursorPos = currentLine.length;
+            resetCursorBlink();
+            if (hadMultipleLines) {
+              process.stdout.write(inputLinePrompt);
+            }
             redrawCurrentLine();
           }
         }
@@ -434,16 +573,40 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
       }
       if (str === '\x1b[B') {
         // Down arrow - history
-        if (lines.length === 0 && historyIndex >= 0) {
+        if (historyIndex >= 0) {
+          // First clear any existing multi-line content
+          const hadMultipleLines = lines.length > 0;
+          if (hadMultipleLines) {
+            clearAllLines();
+          }
           historyIndex--;
+          lines.length = 0;
           if (historyIndex >= 0) {
-            currentLine = history[history.length - 1 - historyIndex];
+            const historyItem = history[history.length - 1 - historyIndex];
+            // Handle multi-line history items
+            if (historyItem.includes('\n')) {
+              const historyLines = historyItem.split('\n');
+              for (let i = 0; i < historyLines.length - 1; i++) {
+                lines.push(historyLines[i]);
+              }
+              currentLine = historyLines[historyLines.length - 1];
+            } else {
+              currentLine = historyItem;
+            }
           } else {
             currentLine = '';
           }
           cursorPos = currentLine.length;
           resetCursorBlink();
-          redrawCurrentLine();
+          if (lines.length > 0) {
+            redrawAllLines();
+          } else if (hadMultipleLines) {
+            // Need to redraw from fresh position after clearing
+            process.stdout.write(inputLinePrompt);
+            redrawCurrentLine();
+          } else {
+            redrawCurrentLine();
+          }
         }
         return;
       }
@@ -509,6 +672,18 @@ export function readMultilineInput(options: MultilineInputOptions): Promise<stri
           process.stdout.write(inputLinePrompt);
         }
         process.stdout.write(currentLine);
+        return;
+      }
+
+      // Ctrl+P - toggle raw output panel
+      if (str === '\x10') {
+        state.rawPanelEnabled = !state.rawPanelEnabled;
+        if (state.rawPanelEnabled) {
+          state.rawOutputText = 'Raw LLM Output Panel Enabled\n';
+        } else {
+          state.rawOutputText = '';
+        }
+        redrawCurrentLine();
         return;
       }
 

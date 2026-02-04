@@ -9,7 +9,7 @@ import { colors, c } from '../core';
 
 class ThinkingDisplayManager {
   private content: string = '';
-  private visible: boolean = true;  // Show thinking by default
+  private visible: boolean = false;  // Hide thinking by default
   private streaming: boolean = false;
   private streamedLength: number = 0;
   private headerShown: boolean = false;
@@ -83,6 +83,20 @@ class ThinkingDisplayManager {
   }
 
   /**
+   * Enable thinking visibility (used for connector requests where user can't toggle)
+   */
+  enable(): void {
+    this.visible = true;
+  }
+
+  /**
+   * Disable thinking visibility
+   */
+  disable(): void {
+    this.visible = false;
+  }
+
+  /**
    * Check if currently streaming
    */
   isStreaming(): boolean {
@@ -135,11 +149,10 @@ class ThinkingDisplayManager {
 
   /**
    * Show the collapsed indicator after a response (if thinking was hidden)
+   * Removed as per user request
    */
   showCollapsedIndicator(): void {
-    if (this.hasContent() && !this.visible) {
-      console.log(c.muted(`[Thinking available - Ctrl+O to show]`));
-    }
+    // Indicator removed
   }
 
   /**

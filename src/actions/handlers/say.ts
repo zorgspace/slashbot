@@ -2,14 +2,27 @@
  * Say Handler - Display messages to the user with markdown rendering
  */
 
-import type { SayAction, ActionResult } from '../types';
-import { c } from '../../ui/colors';
+import type { SayAction, ActionResult, ActionHandlers } from '../types';
+import { executeNotify } from './scheduling';
+import { c, step } from '../../ui/colors';
+
+/**
+ * Decode basic HTML entities
+ */
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
 
 /**
  * Simple markdown renderer for terminal output
  */
 function renderMarkdown(text: string): string {
-  let result = text;
+  let result = decodeHtmlEntities(text);
 
   // Headers (# ## ###)
   result = result.replace(/^### (.*$)/gim, `${c.cyan(c.bold('### $1'))}`);
@@ -64,13 +77,24 @@ function renderMarkdown(text: string): string {
 }
 
 /**
- * Execute a say action - renders markdown for terminal display
+ * Execute a say action - renders markdown for terminal display, or sends to target platform
  */
-export async function executeSay(action: SayAction): Promise<ActionResult> {
-  const renderedMessage = renderMarkdown(action.message);
+export async function executeSay(action: SayAction, handlers?: ActionHandlers): Promise<ActionResult> {
+  if (action.target && handlers?.onNotify) {
+    // Send to target platform (don't call step.say() - connector will show the result)
+    const result = await handlers.onNotify(action.message.trim(), action.target);
+    return {
+      action: 'Says',
+      success: true,
+      result: `Message sent to ${action.target}: ${result.sent.join(', ')}${result.failed.length ? ` (failed: ${result.failed.join(', ')})` : ''}`,
+    };
+  }
 
+  // Default: render markdown for terminal display
+  // Don't show step.say() here - the rendered message will be displayed by the caller
+  const renderedMessage = renderMarkdown(action.message.trim());
   return {
-    action: 'Say',
+    action: 'Says',
     success: true,
     result: renderedMessage,
   };

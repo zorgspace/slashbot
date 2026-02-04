@@ -4,6 +4,7 @@
 
 import type { ActionResult, ActionHandlers } from '../types';
 import { step } from '../../ui/colors';
+import type { DiscordConnector } from '../../connectors/discord';
 
 export async function executeTelegramConfig(
   action: { type: 'telegram-config'; botToken: string; chatId?: string },
@@ -68,6 +69,76 @@ export async function executeDiscordConfig(
     step.error(`Discord config failed: ${errorMsg}`);
     return {
       action: 'DiscordConfig',
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+export async function executeDiscordThread(
+  action: { type: 'discord-thread'; name: string; message?: string; channelId?: string },
+  handlers: ActionHandlers,
+): Promise<ActionResult | null> {
+  if (!handlers.onDiscordThread) return null;
+
+  step.tool('DiscordThread', `name: "${action.name}"`);
+
+  try {
+    const result = await handlers.onDiscordThread(action.name, action.message, action.channelId);
+
+    if (result.success) {
+      step.result(`Thread created: ${result.threadId}`);
+    } else {
+      step.error(result.message);
+    }
+
+    return {
+      action: 'DiscordThread',
+      success: result.success,
+      result: result.success ? `Thread created: ${result.threadId}` : result.message,
+      error: result.success ? undefined : result.message,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Discord thread creation failed: ${errorMsg}`);
+    return {
+      action: 'DiscordThread',
+      success: false,
+      result: 'Failed',
+      error: errorMsg,
+    };
+  }
+}
+
+export async function executeDiscordAddChannel(
+  action: { type: 'discord-add-channel'; channelId: string },
+  handlers: ActionHandlers,
+): Promise<ActionResult | null> {
+  if (!handlers.onDiscordAddChannel) return null;
+
+  step.tool('DiscordAddChannel', `channel_id: ${action.channelId}`);
+
+  try {
+    const result = await handlers.onDiscordAddChannel(action.channelId);
+
+    if (result.success) {
+      step.result(`Channel added: ${action.channelId}`);
+    } else {
+      step.error(result.message);
+    }
+
+    return {
+      action: 'DiscordAddChannel',
+      success: result.success,
+      result: result.message,
+      error: result.success ? undefined : result.message,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    step.error(`Discord add channel failed: ${errorMsg}`);
+    return {
+      action: 'DiscordAddChannel',
       success: false,
       result: 'Failed',
       error: errorMsg,

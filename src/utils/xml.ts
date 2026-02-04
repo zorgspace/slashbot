@@ -43,6 +43,7 @@ const ACTION_TAG_PATTERNS = [
   /<plan[^>]*>[\s\S]*?<\/plan>/g,
   // Task spawning
   /<task[^>]*>[\s\S]*?<\/task>/g,
+  /<slashbotbot[^>]*>[\s\S]*?<\/slashbotbot>/g,
   // Process management
   /<ps[^>]*\/>/g,
   /<kill[^>]*\/>/g,
@@ -63,8 +64,7 @@ export function cleanXmlTags(content: string | unknown): string {
   }
   let result = content;
 
-  // Special handling for <say> - keep content, remove tags
-  result = result.replace(/<say\s*>([\s\S]*?)<\/say>/gi, '$1');
+
 
   for (const pattern of ACTION_TAG_PATTERNS) {
     result = result.replace(new RegExp(pattern.source, 'g'), '');
@@ -84,7 +84,7 @@ export function cleanXmlTags(content: string | unknown): string {
   result = result.replace(/<say\s*>/gi, '');
   // Catch closing tags for action types (unambiguous)
   result = result.replace(
-    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|fetch|format|schedule|notify|skill|skill-install|plan|task|explore|say)>/gi,
+    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|fetch|format|schedule|notify|skill|skill-install|plan|task|slashbotbot|explore|say)>/gi,
     '',
   );
   // Clean up edit internal tags (search/replace) that shouldn't appear in output

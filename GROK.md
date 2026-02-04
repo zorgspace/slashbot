@@ -207,6 +207,7 @@ src/
 - **Async Everywhere**: Promises for FS/shell/API.
 - **Constants**: `src/config/constants.ts` (GROK_CONFIG.MAX_RESULT_CHARS=8000).
 - **Logs**: `c.success()`, `c.muted()` (chalk wrappers).
+- **Testing After Modifications**: Always try to test when you modify a code to ensure quality and catch issues early.
 
 Ex: Clean handler (`src/actions/handlers/file.ts` excerpt):
 

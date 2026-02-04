@@ -20,8 +20,13 @@ export type ActionType =
   | 'skill'
   | 'skill-install'
   | 'task'
+  | 'slashbotbot'
   | 'explore'
   | 'say'
+  | 'continue'
+  // Heartbeat actions
+  | 'heartbeat'
+  | 'heartbeat-update'
   // Aliases for backwards compatibility
   | 'exec'
   | 'create';
@@ -171,13 +176,18 @@ export interface TaskAction {
   description?: string;
 }
 
+export interface SlashbotbotAction {
+  type: 'slashbotbot';
+  bots: TaskAction[];
+}
+
 // ===== Parallel Exploration =====
 
 export interface ExploreAction {
   type: 'explore';
   query: string; // What to search for
   path?: string; // Base path to search in (default: src/)
-  depth?: 'quick' | 'medium' | 'deep'; // How thorough (default: medium)
+  depth?: 'quick' | 'medium' | 'deep' | 'comprehensive'; // How thorough (default: medium)
 }
 
 // ===== User Communication =====
@@ -185,6 +195,11 @@ export interface ExploreAction {
 export interface SayAction {
   type: 'say';
   message: string;
+  target?: string;
+}
+
+export interface ContinueAction {
+  type: 'continue';
 }
 
 // ===== Process Management =====
@@ -212,6 +227,18 @@ export interface DiscordConfigAction {
   channelId: string;
 }
 
+// ===== Heartbeat Actions =====
+
+export interface HeartbeatAction {
+  type: 'heartbeat';
+  prompt?: string; // Custom prompt for this heartbeat
+}
+
+export interface HeartbeatUpdateAction {
+  type: 'heartbeat-update';
+  content: string; // New content for HEARTBEAT.md
+}
+
 // ===== Union Type =====
 
 export type Action =
@@ -233,12 +260,16 @@ export type Action =
   | SkillAction
   | SkillInstallAction
   | TaskAction
+  | SlashbotbotAction
   | ExploreAction
   | SayAction
+  | ContinueAction
   | PsAction
   | KillAction
   | TelegramConfigAction
-  | DiscordConfigAction;
+  | DiscordConfigAction
+  | HeartbeatAction
+  | HeartbeatUpdateAction;
 
 // ===== Results & Options =====
 
@@ -311,6 +342,8 @@ export interface ActionHandlers {
   onSkillInstall?: (url: string, name?: string) => Promise<{ name: string; path: string }>;
   // Sub-task spawning
   onTask?: (prompt: string, description?: string) => Promise<string>;
+  // Parallel sub-agents
+  onSlashbotbot?: (bots: TaskAction[]) => Promise<string>;
   // Process management
   onPs?: () => Promise<string>;
   onKill?: (target: string) => Promise<boolean>;
@@ -323,6 +356,18 @@ export interface ActionHandlers {
     botToken: string,
     channelId: string,
   ) => Promise<{ success: boolean; message: string }>;
+  // Discord channel management
+  onDiscordThread?: (
+    name: string,
+    message?: string,
+    channelId?: string,
+  ) => Promise<{ success: boolean; message: string; threadId?: string }>;
+  onDiscordAddChannel?: (
+    channelId: string,
+  ) => Promise<{ success: boolean; message: string }>;
+  // Heartbeat actions
+  onHeartbeat?: (prompt?: string) => Promise<{ type: string; content: string }>;
+  onHeartbeatUpdate?: (content: string) => Promise<boolean>;
   // Legacy alias
   onExec?: (command: string) => Promise<string>;
 }

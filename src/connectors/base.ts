@@ -7,7 +7,18 @@ import type { EventBus } from '../events/EventBus';
 
 export type ConnectorSource = 'cli' | 'telegram' | 'discord';
 
-export type MessageHandler = (message: string, source: ConnectorSource) => Promise<string | void>;
+export interface MessageMetadata {
+  /** Message was already displayed (e.g., transcription result) */
+  alreadyDisplayed?: boolean;
+  /** Session/channel ID for multi-channel support */
+  sessionId?: string;
+}
+
+export type MessageHandler = (
+  message: string,
+  source: ConnectorSource,
+  metadata?: MessageMetadata,
+) => Promise<string | void>;
 
 export interface ConnectorConfig {
   /** Max message length for this platform */

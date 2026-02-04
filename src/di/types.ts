@@ -11,6 +11,7 @@ export const TYPES = {
   CodeEditor: Symbol.for('CodeEditor'),
   SkillManager: Symbol.for('SkillManager'),
   CommandPermissions: Symbol.for('CommandPermissions'),
+  HeartbeatService: Symbol.for('HeartbeatService'),
 
   // Composite services
   ActionHandlerService: Symbol.for('ActionHandlerService'),

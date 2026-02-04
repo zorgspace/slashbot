@@ -25,10 +25,13 @@ import {
   executeSkill,
   executeSkillInstall,
   executeTask,
+  executeSlashbotbot,
   executeExplore,
   executeTelegramConfig,
   executeDiscordConfig,
   executeSay,
+  executeHeartbeat,
+  executeHeartbeatUpdate,
 } from './handlers';
 
 /**
@@ -123,7 +126,7 @@ async function executeAction(
 
     // User Communication
     case 'say':
-      return executeSay(action);
+      return executeSay(action, handlers);
 
     // Skills
     case 'skill':
@@ -131,9 +134,13 @@ async function executeAction(
     case 'skill-install':
       return executeSkillInstall(action, handlers);
 
-    // Sub-task Spawning
+    // Sub-task spawning
     case 'task':
       return executeTask(action, handlers);
+
+    // Parallel sub-agents
+    case 'slashbotbot':
+      return executeSlashbotbot(action, handlers);
 
     // Parallel Exploration
     case 'explore':
@@ -144,6 +151,12 @@ async function executeAction(
       return executeTelegramConfig(action as any, handlers);
     case 'discord-config':
       return executeDiscordConfig(action as any, handlers);
+
+    // Heartbeat Actions
+    case 'heartbeat':
+      return executeHeartbeat(action as any, handlers);
+    case 'heartbeat-update':
+      return executeHeartbeatUpdate(action as any, handlers);
 
     default:
       return null;

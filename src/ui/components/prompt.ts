@@ -9,7 +9,7 @@ export function prompt(): string {
 }
 
 export function inputPrompt(): string {
-  return `${colors.violet}╭─${colors.reset} `;
+  return `${colors.violet}>${colors.reset} `;
 }
 
 // Connector status message (transcribing, downloading, etc.)
@@ -18,17 +18,20 @@ export function connectorStatus(source: 'telegram' | 'discord', status: string):
   return `${colors.muted}   [${label}] ${status}${colors.reset}`;
 }
 
-// Connector message display (Telegram/Discord) - CLI-style prompt for user input
+// Connector message display (Telegram/Discord) - step format with blue bullet
 export function connectorMessage(source: 'telegram' | 'discord', message: string): string {
   const label = source === 'telegram' ? 'Telegram' : 'Discord';
   const lines = message.split('\n');
 
-  // First line with connector label in prompt style
-  let output = `${colors.violet}╭─${colors.reset} ${colors.info}[${label}]${colors.reset} ${lines[0]}`;
+  // First line with blue bullet and source name (step format like tool calls)
+  let output = `${colors.blue}●${colors.reset} ${colors.blue}${label}${colors.reset}`;
+
+  // Message content on next line with indent
+  output += `\n  ${colors.white}⎿  ${lines[0]}${colors.reset}`;
 
   // Continuation lines with indent
   for (let i = 1; i < lines.length; i++) {
-    output += `\n   ${lines[i]}`;
+    output += `\n     ${colors.white}${lines[i]}${colors.reset}`;
   }
 
   return output;
@@ -51,8 +54,7 @@ export function connectorAction(action: string, success: boolean): string {
 }
 
 export function inputClose(): string {
-  const width = Math.min(process.stdout.columns || 80, 60);
-  return `${colors.muted}${'─'.repeat(width)}${colors.reset}`;
+  return ''; // No separator line after task completion
 }
 
 export function responseStart(): string {

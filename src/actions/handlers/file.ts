@@ -111,24 +111,43 @@ export async function executeMultiEdit(
 ): Promise<ActionResult | null> {
   if (!handlers.onMultiEdit && !handlers.onEdit) return null;
 
-  step.tool('MultiEdit', `${action.path} (${action.edits.length} edits)`);
+  step.update(action.path);
 
-  let result;
+  let result: any;
   if (handlers.onMultiEdit) {
     result = await handlers.onMultiEdit(action.path, action.edits);
   } else {
-    // Fallback: execute edits sequentially
+    // Fallback: execute edits sequentially with diff collection
+    const diffs: Array<{ search: string[]; replace: string[]; startLine: number }> = [];
     for (const edit of action.edits) {
       result = await handlers.onEdit!(action.path, edit.search, edit.replace, edit.replaceAll);
       if (!result.success && result.status !== 'already_applied') {
         break;
       }
+      diffs.push({
+        search: edit.search.split('\n'),
+        replace: edit.replace.split('\n'),
+        startLine: 1,
+      });
     }
-    result = result || { success: true, status: 'applied' as const, message: 'OK' };
+    result = result || { success: true, status: 'applied' as const, message: 'OK', diffs };
   }
 
-  if (result.success) {
-    step.result(`Applied ${action.edits.length} edits`);
+  if (result.success && result.status === 'applied') {
+    step.updateResult(true, action.edits.length, action.edits.length);
+
+    // Display diffs for each edit with line numbers
+    if (result.diffs && result.diffs.length > 0) {
+      for (let i = 0; i < result.diffs.length; i++) {
+        const diff = result.diffs[i];
+        if (result.diffs.length > 1) {
+          step.result(`Edit ${i + 1}/${result.diffs.length}`);
+        }
+        step.diff(diff.search, diff.replace, action.path, diff.startLine);
+      }
+    }
+  } else if (result.status === 'already_applied') {
+    step.success('Already applied (skipped)');
   } else {
     step.error(result.message || 'Multi-edit failed');
   }
@@ -136,7 +155,11 @@ export async function executeMultiEdit(
   return {
     action: `MultiEdit: ${action.path}`,
     success: result.success,
-    result: result.success ? `Applied ${action.edits.length} edits` : 'Failed',
+    result: result.success
+      ? result.status === 'already_applied'
+        ? 'Skipped (already applied)'
+        : `Applied ${action.edits.length} edits`
+      : 'Failed',
     error: result.success ? undefined : result.message,
   };
 }

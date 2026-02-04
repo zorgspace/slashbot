@@ -12,12 +12,27 @@ import {
 import { parseActions, executeActions, type ActionHandlers } from '../actions';
 import { cleanXmlTags, cleanSelfDialogue } from '../utils/xml';
 import { GROK_CONFIG } from '../config/constants';
+import { state } from '../ui/state';
 
-import type { Message, GrokConfig, UsageStats } from './types';
+import type { Message, GrokConfig, UsageStats, BillingInfo, BalanceInfo } from './types';
 import { SYSTEM_PROMPT } from './prompts/system';
 import { compressActionResults, getEnvironmentInfo } from './utils';
+import { PROXY_CONFIG } from '../config/constants';
+import { getSessionAuthHeaders, isSessionActive, walletExists, getBalances, getPublicKey } from '../services/wallet';
 
 export type { ActionHandlers } from '../actions';
+
+/**
+ * Custom error for token mode validation failures
+ */
+class TokenModeError extends Error {
+  details: string;
+  constructor(message: string, details: string) {
+    super(message);
+    this.name = 'TokenModeError';
+    this.details = details;
+  }
+}
 
 /**
  * Simple LRU cache with max entries - evicts oldest on overflow
@@ -90,9 +105,21 @@ const DEFAULT_CONFIG: Partial<GrokConfig> = {
   temperature: GROK_CONFIG.TEMPERATURE,
 };
 
+/**
+ * Session data for multi-channel conversation support
+ */
+interface ConversationSession {
+  history: Message[];
+  fileContextCache: LRUCache<string, string>;
+  displayedContent: string;
+  lastActivity: number;
+}
+
 export class GrokClient {
   private config: GrokConfig;
-  private conversationHistory: Message[] = [];
+  // Multi-session support: each channel/chatId gets its own conversation history
+  private sessions = new Map<string, ConversationSession>();
+  private currentSessionId: string = 'cli'; // Default session for CLI
   private actionHandlers: ActionHandlers = {};
   private usage: UsageStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, requests: 0 };
   private contextCompressionEnabled: boolean = true;
@@ -102,26 +129,274 @@ export class GrokClient {
   private currentThinking: ThinkingAnimation | null = null;
   private projectContext: string = '';
   private personalityMod: string = '';
-  // Persistent file content cache - keeps important files in context across turns (LRU, max 50 entries)
-  private fileContextCache = new LRUCache<string, string>(50);
-  // Track displayed content across agentic loop iterations to prevent duplicates
-  private sessionDisplayedContent: string = '';
+  // Billing info from last proxy request
+  private lastBilling: BillingInfo | null = null;
+  // Callback for raw LLM output
+  private rawOutputCallback: ((text: string) => void) | null = null;
+  // Max sessions to keep in memory (LRU eviction)
+  private maxSessions: number = 50;
 
   constructor(config: GrokConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config };
 
-    if (!this.config.apiKey) {
-      throw new Error('GROK_API_KEY is required');
+    // Support both direct API key and proxy mode
+    // Proxy mode: use wallet for billing through slashbot-web
+    // Direct mode: use API key directly with xAI
+    if (!this.config.apiKey && !this.useProxy()) {
+      throw new Error('GROK_API_KEY is required (or configure SLASHBOT_WALLET_ADDRESS for proxy mode)');
     }
 
-    this.conversationHistory.push({
-      role: 'system',
-      content: SYSTEM_PROMPT,
-    });
+    // Initialize default CLI session
+    this.createSession('cli');
+  }
+
+  /**
+   * Create a new conversation session
+   */
+  private createSession(sessionId: string): ConversationSession {
+    // Evict oldest session if at capacity
+    if (this.sessions.size >= this.maxSessions) {
+      let oldestId: string | null = null;
+      let oldestTime = Infinity;
+      for (const [id, session] of this.sessions) {
+        if (id !== 'cli' && session.lastActivity < oldestTime) {
+          oldestTime = session.lastActivity;
+          oldestId = id;
+        }
+      }
+      if (oldestId) {
+        this.sessions.delete(oldestId);
+      }
+    }
+
+    const session: ConversationSession = {
+      history: [{
+        role: 'system',
+        content: this.buildSystemPrompt(),
+      }],
+      fileContextCache: new LRUCache<string, string>(50),
+      displayedContent: '',
+      lastActivity: Date.now(),
+    };
+    this.sessions.set(sessionId, session);
+    return session;
+  }
+
+  /**
+   * Get or create a session by ID
+   */
+  private getSession(sessionId: string): ConversationSession {
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      session = this.createSession(sessionId);
+    }
+    session.lastActivity = Date.now();
+    return session;
+  }
+
+  /**
+   * Get current session's conversation history
+   */
+  private get conversationHistory(): Message[] {
+    return this.getSession(this.currentSessionId).history;
+  }
+
+  /**
+   * Set current session's conversation history
+   */
+  private set conversationHistory(history: Message[]) {
+    const session = this.getSession(this.currentSessionId);
+    session.history = history;
+  }
+
+  /**
+   * Get current session's file context cache
+   */
+  private get fileContextCache(): LRUCache<string, string> {
+    return this.getSession(this.currentSessionId).fileContextCache;
+  }
+
+  /**
+   * Get current session's displayed content tracker
+   */
+  private get sessionDisplayedContent(): string {
+    return this.getSession(this.currentSessionId).displayedContent;
+  }
+
+  /**
+   * Set current session's displayed content tracker
+   */
+  private set sessionDisplayedContent(content: string) {
+    const session = this.getSession(this.currentSessionId);
+    session.displayedContent = content;
+  }
+
+  /**
+   * Switch to a different conversation session
+   */
+  setSession(sessionId: string): void {
+    this.currentSessionId = sessionId;
+    // Ensure session exists
+    this.getSession(sessionId);
+  }
+
+  /**
+   * Get current session ID
+   */
+  getSessionId(): string {
+    return this.currentSessionId;
+  }
+
+  /**
+   * Get all active session IDs
+   */
+  getSessionIds(): string[] {
+    return Array.from(this.sessions.keys());
+  }
+
+  /**
+   * Clear a specific session's history
+   */
+  clearSession(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.history = [{
+        role: 'system',
+        content: this.buildSystemPrompt(),
+      }];
+      session.fileContextCache.clear();
+      session.displayedContent = '';
+    }
+  }
+
+  /**
+   * Delete a session entirely
+   */
+  deleteSession(sessionId: string): boolean {
+    if (sessionId === 'cli') return false; // Never delete CLI session
+    return this.sessions.delete(sessionId);
+  }
+
+  /**
+   * Build system prompt with current settings
+   */
+  private buildSystemPrompt(): string {
+    let prompt = SYSTEM_PROMPT;
+
+    if (this.workDir) {
+      prompt += '\n\nHere is useful information about the environment you are running in:';
+      prompt += getEnvironmentInfo(this.workDir);
+    }
+
+    if (this.personalityMod) {
+      prompt += this.personalityMod;
+    }
+
+    if (this.projectContext) {
+      prompt += '\n\nPROJECT CONTEXT:\n' + this.projectContext;
+    }
+
+    return prompt;
+  }
+
+  /**
+   * Check if proxy mode is enabled
+   * Proxy mode uses slashbot-web for rate limiting and billing
+   */
+  useProxy(): boolean {
+    if (this.config.paymentMode !== 'token') return false;
+    const proxyUrl = this.config.proxyUrl || PROXY_CONFIG.BASE_URL;
+    const walletAddress = this.config.walletAddress || getPublicKey();
+    return !!(proxyUrl && walletAddress);
+  }
+
+  /**
+   * Validate token mode requirements and throw TokenModeError if not met
+   */
+  private async validateTokenMode(): Promise<void> {
+    // Step 1: Check if wallet exists
+    if (!walletExists()) {
+      throw new TokenModeError(
+        'No wallet configured.',
+        'Run /wallet create or /wallet import first, or switch to /mode apikey.'
+      );
+    }
+
+    // Step 2: Check if proxy is configured
+    if (!this.useProxy()) {
+      throw new TokenModeError(
+        'Token mode misconfigured.',
+        'Switch to /mode apikey or reconfigure wallet.'
+      );
+    }
+
+    // Step 3: Check SLASHBOT token balance
+    const balances = await getBalances();
+    if (!balances || balances.slashbot <= 0) {
+      // Step 4: Check credits from proxy
+      const credits = await this.getBalance();
+      if (!credits || credits.credits <= 0) {
+        throw new TokenModeError(
+          'No SLASHBOT tokens or credits available.',
+          'Buy SLASHBOT tokens or switch to /mode apikey.'
+        );
+      }
+      // Has credits, can proceed
+      return;
+    }
+
+    // Step 5: Has tokens, check if credits exist
+    const credits = await this.getBalance();
+    if (!credits || credits.credits <= 0) {
+      throw new TokenModeError(
+        'No credits available.',
+        'Run /redeem <amount> to convert SLASHBOT tokens to credits.'
+      );
+    }
+  }
+
+  /**
+   * Get the API endpoint based on mode
+   */
+  private getApiEndpoint(): string {
+    if (this.useProxy()) {
+      const proxyUrl = this.config.proxyUrl || PROXY_CONFIG.BASE_URL;
+      return `${proxyUrl}${PROXY_CONFIG.GROK_ENDPOINT}`;
+    }
+    return `${this.config.baseUrl}/chat/completions`;
+  }
+
+  /**
+   * Get credit balance from proxy (proxy mode only)
+   */
+  async getBalance(): Promise<BalanceInfo | null> {
+    if (!this.useProxy()) return null;
+
+    const proxyUrl = this.config.proxyUrl || PROXY_CONFIG.BASE_URL;
+    const walletAddress = this.config.walletAddress || getPublicKey();
+
+    try {
+      const response = await fetch(`${proxyUrl}${PROXY_CONFIG.CREDITS_ENDPOINT}?wallet=${walletAddress}`);
+      if (!response.ok) return null;
+      return await response.json() as BalanceInfo;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get last billing info (proxy mode only)
+   */
+  getLastBilling(): BillingInfo | null {
+    return this.lastBilling;
   }
 
   setActionHandlers(handlers: ActionHandlers): void {
     this.actionHandlers = handlers;
+  }
+
+  setRawOutputCallback(callback: (text: string) => void): void {
+    this.rawOutputCallback = callback;
   }
 
   /**
@@ -144,26 +419,13 @@ export class GrokClient {
   }
 
   private rebuildSystemPrompt(): void {
-    if (this.conversationHistory.length === 0 || this.conversationHistory[0].role !== 'system')
-      return;
-
-    let prompt = SYSTEM_PROMPT;
-
-    // Add environment info
-    prompt += '\n\nHere is useful information about the environment you are running in:';
-    prompt += getEnvironmentInfo(this.workDir);
-
-    // Add personality modifier
-    if (this.personalityMod) {
-      prompt += this.personalityMod;
+    // Update system prompt for all sessions
+    const newPrompt = this.buildSystemPrompt();
+    for (const session of this.sessions.values()) {
+      if (session.history.length > 0 && session.history[0].role === 'system') {
+        session.history[0].content = newPrompt;
+      }
     }
-
-    // Add project context
-    if (this.projectContext) {
-      prompt += '\n\nPROJECT CONTEXT:\n' + this.projectContext;
-    }
-
-    this.conversationHistory[0].content = prompt;
   }
 
   setProjectContext(context: string, workDir?: string): void {
@@ -183,7 +445,7 @@ export class GrokClient {
     const mods: Record<string, string> = {
       normal: '',
       depressed:
-        '\n\nPERSONALITY: Depressed, melancholic. Sigh often. Question existence. Still help, but lament.',
+        '\n\nPERSONALITY: DEPRESSED. Always sigh (*sigh*). Question the meaning of everything. Lament existence. Still provide help but express deep melancholy about it.',
       sarcasm:
         '\n\nPERSONALITY: Sarcastic, witty, condescending. Roll eyes at obvious things. Still helpful.',
       unhinged:
@@ -197,7 +459,7 @@ export class GrokClient {
   getPersonality(): string {
     const content = (this.conversationHistory[0]?.content as string) || '';
     if (content.includes('UNHINGED')) return 'unhinged';
-    if (content.includes('depressed') || content.includes('melancholic')) return 'depressed';
+    if (content.includes('DEPRESSED')) return 'depressed';
     if (content.includes('sarcastic') || content.includes('condescending')) return 'sarcasm';
     return 'normal';
   }
@@ -208,6 +470,14 @@ export class GrokClient {
 
   getCurrentModel(): string {
     return this.config.model || GROK_CONFIG.MODEL;
+  }
+
+  setPaymentMode(mode: 'apikey' | 'token'): void {
+    this.config.paymentMode = mode;
+  }
+
+  getPaymentMode(): string {
+    return this.config.paymentMode || 'apikey';
   }
 
   abort(): void {
@@ -228,6 +498,9 @@ export class GrokClient {
   async chat(userMessage: string): Promise<{ response: string; thinking: string }> {
     // Reset session displayed content for new chat
     this.sessionDisplayedContent = '';
+
+    // Reset raw output text for new chat if panel enabled
+    if (state.rawPanelEnabled) state.rawOutputText = '';
 
     // Add user message with recent images as vision context
     const recentImages = getRecentImages();
@@ -259,15 +532,23 @@ export class GrokClient {
     let emptyResponseRetries = 0;
     const MAX_EMPTY_RETRIES = 2; // Max retries when model produces thinking but no content
     let forcedRetryAttempted = false; // Track if we already tried the CRITICAL prompt
+    let iteration = 0; // Track iterations to prevent infinite loops
+    const MAX_ITERATIONS = 20; // Maximum iterations before requiring explicit continue
+    let isFirstIteration = true; // Track first iteration for thinking display
 
-    // Agentic loop: execute actions and feed results back (no iteration limit)
+    // Agentic loop: execute actions and feed results back
     while (true) {
+      iteration++;
       let responseContent: string;
       let thinkingContent: string;
       try {
-        const result = await this.streamResponse();
+        const result = await this.streamResponse(isFirstIteration);
+        isFirstIteration = false; // Only show thinking on first iteration
         responseContent = result.content;
         thinkingContent = result.thinking;
+
+        // Remove empty backticks to prevent display issues and ensure they don't interfere with parsing
+        responseContent = responseContent.replace(/``/g, '');
       } catch (error: any) {
         // Check if it's a token limit error
         if (error.message && error.message.includes("maximum prompt length")) {
@@ -292,6 +573,11 @@ export class GrokClient {
             console.error(`\n${c.error('[API Error after condensation]')} ${retryError.message || retryError}`);
             throw retryError;
           }
+        } else if (error instanceof TokenModeError) {
+          // Display token mode errors in violet
+          console.log(`\n${colors.violet}[ERROR] ${error.message}${colors.reset}`);
+          console.log(`${colors.violet}${error.details}${colors.reset}\n`);
+          throw error;
         } else {
           console.error(`\n${c.error('[API Error]')} ${error.message || error}`);
           throw error;
@@ -362,10 +648,39 @@ export class GrokClient {
 
       const actionResults = await executeActions(actions, this.actionHandlers);
 
+      // Check if a continue action was executed - allows LLM to continue past iteration limits
+      const hasContinueAction = actions.some(a => a.type === 'continue');
+      if (hasContinueAction) {
+        iteration = 0;
+        this.conversationHistory.push({
+          role: 'assistant',
+          content: responseContent,
+        });
+        this.conversationHistory.push({
+          role: 'user',
+          content: `Continuing task as requested by <continue> action.\n\n${compressActionResults(actionResults)}\n\n<system-instruction>Continue the task.</system-instruction>`,
+        });
+        continue;
+      }
+
+      // Hard limit: stop if we've exceeded max iterations and no continue was requested
+      if (iteration >= MAX_ITERATIONS) {
+        this.conversationHistory.push({
+          role: 'assistant',
+          content: responseContent,
+        });
+        break;
+      }
+
       // Check if a say action was executed - this signals task completion
       // The LLM has presented results and is ready for user interaction
-      const hasSayAction = actionResults.some(r => r.action === 'Say');
+      const hasSayAction = actionResults.some(r => r.action === 'Says');
       if (hasSayAction) {
+        // Always show the rendered say result (removes <say> tags but preserves inner content)
+        const sayResult = actionResults.find(r => r.action === 'Says');
+        if (sayResult?.result) {
+          process.stdout.write(`\n${colors.white}●${colors.reset} ${sayResult.result}\n`);
+        }
         // Store the assistant response before breaking
         this.conversationHistory.push({
           role: 'assistant',
@@ -536,12 +851,18 @@ export class GrokClient {
       const actionTally = executedActions
         .map(a => `${a.success ? '✓' : '✗'} ${a.description}`)
         .join('\n');
+
+      // Add warning if nearing iteration limit
+      const iterationWarning = iteration >= 15
+        ? `\n\n<WARNING> You have performed ${iteration} actions. If this task is important to complete, use <continue/> to proceed with more iterations. Otherwise, summarize and use <say> to finish.</WARNING>`
+        : '';
+
       let continuationPrompt: string;
 
       if (hasErrors) {
-        continuationPrompt = `${compressedResults}${fileContext}\n\n<session-actions>\n${actionTally}\n</session-actions>\n\n<system-instruction>ERROR DETECTED - fix it now. File contents are in <file-context> above.</system-instruction>`;
+        continuationPrompt = `${compressedResults}${fileContext}\n<session-actions>\n${actionTally}\n</session-actions>${iterationWarning}\n\n<system-instruction>ERROR DETECTED - fix it now. File contents are in <file-context> above.</system-instruction>`;
       } else {
-        continuationPrompt = `${compressedResults}${fileContext}\n\n<session-actions>\n${actionTally}\n</session-actions>\n\n<system-instruction>Continue or finish with <say>. If the task is complete or you need user input, use <say> to present a summary and ask for the next steps. File contents are in <file-context> above. Only claim actions that appear in session-actions.</system-instruction>`;
+        continuationPrompt = `${compressedResults}${fileContext}\n<session-actions>\n${actionTally}\n</session-actions>${iterationWarning}\n\n<system-instruction>Continue or finish with <say>. If the task is complete or you need user input, use <say> to present a summary and ask for the next steps. File contents are in <file-context> above. Only claim actions that appear in session-actions.</system-instruction>`;
       }
 
       this.conversationHistory.push({
@@ -582,14 +903,16 @@ export class GrokClient {
     };
   }
 
-  private async streamResponse(): Promise<{ content: string; thinking: string }> {
-    const now = new Date().toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
+  private async streamResponse(showThinking: boolean = true): Promise<{ content: string; thinking: string }> {
+    // Validate payment mode - prevent silent fallback from token to apikey
+    if (this.config.paymentMode === 'token') {
+      await this.validateTokenMode();
+    }
+
     console.log();
-    const requestBody = {
+
+    // Build request body - add wallet_address for proxy mode
+    const requestBody: Record<string, unknown> = {
       model: this.getModel(),
       messages: this.conversationHistory,
       max_tokens: this.config.maxTokens,
@@ -597,21 +920,28 @@ export class GrokClient {
       stream: true,
     };
 
+    // Add wallet address for proxy billing
+    if (this.useProxy()) {
+      requestBody.wallet_address = this.config.walletAddress || getPublicKey();
+    }
+
     let responseContent = '';
     let thinkingContent = '';
     let displayedContent = '';
     let buffer = '';
     const thinking = new ThinkingAnimation();
-    this.currentThinking = thinking;
+    this.currentThinking = showThinking ? thinking : null;
     let firstChunk = true;
     let thinkingStreamStarted = false;
 
     // Create abort controller for this request
     this.abortController = new AbortController();
 
-    // Start thinking animation and thinking display stream
-    thinking.start('Thinking...', this.workDir);
-    thinkingDisplay.startStream();
+    // Start thinking animation and thinking display stream (only on first iteration)
+    if (showThinking) {
+      thinking.start('Thinking...', this.workDir);
+      thinkingDisplay.startStream();
+    }
 
     // Set up keyboard listener during streaming for Ctrl+O (toggle thinking) and Ctrl+C (abort)
     const wasRaw = process.stdin.isRaw;
@@ -635,13 +965,28 @@ export class GrokClient {
     this.usage.requests++;
 
     try {
-      const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+      // Serialize request body once for signing and sending
+      const requestBodyJson = JSON.stringify(requestBody);
+
+      // Build headers - proxy mode uses wallet signature, direct mode uses API key
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (this.useProxy()) {
+        // Add wallet authentication headers with body hash for proxy
+        const authHeaders = getSessionAuthHeaders(requestBodyJson);
+        if (authHeaders) {
+          Object.assign(headers, authHeaders);
+        }
+      } else if (this.config.apiKey) {
+        headers.Authorization = `Bearer ${this.config.apiKey}`;
+      }
+
+      const response = await fetch(this.getApiEndpoint(), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
+        headers,
+        body: requestBodyJson,
         signal: this.abortController.signal,
       });
 
@@ -673,6 +1018,13 @@ export class GrokClient {
 
           try {
             const parsed = JSON.parse(data);
+
+            // Handle billing info from proxy (sent at end of stream)
+            if (parsed.billing) {
+              this.lastBilling = parsed.billing as BillingInfo;
+              continue; // Don't process as content
+            }
+
             const delta = parsed.choices?.[0]?.delta;
             const content = delta?.content;
 
@@ -686,24 +1038,34 @@ export class GrokClient {
             // Capture reasoning/thinking content from reasoning models
             if (delta?.reasoning_content) {
               // Stop spinner on first thinking chunk only if thinking display is visible (so it doesn't conflict)
-              if (!thinkingStreamStarted && this.currentThinking && thinkingDisplay.isVisible()) {
+              if (showThinking && !thinkingStreamStarted && this.currentThinking && thinkingDisplay.isVisible()) {
                 thinking.stop();
                 this.currentThinking = null;
                 thinkingStreamStarted = true;
               }
               thinkingContent += delta.reasoning_content;
-              // Stream thinking content in real-time
-              thinkingDisplay.streamChunk(delta.reasoning_content);
+              // Accumulate raw output if panel enabled
+              if (state.rawPanelEnabled) state.rawOutputText += delta.reasoning_content;
+              // Stream thinking content in real-time (only if showing thinking)
+              if (showThinking) {
+                thinkingDisplay.streamChunk(delta.reasoning_content);
+              }
             }
 
             if (content) {
               responseContent += content;
 
+              // Accumulate raw output if panel enabled
+              if (state.rawPanelEnabled) state.rawOutputText += content;
+
+              // Send raw content to callback if set
+              this.rawOutputCallback?.(content);
+
               // Stream clean content (without XML action tags) to console
               // But wait if we're in the middle of an action tag or thinking block (incomplete <...>)
               const openTags = (
                 responseContent.match(
-                  /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|think|thinking|reasoning)\b/gi,
+                  /<(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|git|fetch|search|format|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|think|thinking|reasoning)\b[^>]*>/gi,
                 ) || []
               ).length;
               const closeTags = (
@@ -737,13 +1099,12 @@ export class GrokClient {
                         thinking.stop();
                         this.currentThinking = null;
                       }
-                      // Close thinking box before showing response
-                      thinkingDisplay.endStream();
-                      // Add newline and white bullet for response
-                      process.stdout.write(`\n${colors.white}●${colors.reset} `);
+                      // Close thinking box before showing response (only if we started it)
+                      if (showThinking) {
+                        thinkingDisplay.endStream();
+                      }
                       firstChunk = false;
                     }
-                    process.stdout.write(newContent);
                     displayedContent = normalized;
                     this.sessionDisplayedContent = normalized;
                   }
@@ -764,40 +1125,21 @@ export class GrokClient {
 
       // Stop thinking animation if still running (no content received)
       if (this.currentThinking) {
-        const duration = thinking.stop();
+        thinking.stop();
         this.currentThinking = null;
-        // End thinking stream first, then show duration
-        if (thinkingDisplay.isStreaming()) {
-          thinkingDisplay.endStream();
-        }
-        process.stdout.write(`\n${colors.muted}${duration}${colors.reset}`);
-      } else if (thinkingDisplay.isStreaming()) {
-        // Edge case: thinking stream still active but animation already stopped
+      }
+      // End thinking stream if we started it
+      if (showThinking && thinkingDisplay.isStreaming()) {
         thinkingDisplay.endStream();
       }
       this.abortController = null;
     }
 
-    // Output any remaining content that was buffered
-    let cleanFull = cleanSelfDialogue(cleanXmlTags(responseContent));
-    cleanFull = cleanFull.replace(/^Assistant:\s*/gim, '');
-    const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
-    const remainingContent = normalized.slice(this.sessionDisplayedContent.length);
-    if (remainingContent && remainingContent.trim()) {
-      const isDuplicate = this.sessionDisplayedContent.includes(remainingContent.trim());
-      if (!isDuplicate) {
-        // Add bullet if this is the first content being displayed
-        if (firstChunk) {
-          process.stdout.write(`\n${colors.white}●${colors.reset} `);
-          firstChunk = false;
-        }
-        process.stdout.write(remainingContent);
-        this.sessionDisplayedContent = normalized;
-      }
-    }
+    // Don't output remaining content here - let the caller (chat method) decide
+    // what to display based on whether there's a Say action or not
 
     // Always add newline after streaming (ensures spacing before actions)
-    process.stdout.write('\n');
+    // process.stdout.write('\n');
 
     // Detect edge case: thinking content but no actual response
     // This can happen with reasoning models that think but don't generate output
@@ -917,12 +1259,19 @@ export class GrokClient {
    * Chat with action execution for Telegram/Discord - streams thinking and actions to CLI
    * @param source - The platform source to adapt response style
    * @param timeout - Max time in ms (default: 120000 = 2 minutes)
+   * @param sessionId - Optional session ID for multi-channel support (defaults to source or 'cli')
    */
   async chatWithResponse(
     userMessage: string,
     source?: 'telegram' | 'discord',
     timeout: number = 120000,
+    sessionId?: string,
   ): Promise<string> {
+    // Switch to the appropriate session for this channel/chat
+    const effectiveSessionId = sessionId || source || 'cli';
+    const previousSessionId = this.currentSessionId;
+    this.setSession(effectiveSessionId);
+
     const startTime = Date.now();
     let consecutiveErrors = 0;
     const MAX_CONSECUTIVE_ERRORS = 3;
@@ -1015,20 +1364,16 @@ export class GrokClient {
       // Execute actions and display each one
       const actionResults = await executeActions(actions, this.actionHandlers);
 
-      // Display action results
-      for (const r of actionResults) {
-        const icon = r.success ? `${colors.success}✓${colors.reset}` : `${colors.error}✗${colors.reset}`;
-        process.stdout.write(`${colors.muted}│${colors.reset} ${icon} ${r.action}\n`);
-      }
+      // Action results are already displayed by step.tool/step.result - no summary needed
 
       // Check if a say action was executed - this signals task completion
-      const hasSayAction = actionResults.some(r => r.action === 'Say');
+      const hasSayAction = actionResults.some(r => r.action === 'Says');
       if (hasSayAction) {
         this.conversationHistory.push({ role: 'assistant', content });
-        const sayResult = actionResults.find(r => r.action === 'Say');
+        const sayResult = actionResults.find(r => r.action === 'Says');
         // Display the final response with bullet
         const sayMessage = sayResult?.result || 'Done.';
-        process.stdout.write(`\n${colors.white}●${colors.reset} ${sayMessage}\n`);
+        process.stdout.write(`\r\x1b[K\n${colors.white}●${colors.reset} ${sayMessage}\n`);
         return sayMessage;
       }
 
@@ -1091,13 +1436,24 @@ export class GrokClient {
    * Stream response for connector with thinking display
    */
   private async streamConnectorResponse(showThinking: boolean): Promise<{ content: string; thinking: string }> {
-    const requestBody = {
+    // Validate payment mode - prevent silent fallback from token to apikey
+    if (this.config.paymentMode === 'token') {
+      await this.validateTokenMode();
+    }
+
+    // Build request body - add wallet_address for proxy mode
+    const requestBody: Record<string, unknown> = {
       model: this.getModel(),
       messages: this.conversationHistory,
       max_tokens: this.config.maxTokens,
       temperature: this.config.temperature,
       stream: true,
     };
+
+    // Add wallet address for proxy billing
+    if (this.useProxy()) {
+      requestBody.wallet_address = this.config.walletAddress || getPublicKey();
+    }
 
     let responseContent = '';
     let thinkingContent = '';
@@ -1117,13 +1473,28 @@ export class GrokClient {
     const fetchTimeout = setTimeout(() => controller.abort(), 60000);
 
     try {
-      const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+      // Serialize request body once for signing and sending
+      const requestBodyJson = JSON.stringify(requestBody);
+
+      // Build headers - proxy mode uses wallet signature, direct mode uses API key
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (this.useProxy()) {
+        // Add wallet authentication headers with body hash for proxy
+        const authHeaders = getSessionAuthHeaders(requestBodyJson);
+        if (authHeaders) {
+          Object.assign(headers, authHeaders);
+        }
+      } else if (this.config.apiKey) {
+        headers.Authorization = `Bearer ${this.config.apiKey}`;
+      }
+
+      const response = await fetch(this.getApiEndpoint(), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
+        headers,
+        body: requestBodyJson,
         signal: controller.signal,
       });
 
@@ -1167,15 +1538,24 @@ export class GrokClient {
 
             // Capture thinking content and stream to display
             if (delta?.reasoning_content && showThinking) {
-              if (!thinkingStreamStarted && thinkingDisplay.isVisible()) {
+              // Stop animation when reasoning starts (content is coming in)
+              if (!thinkingStreamStarted) {
                 thinking.stop();
                 thinkingStreamStarted = true;
               }
               thinkingContent += delta.reasoning_content;
-              thinkingDisplay.streamChunk(delta.reasoning_content);
+              // Only stream to display if visible (user toggled with Ctrl+O)
+              if (thinkingDisplay.isVisible()) {
+                thinkingDisplay.streamChunk(delta.reasoning_content);
+              }
             }
 
             if (content) {
+              // Stop animation when response content starts
+              if (!thinkingStreamStarted && showThinking) {
+                thinking.stop();
+                thinkingStreamStarted = true;
+              }
               responseContent += content;
             }
           } catch {
@@ -1261,9 +1641,8 @@ export class GrokClient {
         body: JSON.stringify(requestBody),
       });
 
-      const duration = thinking.stop();
+      thinking.stop();
       this.currentThinking = null;
-      console.log(`${colors.muted}${duration}${colors.reset}`);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -1319,12 +1698,23 @@ export class GrokClient {
   }
 }
 
-export function createGrokClient(apiKey?: string): GrokClient {
+export function createGrokClient(apiKey?: string, config?: { model?: string; paymentMode?: string }): GrokClient {
   const key = apiKey || process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+  const walletAddress = getPublicKey();
+  const proxyUrl = PROXY_CONFIG.BASE_URL;
 
-  if (!key) {
-    throw new Error('Missing API key. Set GROK_API_KEY or XAI_API_KEY environment variable.');
+  // Support two modes:
+  // 1. Proxy mode: wallet address configured, route through slashbot-web for billing
+  // 2. Direct mode: API key provided, call xAI directly
+  if (!key && !walletAddress) {
+    throw new Error('Missing API key. Set GROK_API_KEY or XAI_API_KEY environment variable, or create a wallet with /wallet create for token mode.');
   }
 
-  return new GrokClient({ apiKey: key });
+  return new GrokClient({
+    apiKey: key || 'proxy-mode', // Placeholder for proxy mode
+    proxyUrl: walletAddress ? proxyUrl : undefined,
+    walletAddress: walletAddress || undefined,
+    model: config?.model,
+    paymentMode: config?.paymentMode,
+  });
 }

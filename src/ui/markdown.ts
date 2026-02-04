@@ -13,6 +13,7 @@ const UNDERLINE = '\x1b[4m';
 const STRIKETHROUGH = '\x1b[9m';
 const CYAN = '\x1b[36m';
 const YELLOW = '\x1b[33m';
+const WHITE = '\x1b[37m';
 const GREEN = '\x1b[32m';
 const MAGENTA = '\x1b[35m';
 const RESET = '\x1b[0m';
@@ -45,9 +46,9 @@ export function renderMarkdown(text: string): string {
   result = result.replace(/`([^`]+)`/g, `${DIM}${CYAN}$1${RESET}`);
 
   // Headers
-  result = result.replace(/^### (.+)$/gm, `${BOLD}${YELLOW}   $1${RESET}`);
-  result = result.replace(/^## (.+)$/gm, `${BOLD}${YELLOW}  $1${RESET}`);
-  result = result.replace(/^# (.+)$/gm, `${BOLD}${YELLOW}━━ $1 ━━${RESET}`);
+  result = result.replace(/^### (.+)$/gm, `${BOLD}${WHITE}   $1${RESET}`);
+  result = result.replace(/^## (.+)$/gm, `${BOLD}${WHITE}  $1${RESET}`);
+  result = result.replace(/^# (.+)$/gm, `${BOLD}${WHITE}━━ $1 ━━${RESET}`);
 
   // Bold (**text** or __text__)
   result = result.replace(/\*\*([^*]+)\*\*/g, `${BOLD}$1${RESET}`);

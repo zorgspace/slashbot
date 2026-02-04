@@ -56,12 +56,14 @@ export async function initializeContainer(options: { basePath?: string }): Promi
   const { CommandRegistry } = await import('../commands/registry');
   const { getAllHandlers, setCommandsRef } = await import('../commands/handlers');
   const { EventBus } = await import('../events/EventBus');
+  const { HeartbeatService } = await import('../services/heartbeat');
 
   // EventBus should be bound first as other services may depend on it
   container.bind(TYPES.EventBus).to(EventBus).inSingletonScope();
 
   container.bind(TYPES.ConnectorRegistry).to(ConnectorRegistry).inSingletonScope();
   container.bind(TYPES.ActionHandlerService).to(ActionHandlerService).inSingletonScope();
+  container.bind(TYPES.HeartbeatService).to(HeartbeatService).inSingletonScope();
 
   // Bind and initialize CommandRegistry with all handlers
   container

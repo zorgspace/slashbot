@@ -26,10 +26,14 @@ import type {
   SkillAction,
   SkillInstallAction,
   TaskAction,
+  SlashbotbotAction,
   ExploreAction,
   ExecAction,
   PsAction,
   KillAction,
+  ContinueAction,
+  HeartbeatAction,
+  HeartbeatUpdateAction,
 } from './types';
 
 // Quote pattern: matches both single and double quotes
@@ -66,6 +70,9 @@ function fixTruncatedTags(content: string): string {
     'ps',
     'kill',
     'replace',
+    'continue',
+    'heartbeat',
+    'heartbeat-update',
   ]; // include inner tags too
 
   // Fix malformed inner tags like <search"> or <replace"> (stray quotes)
@@ -220,6 +227,8 @@ const PATTERNS = {
   // ===== Sub-task Spawning =====
   // <task description="...">prompt</task>
   task: /<task(?:\s+[^>]*)?\s*>([\s\S]+?)<\/task>/gi,
+  // <slashbotbot>...<task>...</task>...</slashbotbot>
+  slashbotbot: /<slashbotbot(?:\s+[^>]*)?\s*>([\s\S]+?)<\/slashbotbot>/gi,
 
   // ===== Parallel Exploration =====
   // <explore query="..." path="src/" depth="medium"/>
@@ -231,11 +240,21 @@ const PATTERNS = {
   // <kill target="..."/> or <kill pid="..."/>
   kill: /<kill\s+[^>]*\/?>/gi,
 
+  // ===== Flow Control =====
+  // <continue/> - signal to continue generation
+  continue: /<continue\s*\/?>/gi,
+
   // ===== Connector Configuration =====
   // <telegram-config bot_token="..." chat_id="..."/>
   telegramConfig: /<telegram-config\s+[^>]*\/?>/gi,
   // <discord-config bot_token="..." channel_id="..."/>
   discordConfig: /<discord-config\s+[^>]*\/?>/gi,
+
+  // ===== Heartbeat Actions =====
+  // <heartbeat/> or <heartbeat prompt="..."/>
+  heartbeat: /<heartbeat(?:\s+[^>]*)?\s*\/?>/gi,
+  // <heartbeat-update>content</heartbeat-update>
+  heartbeatUpdate: /<heartbeat-update\s*>([\s\S]+?)<\/heartbeat-update>/gi,
 };
 
 /**
@@ -376,8 +395,31 @@ export function parseActions(content: string): Action[] {
     } as CreateAction);
   }
 
+  // Parse say actions first (before stripping, to preserve message content)
+  const sayRegex = new RegExp(PATTERNS.say.source, 'gi');
+  while ((match = sayRegex.exec(fixedContent)) !== null) {
+    const message = match[1].trim();
+    if (message) {
+      actions.push({
+        type: 'say',
+        message,
+      } as SayAction);
+    }
+  }
+
+  // Parse continue actions first (before stripping)
+  const continueRegex = new RegExp(PATTERNS.continue.source, 'gi');
+  while ((match = continueRegex.exec(fixedContent)) !== null) {
+    actions.push({
+      type: 'continue',
+    } as ContinueAction);
+  }
+
   // Strip code blocks for OTHER actions (prevents executing actions in code examples)
-  const safeContent = stripCodeBlocks(fixedContent);
+  let safeContent = stripCodeBlocks(fixedContent);
+
+  // Strip say blocks to prevent parsing actions inside them
+  safeContent = safeContent.replace(/<say\s*>[\s\S]*?<\/say>/gi, '');
 
   // ===== Shell Commands =====
 
@@ -660,18 +702,6 @@ export function parseActions(content: string): Action[] {
     } as NotifyAction);
   }
 
-  // Parse say actions (user communication)
-  const sayRegex = new RegExp(PATTERNS.say.source, 'gi');
-  while ((match = sayRegex.exec(safeContent)) !== null) {
-    const message = match[1].trim();
-    if (message) {
-      actions.push({
-        type: 'say',
-        message,
-      } as SayAction);
-    }
-  }
-
   // ===== Skills =====
 
   // Parse skill actions
@@ -716,6 +746,20 @@ export function parseActions(content: string): Action[] {
         prompt,
         description: description || undefined,
       } as TaskAction);
+    }
+  }
+
+  // Parse slashbotbot actions (parallel sub-task spawning)
+  const slashbotbotRegex = new RegExp(PATTERNS.slashbotbot.source, 'gi');
+  while ((match = slashbotbotRegex.exec(safeContent)) !== null) {
+    const innerContent = match[1].trim();
+    const innerActions = parseActions(innerContent);
+    const bots = innerActions.filter(a => a.type === 'task') as TaskAction[];
+    if (bots.length > 0) {
+      actions.push({
+        type: 'slashbotbot',
+        bots,
+      } as SlashbotbotAction);
     }
   }
 
@@ -783,6 +827,31 @@ export function parseActions(content: string): Action[] {
         botToken,
         channelId,
       } as any);
+    }
+  }
+
+  // ===== Heartbeat Actions =====
+
+  // Parse heartbeat actions
+  const heartbeatRegex = new RegExp(PATTERNS.heartbeat.source, 'gi');
+  while ((match = heartbeatRegex.exec(safeContent)) !== null) {
+    const fullTag = match[0];
+    const prompt = extractAttr(fullTag, 'prompt');
+    actions.push({
+      type: 'heartbeat',
+      prompt: prompt || undefined,
+    } as HeartbeatAction);
+  }
+
+  // Parse heartbeat-update actions
+  const heartbeatUpdateRegex = new RegExp(PATTERNS.heartbeatUpdate.source, 'gi');
+  while ((match = heartbeatUpdateRegex.exec(safeContent)) !== null) {
+    const content = match[1].trim();
+    if (content) {
+      actions.push({
+        type: 'heartbeat-update',
+        content,
+      } as HeartbeatUpdateAction);
     }
   }
 
