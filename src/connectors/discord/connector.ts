@@ -10,14 +10,21 @@
  * - Bot can create private threads with authorized users
  */
 
-import { Client, GatewayIntentBits, Message as DiscordMessage, ChannelType, ThreadAutoArchiveDuration, TextChannel, PermissionFlagsBits } from 'discord.js';
-import { c } from '../ui/colors';
-import { step } from '../ui/display/step';
-import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from './base';
-import { getTranscriptionService } from '../services/transcription';
-import { imageBuffer } from '../code/imageBuffer';
-import { acquireLock, releaseLock } from './locks';
-import type { EventBus } from '../events/EventBus';
+import {
+  Client,
+  GatewayIntentBits,
+  Message as DiscordMessage,
+  ChannelType,
+  ThreadAutoArchiveDuration,
+  TextChannel,
+  PermissionFlagsBits,
+} from 'discord.js';
+import { display } from '../../core/ui';
+import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from '../base';
+import { getTranscriptionService } from '../../core/services/transcription';
+import { imageBuffer } from '../../core/code/imageBuffer';
+import { acquireLock, releaseLock } from '../locks';
+import type { EventBus } from '../../core/events/EventBus';
 
 export interface DiscordConfig {
   botToken: string;
@@ -66,8 +73,8 @@ export class DiscordConnector implements Connector {
 
   private setupHandlers(token: string): void {
     this.client.once('ready', () => {
-      step.connector('discord', 'connected');
-      step.connectorResult(this.client.user?.tag || 'unknown');
+      display.connector('discord', 'connected');
+      display.connectorResult(this.client.user?.tag || 'unknown');
     });
 
     this.client.on('messageCreate', async (message: DiscordMessage) => {
@@ -110,7 +117,7 @@ export class DiscordConnector implements Connector {
           // Process images and add to context
           for (const imgAtt of imageAttachments.values()) {
             try {
-              step.connector('discord', 'image');
+              display.connector('discord', 'image');
               const imageResponse = await fetch(imgAtt.url);
               const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString(
                 'base64',
@@ -118,9 +125,9 @@ export class DiscordConnector implements Connector {
               const mimeType = imgAtt.contentType || 'image/jpeg';
               const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
               imageBuffer.push(dataUrl);
-              step.connectorResult(`${Math.round(imageBuffer64.length / 1024)}KB`);
+              display.connectorResult(`${Math.round(imageBuffer64.length / 1024)}KB`);
             } catch (imgErr) {
-              step.error(`Failed to download: ${imgErr}`);
+              display.error(`Failed to download: ${imgErr}`);
             }
           }
 
@@ -140,7 +147,7 @@ export class DiscordConnector implements Connector {
               return;
             }
 
-            step.connector('discord', 'transcribe');
+            display.connector('discord', 'transcribe');
             const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
 
             if (!result || !result.text) {
@@ -148,7 +155,7 @@ export class DiscordConnector implements Connector {
               return;
             }
 
-            step.connectorResult(`"${result.text}"`);
+            display.connectorResult(`"${result.text}"`);
             textContent = result.text;
           }
 
@@ -177,8 +184,8 @@ export class DiscordConnector implements Connector {
     });
 
     this.client.on('error', err => {
-      step.connector('discord', 'error');
-      step.error(err.message);
+      display.connector('discord', 'error');
+      display.error(err.message);
     });
 
     // Store token for start()
@@ -199,8 +206,10 @@ export class DiscordConnector implements Connector {
     // Try to acquire lock - only one instance can run Discord
     const lock = await acquireLock('discord');
     if (!lock.acquired) {
-      step.connector('discord', 'locked');
-      step.connectorResult(`PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}`);
+      display.connector('discord', 'locked');
+      display.connectorResult(
+        `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}`,
+      );
       return;
     }
 
@@ -212,8 +221,8 @@ export class DiscordConnector implements Connector {
       }
     } catch (error) {
       await releaseLock('discord');
-      step.connector('discord', 'error');
-      step.error(error instanceof Error ? error.message : String(error));
+      display.connector('discord', 'error');
+      display.error(error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
@@ -310,7 +319,11 @@ export class DiscordConnector implements Connector {
    * @param channelId - The channel containing the message
    * @param name - Name of the thread
    */
-  async createThreadFromMessage(messageId: string, channelId: string, name: string): Promise<string> {
+  async createThreadFromMessage(
+    messageId: string,
+    channelId: string,
+    name: string,
+  ): Promise<string> {
     if (!this.running) {
       throw new Error('Discord bot not running');
     }

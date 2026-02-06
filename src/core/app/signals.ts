@@ -2,7 +2,7 @@
  * Signal Handlers - Process signal management
  */
 
-import { c, inputPrompt } from '../ui/colors';
+import { display } from '../ui';
 
 interface SignalContext {
   getBot: () => {
@@ -10,6 +10,7 @@ interface SignalContext {
     abortCurrentOperation: () => void;
     stop: () => void;
   } | null;
+  getTUI?: () => { destroy: () => void } | null;
 }
 
 let lastCtrlC = 0;
@@ -38,15 +39,16 @@ export function setupSignalHandlers(context: SignalContext): () => void {
 
     // Not thinking - handle double Ctrl+C to exit
     if (now - lastCtrlC < 2000) {
-      console.log(c.violet('\n\nSee you soon!'));
+      // Destroy TUI first to restore terminal state
+      context.getTUI?.()?.destroy();
+      display.violet('\n\nSee you soon!');
       // Stop the bot (and scheduler) before exiting
       bot?.stop();
       process.exit(0);
     }
 
     // First Ctrl+C - show warning and redraw prompt
-    console.log(c.warning('\nPress Ctrl+C again to exit'));
-    process.stdout.write(inputPrompt());
+    display.warningText('\nPress Ctrl+C again to exit');
     lastCtrlC = now;
   };
 
@@ -57,23 +59,24 @@ export function setupSignalHandlers(context: SignalContext): () => void {
       context.getBot()?.stop();
       process.exit(0);
     }
-    console.log(c.warning('\nReceived SIGTERM - use /exit or Ctrl+C twice to quit'));
+    display.warningText('\nReceived SIGTERM - use /exit or Ctrl+C twice to quit');
   };
 
   // Handler for exit
   const exitHandler = () => {
+    context.getTUI?.()?.destroy();
     context.getBot()?.stop();
   };
 
   // Handler for uncaught exceptions
   const uncaughtExceptionHandler = (err: Error) => {
-    console.log(c.error(`\nError: ${err.message}`));
+    display.errorText(`\nError: ${err.message}`);
     // Don't exit - keep running
   };
 
   // Handler for unhandled rejections
   const unhandledRejectionHandler = (reason: unknown) => {
-    console.log(c.error(`\nError: ${reason}`));
+    display.errorText(`\nError: ${reason}`);
     // Don't exit - keep running
   };
 

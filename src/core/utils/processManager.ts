@@ -3,7 +3,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { c } from '../ui/colors';
+import { display } from '../ui';
 
 export interface ManagedProcess {
   id: string;
@@ -81,7 +81,7 @@ class ProcessManager {
     });
 
     this.processes.set(id, managed);
-    console.log(c.muted(`[Process] Started ${id} (PID ${proc.pid}): ${command.slice(0, 50)}...`));
+    display.muted(`[Process] Started ${id} (PID ${proc.pid}): ${command.slice(0, 50)}...`);
 
     return managed;
   }
@@ -135,7 +135,7 @@ class ProcessManager {
         }
       }, 2000);
       this.processes.delete(managed.id);
-      console.log(c.muted(`[Process] Killed ${managed.id} (PID ${managed.pid})`));
+      display.muted(`[Process] Killed ${managed.id} (PID ${managed.pid})`);
       return true;
     } catch {
       return false;
@@ -261,7 +261,11 @@ class ProcessManager {
       let stderr = '';
 
       pgrep.stdout?.on('data', (data: Buffer) => {
-        const lines = data.toString().trim().split('\n').filter(l => l.trim());
+        const lines = data
+          .toString()
+          .trim()
+          .split('\n')
+          .filter(l => l.trim());
         pids.push(...lines.map(l => parseInt(l.trim())).filter(n => !isNaN(n)));
       });
 
@@ -270,8 +274,9 @@ class ProcessManager {
       });
 
       await new Promise<void>((resolve, reject) => {
-        pgrep.on('close', (code) => {
-          if (code === 0 || code === 1) { // 1 means no processes found
+        pgrep.on('close', code => {
+          if (code === 0 || code === 1) {
+            // 1 means no processes found
             resolve();
           } else {
             reject(new Error(`pgrep failed: ${stderr}`));
@@ -337,7 +342,7 @@ class ProcessManager {
         });
 
         await new Promise<void>((resolve, reject) => {
-          ps.on('close', (code) => {
+          ps.on('close', code => {
             if (code === 0) {
               resolve();
             } else {

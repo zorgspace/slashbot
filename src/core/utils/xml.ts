@@ -18,7 +18,6 @@ const ACTION_TAG_PATTERNS = [
   /<read[^>]*\/>/g,
   /<read[^>]*>[\s\S]*?<\/read>/g,
   /<edit[^>]*>[\s\S]*?<\/edit>/g,
-  /<multi-edit[^>]*>[\s\S]*?<\/multi-edit>/g,
   /<write[^>]*>[\s\S]*?<\/write>/g,
   /<create[^>]*>[\s\S]*?<\/create>/g,
   // Search & navigation - self-closing only
@@ -64,15 +63,13 @@ export function cleanXmlTags(content: string | unknown): string {
   }
   let result = content;
 
-
-
   for (const pattern of ACTION_TAG_PATTERNS) {
     result = result.replace(new RegExp(pattern.source, 'g'), '');
   }
   // Catch remaining action tags that have attributes (path=, query=, pattern=, etc.)
   // These are clearly action invocations, not formatting tags
   result = result.replace(
-    /<(read|edit|multi-edit|write|create|glob|grep|ls|fetch|explore)\s+[^>]*\/?>/gi,
+    /<(read|edit|write|create|glob|grep|ls|fetch|explore)\s+[^>]*\/?>/gi,
     '',
   );
   // Catch simple self-closing action tags
@@ -84,7 +81,7 @@ export function cleanXmlTags(content: string | unknown): string {
   result = result.replace(/<say\s*>/gi, '');
   // Catch closing tags for action types (unambiguous)
   result = result.replace(
-    /<\/(bash|read|edit|multi-edit|write|create|exec|glob|grep|ls|fetch|format|schedule|notify|skill|skill-install|plan|task|slashbotbot|explore|say)>/gi,
+    /<\/(bash|read|edit|write|create|exec|glob|grep|ls|fetch|format|schedule|notify|skill|skill-install|plan|task|slashbotbot|explore|say)>/gi,
     '',
   );
   // Clean up edit internal tags (search/replace) that shouldn't appear in output

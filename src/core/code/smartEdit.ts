@@ -11,7 +11,6 @@
 
 import { distance as levenshtein } from 'fastest-levenshtein';
 import DiffMatchPatch from 'diff-match-patch';
-import { c } from '../ui/colors';
 
 const dmp = new DiffMatchPatch();
 
@@ -131,10 +130,12 @@ export class SmartMatcher {
   /**
    * Normalized whitespace matching
    */
-  private findNormalizedMatch(content: string, search: string): { text: string; startLine: number; endLine: number } | null {
+  private findNormalizedMatch(
+    content: string,
+    search: string,
+  ): { text: string; startLine: number; endLine: number } | null {
     // Normalize line endings and trailing whitespace only
-    const normalize = (s: string) =>
-      s.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '');
+    const normalize = (s: string) => s.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '');
 
     const normalizedContent = normalize(content);
     const normalizedSearch = normalize(search);
@@ -159,7 +160,10 @@ export class SmartMatcher {
    * Find match with corrected indentation
    * Handles cases where LLM uses wrong indent (tabs vs spaces, wrong depth)
    */
-  private findIndentCorrectedMatch(content: string, search: string): { text: string; startLine: number; endLine: number } | null {
+  private findIndentCorrectedMatch(
+    content: string,
+    search: string,
+  ): { text: string; startLine: number; endLine: number } | null {
     const contentLines = content.split('\n');
     const searchLines = search.split('\n').filter(l => l.trim().length > 0);
 
@@ -201,7 +205,9 @@ export class SmartMatcher {
       if (allMatch && searchIdx === searchTrimmed.length && matchedIndices.length > 0) {
         const startLine = matchedIndices[0] + 1;
         const endLine = matchedIndices[matchedIndices.length - 1] + 1;
-        const matchedText = contentLines.slice(matchedIndices[0], matchedIndices[matchedIndices.length - 1] + 1).join('\n');
+        const matchedText = contentLines
+          .slice(matchedIndices[0], matchedIndices[matchedIndices.length - 1] + 1)
+          .join('\n');
         return { text: matchedText, startLine, endLine };
       }
     }
@@ -212,7 +218,10 @@ export class SmartMatcher {
   /**
    * Context-based matching - uses surrounding lines to find location
    */
-  private findContextMatch(content: string, search: string): { text: string; startLine: number; endLine: number; confidence: number } | null {
+  private findContextMatch(
+    content: string,
+    search: string,
+  ): { text: string; startLine: number; endLine: number; confidence: number } | null {
     const contentLines = content.split('\n');
     const searchLines = search.split('\n');
 
@@ -274,13 +283,19 @@ export class SmartMatcher {
    * Fuzzy matching using diff-match-patch's Bitap algorithm
    * Better for finding text with small variations
    */
-  private findDmpMatch(content: string, search: string): { text: string; startLine: number; endLine: number; confidence: number } | null {
+  private findDmpMatch(
+    content: string,
+    search: string,
+  ): { text: string; startLine: number; endLine: number; confidence: number } | null {
     // DMP match_main works best with shorter patterns
     // For longer patterns, we'll match first lines and expand
     const searchLines = search.split('\n');
     const contentLines = content.split('\n');
 
     if (searchLines.length === 0) return null;
+
+    // Skip DMP matching for very long content to avoid "Pattern too long" errors
+    if (content.length > 50000 || search.length > 5000) return null;
 
     // Get first non-empty line as anchor
     const firstNonEmpty = searchLines.find(l => l.trim().length > 0);
@@ -312,13 +327,15 @@ export class SmartMatcher {
     let commonLength = 0;
     let totalLength = 0;
     for (const [op, text] of diffs) {
-      if (op === 0) { // DIFF_EQUAL
+      if (op === 0) {
+        // DIFF_EQUAL
         commonLength += text.length;
       }
       totalLength += text.length;
     }
 
-    const similarity = totalLength > 0 ? (commonLength * 2) / (search.length + candidateText.length) : 0;
+    const similarity =
+      totalLength > 0 ? (commonLength * 2) / (search.length + candidateText.length) : 0;
 
     if (similarity >= 0.8) {
       return {
@@ -336,7 +353,10 @@ export class SmartMatcher {
    * Fuzzy matching using Levenshtein distance
    * Only for short patterns to avoid false positives
    */
-  private findFuzzyMatch(content: string, search: string): { text: string; startLine: number; endLine: number; confidence: number } | null {
+  private findFuzzyMatch(
+    content: string,
+    search: string,
+  ): { text: string; startLine: number; endLine: number; confidence: number } | null {
     // Only use fuzzy matching for short patterns (< 500 chars)
     if (search.length > 500) return null;
 
@@ -344,7 +364,8 @@ export class SmartMatcher {
     const searchLines = search.split('\n');
     const searchLength = search.length;
 
-    let bestMatch: { text: string; startLine: number; endLine: number; similarity: number } | null = null;
+    let bestMatch: { text: string; startLine: number; endLine: number; similarity: number } | null =
+      null;
 
     // Slide a window over content lines
     for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
@@ -444,17 +465,19 @@ export function applySmartReplace(
     if (indentDiff > 0) {
       // Need to add indentation
       const addIndent = matchIndent.slice(0, indentDiff);
-      adjustedReplacement = replaceLines.map(l => l.trim() ? addIndent + l : l).join('\n');
+      adjustedReplacement = replaceLines.map(l => (l.trim() ? addIndent + l : l)).join('\n');
     } else if (indentDiff < 0) {
       // Need to preserve original indent style
-      adjustedReplacement = replaceLines.map(l => {
-        const lineIndent = l.match(/^(\s*)/)?.[1] || '';
-        const trimmed = l.trimStart();
-        if (!trimmed) return l;
-        // Adjust relative indentation
-        const relativeIndent = lineIndent.slice(Math.abs(indentDiff));
-        return matchIndent + relativeIndent + trimmed;
-      }).join('\n');
+      adjustedReplacement = replaceLines
+        .map(l => {
+          const lineIndent = l.match(/^(\s*)/)?.[1] || '';
+          const trimmed = l.trimStart();
+          if (!trimmed) return l;
+          // Adjust relative indentation
+          const relativeIndent = lineIndent.slice(Math.abs(indentDiff));
+          return matchIndent + relativeIndent + trimmed;
+        })
+        .join('\n');
     }
   }
 
@@ -479,7 +502,10 @@ export function computeDiff(oldText: string, newText: string): Array<[number, st
  * Compute line-based diff for display purposes
  * Returns arrays of removed and added lines
  */
-export function computeLineDiff(oldText: string, newText: string): {
+export function computeLineDiff(
+  oldText: string,
+  newText: string,
+): {
   removed: string[];
   added: string[];
   common: number;

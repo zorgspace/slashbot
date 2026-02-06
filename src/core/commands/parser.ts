@@ -5,7 +5,7 @@
  * Command handlers are defined in ./handlers/ and registered via CommandRegistry.
  */
 
-import { c } from '../ui/colors';
+import { display } from '../ui';
 import clipboardy from 'clipboardy';
 import terminalImage from 'terminal-image';
 import { imageBuffer, addImage, getImage } from '../code/imageBuffer';
@@ -43,16 +43,16 @@ export function parse(input: string): ParsedCommand {
 async function copyToClipboard(text: string) {
   try {
     await clipboardy.write(text);
-    console.log(c.success('Copied to clipboard'));
+    display.successText('Copied to clipboard');
   } catch (e) {
-    console.log(c.error('Copy failed'));
+    display.errorText('Copy failed');
   }
 }
 
 async function displayImage(n: number) {
   const imgPath = getImage(n);
   if (!imgPath) {
-    console.log(c.error('Image not found'));
+    display.errorText('Image not found');
     return;
   }
   try {
@@ -66,7 +66,7 @@ async function displayImage(n: number) {
     }
     console.log(image);
   } catch (e) {
-    console.log(c.error('Display failed'));
+    display.errorText('Display failed');
   }
 }
 
@@ -100,7 +100,7 @@ export async function parseInput(input: string): Promise<ParsedCommand> {
   }
   if (command === 'image-add' && args[0]) {
     addImage(args[0]);
-    console.log(c.success(`Image added: Image${imageBuffer.length}`));
+    display.successText(`Image added: Image${imageBuffer.length}`);
     return { isCommand: false, args: [], rawArgs: '' };
   }
 
@@ -134,15 +134,15 @@ export async function executeCommand(
     const handler = registry.get(parsed.command);
 
     if (!handler) {
-      console.log(c.error(`Unknown command: /${parsed.command}`));
-      console.log(c.muted('Use /help to see available commands'));
+      display.errorText(`Unknown command: /${parsed.command}`);
+      display.muted('Use /help to see available commands');
       return true;
     }
 
     return handler.execute(parsed.args, context);
   } catch (error) {
     // If DI not initialized yet, show error
-    console.log(c.error(`Command execution failed: ${error}`));
+    display.errorText(`Command execution failed: ${error}`);
     return true;
   }
 }
@@ -171,6 +171,43 @@ export function completer(line: string): [string[], string] {
   }
 
   if (line.startsWith('/')) {
+    // Check for subcommands
+    const trimmed = line.trim();
+    const parts = trimmed.split(/\s+/);
+
+    if (parts.length === 2 && parts[1] === '') {
+      // Line ends with space, like "/wallet "
+      const baseCommand = parts[0];
+      try {
+        const registry = getService<CommandRegistry>(TYPES.CommandRegistry);
+        const handler = registry.get(baseCommand);
+        if (handler && handler.usage) {
+          console.log('\n' + handler.usage);
+          return [[], line];
+        }
+      } catch {
+        // Fall back to subcommands
+      }
+      const subcommands = getSubcommands(baseCommand);
+      if (subcommands.length > 0) {
+        return [subcommands.map(sub => `${baseCommand} ${sub}`), line];
+      }
+    }
+
+    if (parts.length >= 2) {
+      // Line has multiple parts, like "/wallet c"
+      const baseCommand = parts[0];
+      const currentSub = parts.slice(1).join(' ');
+      const subcommands = getSubcommands(baseCommand);
+      if (subcommands.length > 0) {
+        const filteredSubs = subcommands.filter(sub => sub.startsWith(currentSub));
+        if (filteredSubs.length > 0) {
+          const suggestions = filteredSubs.map(sub => `${baseCommand} ${sub}`);
+          return [suggestions, line];
+        }
+      }
+    }
+
     // Filter commands that start with the current line
     const filtered = commandNames.filter(cmd => cmd.startsWith(line));
     if (filtered.length > 0) {
@@ -183,6 +220,31 @@ export function completer(line: string): [string[], string] {
 
   // For any other input, show all slash commands (Tab completion should always show available commands)
   return [commandNames, line];
+}
+
+/**
+ * Get subcommands for a given command
+ */
+function getSubcommands(command: string): string[] {
+  const subcommandsMap: Record<string, string[]> = {
+    '/wallet': [
+      'create',
+      'import',
+      'export',
+      'balance',
+      'send',
+      'redeem',
+      'unlock',
+      'lock',
+      'status',
+      'pricing',
+      'mode',
+      'usage'
+    ],
+    // Add other commands with subcommands if needed
+  };
+
+  return subcommandsMap[command] || [];
 }
 
 /**
@@ -204,22 +266,22 @@ export function getCommandsWithDescriptions(): Array<{ name: string; description
 /**
  * Get grouped commands for beautiful tab completion display
  */
-export function getGroupedCommands(): Array<{ title: string; cmds: Array<{ name: string; description: string }> }> {
-  const allCommands = getCommandsWithDescriptions();
+export function getGroupedCommands(): Array<{
+  title: string;
+  cmds: Array<{ name: string; description: string }>;
+}> {
+  try {
+    const registry = getService<CommandRegistry>(TYPES.CommandRegistry);
+    const groupMap = new Map<string, Array<{ name: string; description: string }>>();
 
-  const cmdGroups = [
-    { title: 'Session', cmds: ['login', 'logout', 'config'] },
-    { title: 'Code', cmds: ['auth', 'init', 'grep', 'files'] },
-    { title: 'Tasks', cmds: ['task', 'tasks'] },
-    { title: 'Skills', cmds: ['skill', 'skills'] },
-    { title: 'Personality', cmds: ['depressed', 'sarcasm', 'normal', 'unhinged'] },
-    { title: 'System', cmds: ['help', '?', 'ps', 'kill', 'telegram-config', 'discord-config', 'model', 'personality', 'history', 'clear', 'exit', 'update'] },
-  ];
+    for (const handler of registry.getAll()) {
+      const group = handler.group || 'Other';
+      if (!groupMap.has(group)) groupMap.set(group, []);
+      groupMap.get(group)!.push({ name: handler.name, description: handler.description });
+    }
 
-  return cmdGroups.map(group => ({
-    title: group.title,
-    cmds: group.cmds
-      .map(cmdName => allCommands.find(cmd => cmd.name === cmdName))
-      .filter(Boolean) as Array<{ name: string; description: string }>,
-  })).filter(group => group.cmds.length > 0);
+    return Array.from(groupMap.entries()).map(([title, cmds]) => ({ title, cmds }));
+  } catch {
+    return [];
+  }
 }

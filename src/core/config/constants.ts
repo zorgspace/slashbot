@@ -8,6 +8,27 @@ import * as path from 'path';
 import * as os from 'os';
 
 // ============================================================================
+// DIRECTORY PATHS
+// ============================================================================
+
+// Home directory: credentials, skills, connector locks (shared across all projects)
+export const HOME_SLASHBOT_DIR = path.join(os.homedir(), '.slashbot');
+export const HOME_CONFIG_FILE = path.join(HOME_SLASHBOT_DIR, 'config', 'config.json');
+export const PROMPTS_DIR = path.join(HOME_SLASHBOT_DIR, 'prompts');
+export const HOME_SKILLS_DIR = path.join(HOME_SLASHBOT_DIR, 'skills');
+export const HOME_LOCKS_DIR = path.join(HOME_SLASHBOT_DIR, 'locks');
+
+// Local directory: project-specific data (history, tasks)
+export const getLocalSlashbotDir = (workDir?: string) =>
+  path.join(workDir || process.cwd(), '.slashbot');
+export const getLocalHistoryFile = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'history');
+export const getLocalTasksFile = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'tasks.json');
+export const getLocalPermissionsFile = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'permissions.json');
+
+// ============================================================================
 // GROK API CONFIGURATION
 // ============================================================================
 
@@ -22,14 +43,20 @@ export const GROK_CONFIG = {
   MAX_TOKENS: 131072,
   /** Temperature for response randomness (0-1) */
   TEMPERATURE: 0.7,
-  /** Maximum messages to keep in context before compression */
-  MAX_CONTEXT_MESSAGES: 200,
-  /** Maximum characters per action result (with 256k context) */
-  MAX_RESULT_CHARS: 50000,
   /** API request timeout in milliseconds */
   TIMEOUT_MS: 120000,
   /** Threshold for duplicate read detection */
   MAX_DUPLICATE_READS: 3,
+} as const;
+
+// ============================================================================
+// MODEL CONFIGURATION
+// ============================================================================
+
+export const MODELS = {
+  DEFAULT: 'grok-4-1-fast-reasoning',
+  IMAGE: 'grok-4-1-fast-non-reasoning',
+  SEARCH: 'grok-4-1-fast-non-reasoning',
 } as const;
 
 // ============================================================================
@@ -79,10 +106,71 @@ export const PROXY_CONFIG = {
 } as const;
 
 // ============================================================================
+// AGENTIC LOOP LIMITS
+// ============================================================================
+
+export const AGENTIC = {
+  MAX_ITERATIONS_CLI: 10000,
+  MAX_ITERATIONS_CONNECTOR: 10000,
+  MAX_CONSECUTIVE_ERRORS: 10,
+} as const;
+
+// ============================================================================
+// CONTEXT MANAGEMENT
+// ============================================================================
+
+export const CONTEXT = {
+  MAX_IMAGES: 3,
+  MAX_MESSAGES: 200,
+  MAX_HISTORY: 500,
+  COMPRESS_THRESHOLD: 0.8,
+  MAX_TOKENS: 256000,
+} as const;
+
+// ============================================================================
+// FILE OPERATIONS LIMITS
+// ============================================================================
+
+export const FILE_LIMITS = {
+  GLOB_MAX_FILES: 100,
+  GREP_MAX_LINES: 100,
+  READ_MAX_LINES: 2000,
+  EDIT_MAX_DELETION_RATIO: 0.8,
+} as const;
+
+// ============================================================================
+// COMMAND EXECUTION
+// ============================================================================
+
+export const EXEC = {
+  DEFAULT_TIMEOUT: 30000,
+  MAX_BUFFER: 10 * 1024 * 1024, // 10MB
+} as const;
+
+// ============================================================================
+// SCHEDULER CONFIGURATION
+// ============================================================================
+
+export const SCHEDULER = {
+  TICK_INTERVAL: 1000,
+  MAX_HISTORY: 100,
+  EXECUTION_TIMEOUT: 300000, // 5 minutes
+} as const;
+
+// ============================================================================
 // SECURITY PATTERNS
 // ============================================================================
 
-/** Dangerous patterns to block - NEVER allow these commands */
+/** Simple string patterns for quick matching */
+export const DANGEROUS_COMMANDS = [
+  'chmod -R 777',
+  'dd if=',
+  '> /dev/',
+  'mkfs.',
+  ':(){:|:&};:',
+] as const;
+
+/** Regex patterns for thorough security checking */
 export const DANGEROUS_PATTERNS: readonly RegExp[] = [
   // rm on root directory itself or wildcards on root
   /rm\s+(-[a-zA-Z]+\s+)*\/\s*$/,
@@ -108,8 +196,19 @@ export const DANGEROUS_PATTERNS: readonly RegExp[] = [
   /init\s+0/,
   /halt/,
   /poweroff/,
-
 ];
+
+/** Allowed git commands (safe to auto-approve) */
+export const ALLOWED_GIT_COMMANDS = [
+  'status',
+  'diff',
+  'log',
+  'branch',
+  'add',
+  'commit',
+  'checkout',
+  'stash',
+] as const;
 
 // ============================================================================
 // EDITOR / CODE SEARCH CONFIGURATION
@@ -183,3 +282,33 @@ export const CONNECTOR_CONFIG = {
   /** Typing indicator duration (ms) */
   TYPING_DURATION: 5000,
 } as const;
+
+// ============================================================================
+// DEFAULT SKILLS
+// ============================================================================
+
+export const DEFAULT_SKILLS = [
+  {
+    url: 'https://bags.fm/skill.md',
+    name: 'bags',
+  },
+] as const;
+
+// ============================================================================
+// MIME TYPES
+// ============================================================================
+
+export const MIME_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+} as const;
+
+// ============================================================================
+// TYPE EXPORTS
+// ============================================================================
+
+export type GitCommand = (typeof ALLOWED_GIT_COMMANDS)[number];

@@ -3,9 +3,9 @@
  * All platform connectors implement this interface
  */
 
-import type { EventBus } from '../events/EventBus';
+import type { EventBus } from '../core/events/EventBus';
 
-export type ConnectorSource = 'cli' | 'telegram' | 'discord';
+export type ConnectorSource = 'cli' | 'telegram' | 'discord' | (string & {});
 
 export interface MessageMetadata {
   /** Message was already displayed (e.g., transcription result) */

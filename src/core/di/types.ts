@@ -14,11 +14,12 @@ export const TYPES = {
   HeartbeatService: Symbol.for('HeartbeatService'),
 
   // Composite services
-  ActionHandlerService: Symbol.for('ActionHandlerService'),
   ConnectorRegistry: Symbol.for('ConnectorRegistry'),
-  HistoryManager: Symbol.for('HistoryManager'),
   CommandRegistry: Symbol.for('CommandRegistry'),
 
   // Event system
   EventBus: Symbol.for('EventBus'),
+
+  // Plugin system
+  PluginRegistry: Symbol.for('PluginRegistry'),
 };

@@ -18,11 +18,11 @@ export async function initializeContainer(options: { basePath?: string }): Promi
 
   // Import and bind core services
   const { createConfigManager } = await import('../config/config');
-  const { createFileSystem } = await import('../fs/filesystem');
+  const { createFileSystem } = await import('../../plugins/filesystem/services/filesystem');
   const { createScheduler } = await import('../scheduler/scheduler');
   const { createCodeEditor } = await import('../code/editor');
-  const { createCommandPermissions } = await import('../security/permissions');
-  const { createSkillManager } = await import('../skills/manager');
+  const { createCommandPermissions } = await import('../config/permissions');
+  const { createSkillManager } = await import('../../plugins/skills/services/SkillManager');
 
   // Bind factories as dynamic values (they need to be initialized)
   container
@@ -51,30 +51,21 @@ export async function initializeContainer(options: { basePath?: string }): Promi
     .inSingletonScope();
 
   // Bind composite services
-  const { ConnectorRegistry } = await import('../services/ConnectorRegistry');
-  const { ActionHandlerService } = await import('../services/ActionHandlerService');
+  const { ConnectorRegistry } = await import('../../connectors/registry');
   const { CommandRegistry } = await import('../commands/registry');
-  const { getAllHandlers, setCommandsRef } = await import('../commands/handlers');
   const { EventBus } = await import('../events/EventBus');
-  const { HeartbeatService } = await import('../services/heartbeat');
+  const { HeartbeatService } = await import('../../plugins/heartbeat/services');
 
   // EventBus should be bound first as other services may depend on it
   container.bind(TYPES.EventBus).to(EventBus).inSingletonScope();
 
   container.bind(TYPES.ConnectorRegistry).to(ConnectorRegistry).inSingletonScope();
-  container.bind(TYPES.ActionHandlerService).to(ActionHandlerService).inSingletonScope();
   container.bind(TYPES.HeartbeatService).to(HeartbeatService).inSingletonScope();
 
-  // Bind and initialize CommandRegistry with all handlers
+  // CommandRegistry starts empty - plugins contribute commands via getCommandContributions()
   container
     .bind(TYPES.CommandRegistry)
-    .toDynamicValue(() => {
-      const registry = new CommandRegistry();
-      registry.registerAll(getAllHandlers());
-      // Set reference for help command
-      setCommandsRef(registry['commands']);
-      return registry;
-    })
+    .toDynamicValue(() => new CommandRegistry())
     .inSingletonScope();
 }
 

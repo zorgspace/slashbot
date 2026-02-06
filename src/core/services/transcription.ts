@@ -3,7 +3,7 @@
  * Uses OpenAI Whisper API for speech-to-text
  */
 
-import { c } from '../ui/colors';
+import { display } from '../ui';
 
 export interface TranscriptionResult {
   text: string;
@@ -27,14 +27,14 @@ export class TranscriptionService {
       // Download audio file
       const response = await fetch(audioUrl);
       if (!response.ok) {
-        console.log(c.error(`Failed to download audio: ${response.status}`));
+        display.errorText(`Failed to download audio: ${response.status}`);
         return null;
       }
 
       const audioBuffer = await response.arrayBuffer();
       return await this.transcribe(audioBuffer, 'audio.ogg');
     } catch (error) {
-      console.log(c.error(`Transcription error: ${error}`));
+      display.errorText(`Transcription error: ${error}`);
       return null;
     }
   }
@@ -59,7 +59,7 @@ export class TranscriptionService {
 
       if (!response.ok) {
         const error = await response.text();
-        console.log(c.error(`Whisper API error: ${response.status} - ${error}`));
+        display.errorText(`Whisper API error: ${response.status} - ${error}`);
         return null;
       }
 
@@ -69,7 +69,7 @@ export class TranscriptionService {
         duration: data.duration,
       };
     } catch (error) {
-      console.log(c.error(`Transcription error: ${error}`));
+      display.errorText(`Transcription error: ${error}`);
       return null;
     }
   }

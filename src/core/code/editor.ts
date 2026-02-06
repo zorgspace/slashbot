@@ -3,7 +3,7 @@
  * Allows AI to search and edit code files
  */
 
-import { c, colors, fileViewer } from '../ui/colors';
+import { display } from '../ui';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
@@ -73,10 +73,11 @@ export class CodeEditor {
 
       // Determine search path - can be a specific file or directory
       let searchPath = this.workDir;
-      if (options?.path) {
-        searchPath = options.path.startsWith('/')
-          ? options.path
-          : `${this.workDir}/${options.path}`;
+      const pathOpt = options?.path;
+      if (pathOpt && typeof pathOpt === 'string') {
+        searchPath = pathOpt.startsWith('/')
+          ? pathOpt
+          : `${this.workDir}/${pathOpt}`;
       }
 
       // Use -r only for directories, not files
@@ -152,8 +153,8 @@ export class CodeEditor {
       const fullPath = this.resolvePath(edit.path);
 
       if (!fs.existsSync(fullPath)) {
-        console.log(c.error(`File not found: ${edit.path}`));
-        return { success: false, status: 'not_found', message: `File not found: ${edit.path}` };
+        display.errorText(`File not found: ${edit.path}`);
+        return { success: false, status: 'not_found', path: edit.path, message: `File not found: ${edit.path}` };
       }
 
       const content = await fsPromises.readFile(fullPath, 'utf8');
@@ -164,10 +165,12 @@ export class CodeEditor {
       if (matchResult.found) {
         // Log match type for transparency
         if (matchResult.matchType !== 'exact') {
-          const confidenceStr = matchResult.confidence ? ` (${Math.round(matchResult.confidence * 100)}% confidence)` : '';
-          console.log(c.muted(`Smart match: ${matchResult.matchType}${confidenceStr}`));
+          const confidenceStr = matchResult.confidence
+            ? ` (${Math.round(matchResult.confidence * 100)}% confidence)`
+            : '';
+          display.muted(`Smart match: ${matchResult.matchType}${confidenceStr}`);
           if (matchResult.startLine) {
-            console.log(c.muted(`  Lines ${matchResult.startLine}-${matchResult.endLine}`));
+            display.muted(`  Lines ${matchResult.startLine}-${matchResult.endLine}`);
           }
         }
 
@@ -178,29 +181,36 @@ export class CodeEditor {
       }
 
       // Pattern not found - provide helpful suggestions
-      console.log(c.warning(`Pattern not found in ${edit.path}`));
+      display.warningText(`Pattern not found in ${edit.path}`);
       const suggestions = smartMatcher.findSuggestions(content, edit.search);
 
       if (suggestions.length > 0) {
-        console.log(c.muted(`Did you mean one of these?`));
+        display.muted(`Did you mean one of these?`);
         suggestions.forEach((s, i) => {
           const lines = s.split('\n');
-          const preview = lines.length > 3
-            ? lines.slice(0, 3).join('\n') + `\n... (+${lines.length - 3} lines)`
-            : s;
-          console.log(c.muted(`\n  ${i + 1}. ─────────────────`));
-          console.log(c.muted(preview.split('\n').map(l => `     ${l}`).join('\n')));
+          const preview =
+            lines.length > 3
+              ? lines.slice(0, 3).join('\n') + `\n... (+${lines.length - 3} lines)`
+              : s;
+          display.muted(`\n  ${i + 1}. ─────────────────`);
+          display.muted(
+            preview
+              .split('\n')
+              .map(l => `     ${l}`)
+              .join('\n'),
+          );
         });
       }
 
       return {
         success: false,
         status: 'not_found',
+        path: edit.path,
         message: `Pattern not found in ${edit.path}. ${suggestions.length > 0 ? 'Similar patterns shown above - check whitespace/indentation.' : 'Use <read> to see actual content.'}`,
       };
     } catch (error) {
-      console.log(c.error(`Edit error: ${error}`));
-      return { success: false, status: 'error', message: `Edit error: ${error}` };
+      display.errorText(`Edit error: ${error}`);
+      return { success: false, status: 'error', path: edit.path, message: `Edit error: ${error}` };
     }
   }
 
@@ -211,13 +221,11 @@ export class CodeEditor {
     let newContent: string;
     if (edit.replaceAll && occurrences > 1) {
       newContent = content.split(edit.search).join(edit.replace);
-      console.log(c.muted(`Replacing all ${occurrences} occurrences`));
+      display.muted(`Replacing all ${occurrences} occurrences`);
     } else {
       if (occurrences > 1 && !edit.replaceAll) {
-        console.log(
-          c.warning(
-            `Pattern found ${occurrences} times, replacing first only. Use replaceAll="true" for all.`,
-          ),
+        display.warningText(
+          `Pattern found ${occurrences} times, replacing first only. Use replaceAll="true" for all.`,
         );
       }
       newContent = content.replace(edit.search, edit.replace);
@@ -225,20 +233,20 @@ export class CodeEditor {
 
     // Idempotency check
     if (newContent === content) {
-      console.log(c.muted(`Edit already applied: ${edit.path}`));
+      display.muted(`Edit already applied: ${edit.path}`);
       return {
         success: true,
         status: 'already_applied',
+        path: edit.path,
         message: 'Edit already applied (no change needed)',
       };
     }
 
     await fsPromises.writeFile(fullPath, newContent, 'utf8');
 
-    console.log(c.success(`Modified: ${edit.path}${edit.replaceAll && occurrences > 1 ? `` : ''}`));
-    return { success: true, status: 'applied', message: `Modified: ${edit.path}` };
+    display.successText(`Modified: ${edit.path}${edit.replaceAll && occurrences > 1 ? `` : ''}`);
+    return { success: true, status: 'applied', path: edit.path, message: `Modified: ${edit.path}` };
   }
-
 
   /**
    * Try to find the search pattern with normalized whitespace
@@ -357,7 +365,7 @@ export class CodeEditor {
       // All search lines must be matched
       if (allMatch && searchIdx === searchTrimmedLines.length) {
         const result = contentLines.slice(matchStart, contentIdx).join('\n');
-        console.log(c.muted(`Matched by line-by-line comparison (lines ${matchStart + 1}-${contentIdx})`));
+        display.muted(`Matched by line-by-line comparison (lines ${matchStart + 1}-${contentIdx})`);
         return result;
       }
     }
@@ -488,125 +496,17 @@ export class CodeEditor {
     return suggestions;
   }
 
-  /**
-   * Apply multiple edits atomically - all succeed or none applied
-   * Returns detailed diff information for each edit
-   */
-  async multiEditFile(
-    filePath: string,
-    edits: Array<{ search: string; replace: string; replaceAll?: boolean }>,
-  ): Promise<EditResult & { diffs?: Array<{ search: string[]; replace: string[]; startLine: number }> }> {
-    try {
-      const fullPath = this.resolvePath(filePath);
-
-      if (!fs.existsSync(fullPath)) {
-        return { success: false, status: 'not_found', message: `File not found: ${filePath}` };
-      }
-
-      let content = await fsPromises.readFile(fullPath, 'utf8');
-      const originalContent = content;
-
-      // Store match info for diff display
-      const matchInfos: Array<{
-        search: string;
-        replace: string;
-        startLine: number;
-        matchType: string;
-        confidence: number;
-      }> = [];
-
-      // Validate all edits first (dry run) using smart matcher
-      for (let i = 0; i < edits.length; i++) {
-        const edit = edits[i];
-        const matchResult = smartMatcher.findMatch(content, edit.search);
-
-        if (!matchResult.found) {
-          const suggestions = smartMatcher.findSuggestions(content, edit.search);
-          if (suggestions.length > 0) {
-            console.log(c.muted(`Did you mean:`));
-            suggestions.slice(0, 2).forEach((s, idx) => {
-              const preview = s.split('\n').slice(0, 2).join(' ').slice(0, 60);
-              console.log(c.muted(`  ${idx + 1}. ${preview}...`));
-            });
-          }
-          return {
-            success: false,
-            status: 'not_found',
-            message: `Edit ${i + 1}/${edits.length} failed: pattern not found. Aborting all edits.`,
-          };
-        }
-
-        // Log smart match info
-        if (matchResult.matchType !== 'exact') {
-          const conf = Math.round((matchResult.confidence || 0) * 100);
-          console.log(c.muted(`  Edit ${i + 1}: ${matchResult.matchType} match (${conf}%) at line ${matchResult.startLine || '?'}`));
-        }
-
-        matchInfos.push({
-          search: matchResult.matchedText,
-          replace: edit.replace,
-          startLine: matchResult.startLine || 1,
-          matchType: matchResult.matchType,
-          confidence: matchResult.confidence || 1,
-        });
-
-        // Update edit with matched text
-        edits[i] = { ...edit, search: matchResult.matchedText };
-      }
-
-      // Apply all edits and collect diffs
-      const diffs: Array<{ search: string[]; replace: string[]; startLine: number }> = [];
-
-      for (let i = 0; i < edits.length; i++) {
-        const edit = edits[i];
-        const info = matchInfos[i];
-
-        // Find current line number (may shift after previous edits)
-        const beforeMatch = content.indexOf(edit.search);
-        const currentLine = beforeMatch >= 0
-          ? content.substring(0, beforeMatch).split('\n').length
-          : info.startLine;
-
-        diffs.push({
-          search: edit.search.split('\n'),
-          replace: edit.replace.split('\n'),
-          startLine: currentLine,
-        });
-
-        // Apply the edit
-        if (edit.replaceAll) {
-          content = content.split(edit.search).join(edit.replace);
-        } else {
-          content = content.replace(edit.search, edit.replace);
-        }
-      }
-
-      // Check if anything changed
-      if (content === originalContent) {
-        return {
-          success: true,
-          status: 'already_applied',
-          message: 'All edits already applied',
-          diffs: [],
-        };
-      }
-
-      await fsPromises.writeFile(fullPath, content, 'utf8');
-
-      return {
-        success: true,
-        status: 'applied',
-        message: `Applied ${edits.length} edits to ${filePath}`,
-        diffs,
-      };
-    } catch (error) {
-      return { success: false, status: 'error', message: `Multi-edit error: ${error}` };
-    }
-  }
-
   async createFile(filePath: string, content: string): Promise<boolean> {
     try {
       const fullPath = this.resolvePath(filePath);
+
+      // Prevent creating files in .slashbot directories to avoid corrupting configuration
+      const localSlashbotDir = path.join(this.workDir, '.slashbot');
+      const homeSlashbotDir = path.join(os.homedir(), '.slashbot');
+      if (fullPath.startsWith(localSlashbotDir + path.sep) || fullPath.startsWith(homeSlashbotDir + path.sep) || fullPath === localSlashbotDir || fullPath === homeSlashbotDir) {
+        display.errorText(`Cannot create files in .slashbot directories to prevent configuration corruption`);
+        return false;
+      }
 
       // Create directory if needed
       const dir = path.dirname(fullPath);
@@ -616,11 +516,11 @@ export class CodeEditor {
 
       // Display preview of created file
       const previewContent = content.split('\n').slice(0, 10).join('\n');
-      fileViewer.displayFile(filePath, previewContent, 1, Math.min(10, content.split('\n').length));
-      console.log(c.success(`Created: ${filePath}`));
+      display.muted(`${filePath} (lines 1-${Math.min(10, content.split('\n').length)}):\n${previewContent}`);
+      display.successText(`Created: ${filePath}`);
       return true;
     } catch (error) {
-      console.log(c.error(`Creation error: ${error}`));
+      display.errorText(`Creation error: ${error}`);
       return false;
     }
   }

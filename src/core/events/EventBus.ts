@@ -7,8 +7,8 @@
 import 'reflect-metadata';
 import { injectable } from 'inversify';
 import { EventEmitter } from 'events';
-import type { ConnectorSource } from '../connectors/base';
-import type { HeartbeatResult } from '../services/heartbeat/types';
+import type { ConnectorSource } from '../../connectors/base';
+import type { HeartbeatResult } from '../../plugins/heartbeat/services/types';
 
 /**
  * All possible events in the system

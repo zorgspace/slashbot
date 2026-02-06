@@ -3,7 +3,7 @@
  * Centralized image handling for conversations
  */
 
-import { MIME_TYPES, CONTEXT } from '../constants';
+import { MIME_TYPES, CONTEXT } from '../config/constants';
 
 // Image storage - data URLs or file paths
 export const imageBuffer: string[] = [];

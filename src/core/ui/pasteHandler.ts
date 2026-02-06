@@ -5,7 +5,7 @@
  * the full text, allowing the user to continue typing before sending.
  *
  * Also handles Shift+Enter to insert newlines without submitting.
- * Shift+Ctrl+V pastes images from clipboard.
+ * Ctrl+V pastes images from clipboard.
  */
 
 import { Transform, TransformCallback } from 'stream';
@@ -24,11 +24,11 @@ const SHIFT_ENTER_SEQUENCES = [
   '\x1bOM', // Some terminals
 ];
 
-// Shift+Ctrl+V sequences for image paste
-const SHIFT_CTRL_V_SEQUENCES = [
-  '\x1b[118;6u', // Kitty keyboard protocol: Shift+Ctrl+v
-  '\x1b[27;6;118~', // xterm modifyOtherKeys
-  '\x16', // Ctrl+V raw (we check for shift separately)
+// Ctrl+V sequences for image paste
+const CTRL_V_SEQUENCES = [
+  '\x1b[118;5u', // Kitty keyboard protocol: Ctrl+v
+  '\x1b[27;5;118~', // xterm modifyOtherKeys
+  '\x16', // Ctrl+V raw
 ];
 
 // Visible newline marker that won't trigger readline submit
@@ -43,6 +43,8 @@ interface PasteEntry {
 class PasteBuffer {
   private entries: Map<number, string> = new Map();
   private nextId = 1;
+  private imageEntries: Map<number, string> = new Map();
+  private nextImageId = 1;
 
   /**
    * Store pasted content and return a placeholder
@@ -66,10 +68,19 @@ class PasteBuffer {
   }
 
   /**
+   * Store image paste placeholder
+   */
+  storeImage(): string {
+    const id = this.nextImageId++;
+    this.imageEntries.set(id, 'pending');
+    return `[image:${id}]`;
+  }
+
+  /**
    * Expand all placeholders in text back to their original content
    * Also expands newline markers (⏎) to actual newlines
    */
-  expand(text: string): string {
+  async expand(text: string): Promise<string> {
     // First expand paste placeholders
     let result = text.replace(/\[pasted:(\d+):[^\]]+\]/g, (match, idStr) => {
       const id = parseInt(idStr, 10);
@@ -80,6 +91,27 @@ class PasteBuffer {
       }
       return match; // Keep placeholder if not found
     });
+
+    // Then expand image placeholders
+    const imageRegex = /\[image:(\d+)\]/g;
+    const matches = [...result.matchAll(imageRegex)];
+    for (const match of matches) {
+      const id = parseInt(match[1], 10);
+      let content = this.imageEntries.get(id);
+      if (content === 'pending') {
+        const dataUrl = await readImageFromClipboard();
+        if (dataUrl) {
+          this.imageEntries.set(id, dataUrl);
+          content = dataUrl;
+        } else {
+          this.imageEntries.delete(id);
+          content = '[image:failed]';
+        }
+      } else if (!content) {
+        content = '[image:failed]';
+      }
+      result = result.replace(match[0], content);
+    }
 
     // Then expand newline markers
     result = result.split(NEWLINE_MARKER).join('\n');
@@ -92,6 +124,7 @@ class PasteBuffer {
    */
   clear(): void {
     this.entries.clear();
+    this.imageEntries.clear();
   }
 }
 
@@ -128,6 +161,15 @@ class PasteTransform extends Transform {
     if (!this.inPaste) {
       for (const seq of SHIFT_ENTER_SEQUENCES) {
         data = data.split(seq).join(NEWLINE_MARKER);
+      }
+    }
+
+    // Handle Ctrl+V sequences - replace with image placeholder
+    if (!this.inPaste) {
+      for (const seq of CTRL_V_SEQUENCES) {
+        if (data.includes(seq)) {
+          data = data.split(seq).join(this.pasteBuffer.storeImage());
+        }
       }
     }
 
@@ -255,7 +297,7 @@ export function createPasteTransform(): Transform {
 /**
  * Expand placeholders in text back to original pasted content
  */
-export function expandPaste(text: string): string {
+export async function expandPaste(text: string): Promise<string> {
   return pasteBuffer.expand(text);
 }
 

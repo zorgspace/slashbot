@@ -5,7 +5,7 @@
  * Credentials are stored in ~/.slashbot (home directory) for global access
  */
 
-import { HOME_SLASHBOT_DIR, HOME_CONFIG_FILE } from '../constants';
+import { HOME_SLASHBOT_DIR, HOME_CONFIG_FILE } from './constants';
 
 export interface TelegramConfig {
   botToken: string;
@@ -186,7 +186,12 @@ export class ConfigManager {
     return this.telegram;
   }
 
-  async saveDiscordConfig(botToken: string, channelId: string, channelIds?: string[], ownerId?: string): Promise<void> {
+  async saveDiscordConfig(
+    botToken: string,
+    channelId: string,
+    channelIds?: string[],
+    ownerId?: string,
+  ): Promise<void> {
     const { mkdir } = await import('fs/promises');
     await mkdir(CONFIG_DIR, { recursive: true });
 
@@ -220,33 +225,9 @@ export class ConfigManager {
         this.discord.botToken,
         this.discord.channelId,
         this.discord.channelIds,
-        this.discord.ownerId
+        this.discord.ownerId,
       );
     }
-  }
-
-  async removeDiscordChannel(channelId: string): Promise<boolean> {
-    if (!this.discord || !this.discord.channelIds) {
-      return false;
-    }
-
-    // Don't remove primary channel
-    if (channelId === this.discord.channelId) {
-      return false;
-    }
-
-    const idx = this.discord.channelIds.indexOf(channelId);
-    if (idx > -1) {
-      this.discord.channelIds.splice(idx, 1);
-      await this.saveDiscordConfig(
-        this.discord.botToken,
-        this.discord.channelId,
-        this.discord.channelIds,
-        this.discord.ownerId
-      );
-      return true;
-    }
-    return false;
   }
 
   async setDiscordOwnerId(ownerId: string): Promise<void> {
@@ -259,7 +240,7 @@ export class ConfigManager {
       this.discord.botToken,
       this.discord.channelId,
       this.discord.channelIds,
-      ownerId
+      ownerId,
     );
   }
 

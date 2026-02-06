@@ -6,7 +6,7 @@
  * Tasks are stored locally per project in .slashbot/tasks.json
  */
 
-import { c, colors, step } from '../ui/colors';
+import { display } from '../ui';
 import {
   parseCron,
   matchesCron,
@@ -15,8 +15,7 @@ import {
   isValidCron,
   type ParsedCron,
 } from './cron';
-import { getLocalSlashbotDir, getLocalTasksFile } from '../constants';
-import { DANGEROUS_PATTERNS } from '../config/constants';
+import { getLocalSlashbotDir, getLocalTasksFile, DANGEROUS_PATTERNS } from '../config/constants';
 import type { EventBus } from '../events/EventBus';
 
 const SLASHBOT_DIR = getLocalSlashbotDir();
@@ -58,7 +57,6 @@ export class TaskScheduler {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private lastCheck: Date = new Date();
-  private onTaskComplete: (() => void) | null = null;
   private llmHandler: LLMHandler | null = null;
   private eventBus: EventBus | null = null;
 
@@ -67,14 +65,6 @@ export class TaskScheduler {
    */
   setEventBus(eventBus: EventBus): void {
     this.eventBus = eventBus;
-  }
-
-  /**
-   * Set callback to run after task completes (e.g., to redraw prompt)
-   * @deprecated Use EventBus instead
-   */
-  setOnTaskComplete(callback: () => void): void {
-    this.onTaskComplete = callback;
   }
 
   /**
@@ -158,13 +148,13 @@ export class TaskScheduler {
     // Check for duplicate task name
     const existingTask = Array.from(this.tasks.values()).find(t => t.name === name);
     if (existingTask) {
-      console.log(c.warning(`[CRON] Task "${name}" already exists, skipping`));
+      display.warningText(`[CRON] Task "${name}" already exists, skipping`);
       return existingTask.id;
     }
 
     // Validate cron expression
     if (!isValidCron(cron)) {
-      console.log(c.error(`Invalid cron expression: ${cron}`));
+      display.errorText(`Invalid cron expression: ${cron}`);
       return null;
     }
 
@@ -173,8 +163,8 @@ export class TaskScheduler {
       const security = this.validateCommand(commandOrPrompt);
 
       if (security.blocked) {
-        console.log(c.error(`[SECURITY] Command blocked!`));
-        console.log(c.error(security.blockedReason || 'Dangerous command'));
+        display.errorText(`[SECURITY] Command blocked!`);
+        display.errorText(security.blockedReason || 'Dangerous command');
         return null;
       }
     }
@@ -247,7 +237,7 @@ export class TaskScheduler {
 
   async updateTaskCron(idOrIndex: string | number, newCron: string): Promise<boolean> {
     if (!isValidCron(newCron)) {
-      console.log(c.error(`Invalid cron expression: ${newCron}`));
+      display.errorText(`Invalid cron expression: ${newCron}`);
       return false;
     }
 
@@ -375,13 +365,13 @@ export class TaskScheduler {
     // Tick every second to check for due tasks (fire and forget, don't block)
     this.tickInterval = setInterval(() => {
       this.tick().catch(err => {
-        console.error(`[CRON] Tick error: ${err?.message || err}`);
+        display.errorText(`[CRON] Tick error: ${err?.message || err}`);
       });
     }, 1000);
 
     const taskCount = this.activeTasks.size;
     if (taskCount > 0) {
-      console.log(c.muted(`[CRON] ${taskCount} task${taskCount > 1 ? 's' : ''} scheduled`));
+      display.muted(`[CRON] ${taskCount} task${taskCount > 1 ? 's' : ''} scheduled`);
     }
   }
 
@@ -447,8 +437,8 @@ export class TaskScheduler {
     }
 
     // Display task start
-    console.log('');
-    step.schedule(task.name, describeCron(task.cron));
+    display.newline();
+    display.schedule(task.name, describeCron(task.cron));
 
     let success = false;
     let output = '';
@@ -493,9 +483,9 @@ export class TaskScheduler {
       // Display output
       if (output) {
         const preview = output.split('\n').slice(0, 3).join(' ').slice(0, 100);
-        step.success(`Done: ${preview}${output.length > 100 ? '...' : ''}`);
+        display.success(`Done: ${preview}${output.length > 100 ? '...' : ''}`);
       } else {
-        step.success('Done');
+        display.success('Done');
       }
     } catch (error: any) {
       const duration = Date.now() - startTime;
@@ -510,7 +500,7 @@ export class TaskScheduler {
 
       // Display error
       const preview = errorMsg.trim().split('\n').slice(0, 2).join(' ').slice(0, 80);
-      step.error(preview);
+      display.error(preview);
     }
 
     // Save updated task state (only if task still exists - may have been deleted during execution)
@@ -539,10 +529,6 @@ export class TaskScheduler {
       this.eventBus.emit({ type: 'prompt:redraw' });
     }
 
-    // Trigger legacy callback if set (deprecated)
-    if (this.onTaskComplete) {
-      this.onTaskComplete();
-    }
   }
 
   /**

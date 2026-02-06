@@ -16,12 +16,6 @@ export interface GrokConfig {
   baseUrl?: string;
   maxTokens?: number;
   temperature?: number;
-  /** Proxy mode: use slashbot-web proxy with wallet billing */
-  proxyUrl?: string;
-  /** Wallet address for proxy billing */
-  walletAddress?: string;
-  /** Payment mode: 'apikey' or 'token' */
-  paymentMode?: string;
 }
 
 export interface UsageStats {
@@ -31,21 +25,17 @@ export interface UsageStats {
   requests: number;
 }
 
-/** Billing info returned by proxy */
-export interface BillingInfo {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cost: {
-    usd: number;
-    credits: number;
-  };
-  processingTime: number;
-}
-
-/** Balance info from proxy */
-export interface BalanceInfo {
-  walletAddress: string;
-  credits: number;
-  lastUpdated: string;
+/**
+ * Auth provider interface for pluggable authentication strategies.
+ * Default: direct API key auth. Billing plugin provides proxy auth.
+ */
+export interface ApiAuthProvider {
+  /** Get the API endpoint URL */
+  getEndpoint(): string;
+  /** Get auth headers for a request */
+  getHeaders(requestBody: string): Record<string, string>;
+  /** Called before each request (e.g. to validate token balance) */
+  beforeRequest?(): Promise<void>;
+  /** Called for each parsed SSE chunk (e.g. to capture billing info) */
+  onStreamChunk?(parsed: any): void;
 }

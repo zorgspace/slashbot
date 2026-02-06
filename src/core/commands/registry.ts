@@ -10,6 +10,7 @@ export interface CommandHandler {
   description: string;
   usage: string;
   aliases?: string[];
+  group?: string;
   execute: (args: string[], context: CommandContext) => Promise<boolean>;
 }
 
@@ -19,13 +20,13 @@ export interface ConnectorHandle {
   stop?: () => void;
 }
 
-import type { GrokClient } from '../api/grok';
+import type { GrokClient } from '../api';
 import type { TaskScheduler } from '../scheduler/scheduler';
-import type { SecureFileSystem } from '../fs/filesystem';
+import type { SecureFileSystem } from '../../plugins/filesystem/services/filesystem';
 import type { ConfigManager } from '../config/config';
 import type { CodeEditor } from '../code/editor';
-import type { SkillManager } from '../skills/manager';
-import type { HeartbeatService } from '../services/heartbeat';
+import type { SkillManager } from '../../plugins/skills/services/SkillManager';
+import type { HeartbeatService } from '../../plugins/heartbeat/services';
 import type { Interface as ReadlineInterface } from 'readline';
 
 export interface CommandContext {
