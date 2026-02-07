@@ -42,11 +42,13 @@ export async function executeRead(
       php: 'php', r: 'r', pl: 'perl', dart: 'dart', sol: 'solidity',
     };
     const lang = langMap[ext] || ext;
-    const header = lang ? `[${lang}] ${action.path}` : action.path;
     // Send full content to LLM with language header and line numbers
     const startLine = (action.offset || 0) + 1;
-    const maxLineNum = startLine + lines.length - 1;
-    const pad = String(maxLineNum).length;
+    const endLine = startLine + lines.length - 1;
+    // Include range info in header when partial read, so LLM knows the visible window
+    const rangeNote = action.offset || action.limit ? ` (lines ${startLine}-${endLine})` : '';
+    const header = lang ? `[${lang}] ${action.path}${rangeNote}` : `${action.path}${rangeNote}`;
+    const pad = String(endLine).length;
     const numberedContent = lines
       .map((line, i) => `${String(startLine + i).padStart(pad, ' ')}│${line}`)
       .join('\n');
@@ -73,35 +75,49 @@ export async function executeEdit(
   const result = await handlers.onEdit(action.path, action.hunks);
 
   if (result.status === 'applied') {
-    // Show diff for each hunk
+    // Build a lookup from original startLine → adjusted startLine
+    const adjustMap = new Map<number, number>();
+    if (result.adjustedHunks) {
+      for (const adj of result.adjustedHunks) {
+        adjustMap.set(adj.originalStartLine, adj.adjustedStartLine);
+      }
+    }
+
+    // Show diff for each hunk, using adjusted line numbers
     for (const hunk of action.hunks) {
       const removed = hunk.diffLines.filter(l => l.type === 'remove').map(l => l.content);
       const added = hunk.diffLines.filter(l => l.type === 'add').map(l => l.content);
+      const displayLine = adjustMap.get(hunk.startLine) ?? hunk.startLine;
       display.updateResult(true, removed.length, added.length);
       if (removed.length > 0 || added.length > 0) {
-        display.diff(removed, added, action.path, hunk.startLine);
+        display.diff(removed, added, action.path, displayLine);
       }
     }
   } else if (result.status === 'already_applied') {
     display.success('Already applied (skipped)');
   } else if (result.status === 'not_found') {
     display.updateResult(false, 0, 0);
-    if (result.message?.includes('File not found')) {
-      display.error(
-        `File not found: ${action.path}. Use <read> to check if file exists, or <write> to make a new file.`,
-      );
-    } else {
-      display.error(`${result.message}`);
-    }
+    display.error(
+      result.message?.includes('File not found')
+        ? `File not found: ${action.path}. Use <read> to check if file exists, or <write> to make a new file.`
+        : `${result.message}`,
+    );
+  } else if (result.status === 'no_match') {
+    display.updateResult(false, 0, 0);
+    display.error(`Content mismatch in ${action.path} — re-read and retry.`);
   } else {
     display.updateResult(false, 0, 0);
   }
 
   let errorMsg = result.message;
-  if (!result.success && result.status === 'not_found') {
-    errorMsg = result.message?.includes('File not found')
-      ? `${result.message} - Use <read> to verify path or <write> to make new file`
-      : `${result.message} - Use <read path="${action.path}"/> first to see actual content`;
+  if (!result.success) {
+    if (result.status === 'not_found') {
+      errorMsg = result.message?.includes('File not found')
+        ? `${result.message} - Use <read> to verify path or <write> to make new file`
+        : `${result.message} - Use <read path="${action.path}"/> first to see actual content`;
+    } else if (result.status === 'no_match') {
+      errorMsg = `${result.message}`;
+    }
   }
 
   return {

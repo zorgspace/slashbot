@@ -137,15 +137,16 @@ class DisplayService {
 
   bashResult(_command: string, output: string, exitCode = 0): void {
     const isError = exitCode !== 0 || output.startsWith('Error:');
-    // Route raw command output to OpenTUI console overlay (safe container)
+    // Route command output through TUI-safe console (intercepted by OutputInterceptor)
     const lines = output.split('\n').filter(l => l.trim());
     if (lines.length > 0) {
-      const preview = lines.slice(0, 3);
+      const maxPreview = 10;
+      const preview = lines.slice(0, maxPreview);
       for (const line of preview) {
         console.log(line);
       }
-      if (lines.length > 3) {
-        console.log(`... ${lines.length - 3} more lines`);
+      if (lines.length > maxPreview) {
+        console.log(`... ${lines.length - maxPreview} more lines`);
       }
     }
     // Status in chat panel

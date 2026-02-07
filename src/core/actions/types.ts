@@ -25,10 +25,16 @@ export interface GrepOptions {
 
 export type EditStatus = 'applied' | 'no_match' | 'error' | 'not_found' | 'already_applied';
 
+export interface HunkAdjustment {
+  originalStartLine: number;
+  adjustedStartLine: number;
+}
+
 export interface EditResult {
   status: EditStatus;
   path?: string;
   message?: string;
   success?: boolean;
+  adjustedHunks?: HunkAdjustment[];
   [key: string]: unknown;
 }

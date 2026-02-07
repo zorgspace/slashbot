@@ -96,7 +96,8 @@ export class BashPlugin implements Plugin {
         });
       }
 
-      // Normal execution with streaming
+      // Normal execution — capture output only, display via bashResult()
+      // Output is NOT streamed to stdout/stderr to avoid corrupting the TUI layout.
       try {
         const { spawn } = await import('child_process');
         const timeout = options?.timeout || 30000;
@@ -105,46 +106,43 @@ export class BashPlugin implements Plugin {
           let stdout = '';
           let stderr = '';
           let killed = false;
-          let hasOutput = false;
 
           const child = spawn(command, {
             shell: '/bin/bash',
             cwd: workDir,
             stdio: ['ignore', 'pipe', 'pipe'],
-            env: { ...process.env, BASH_SILENCE_DEPRECATION_WARNING: '1', ...extraEnv },
+            env: {
+              ...process.env,
+              BASH_SILENCE_DEPRECATION_WARNING: '1',
+              TERM: 'dumb',
+              ...extraEnv,
+            },
           });
 
           const timer = setTimeout(() => {
             killed = true;
             child.kill('SIGTERM');
+            setTimeout(() => {
+              try {
+                child.kill('SIGKILL');
+              } catch {}
+            }, 2000);
           }, timeout);
 
           child.stdout?.on('data', (data: Buffer) => {
-            const text = data.toString();
-            stdout += text;
-            if (!hasOutput) {
-              process.stdout.write('\n');
-              hasOutput = true;
-            }
-            process.stdout.write(text);
+            stdout += data.toString();
           });
           child.stderr?.on('data', (data: Buffer) => {
-            const text = data.toString();
-            stderr += text;
-            if (!hasOutput) {
-              process.stdout.write('\n');
-              hasOutput = true;
-            }
-            process.stderr.write(text);
+            stderr += data.toString();
           });
 
           child.on('close', code => {
             clearTimeout(timer);
-            if (hasOutput && !stdout.endsWith('\n') && !stderr.endsWith('\n'))
-              process.stdout.write('\n');
             if (killed) resolve(`Error: Command timed out after ${timeout}ms`);
-            else if (code !== 0) resolve(`Error: Command failed with code ${code}`);
-            else resolve(stdout || stderr || 'OK');
+            else if (code !== 0) {
+              const output = stderr || stdout || `exit code ${code}`;
+              resolve(`Error: Command failed with code ${code}\n${output}`);
+            } else resolve(stdout || stderr || 'OK');
           });
           child.on('error', err => {
             clearTimeout(timer);

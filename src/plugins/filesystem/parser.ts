@@ -34,9 +34,12 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         return actions;
       },
     },
-    // Edit action (post-strip) - unified diff format with line numbers
+    // Edit action - unified diff format with line numbers
+    // preStrip: content-bearing tag — parsed first, then stripped so inner tags
+    // (e.g. <bash> inside diff content) are not executed as actions.
     {
       tags: ['edit'],
+      preStrip: true,
       protectedTags: ['edit'],
       fixups(content: string): string {
         let result = content;
@@ -93,15 +96,21 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
             const hunkContent = innerContent.substring(contentStart, contentEnd);
 
             const diffLines: { type: 'context' | 'add' | 'remove'; content: string }[] = [];
-            for (const line of hunkContent.split('\n')) {
+            const rawLines = hunkContent.split('\n');
+            for (let li = 0; li < rawLines.length; li++) {
+              const line = rawLines[li];
               if (line.startsWith('-')) {
                 diffLines.push({ type: 'remove', content: line.substring(1) });
               } else if (line.startsWith('+')) {
                 diffLines.push({ type: 'add', content: line.substring(1) });
               } else if (line.startsWith(' ')) {
                 diffLines.push({ type: 'context', content: line.substring(1) });
+              } else if (line.length === 0 && diffLines.length > 0 && li < rawLines.length - 1) {
+                // Empty line WITHIN diff content = blank line in source (LLM omitted space prefix).
+                // Only skip leading/trailing empty lines (artifacts of split around hunk headers).
+                diffLines.push({ type: 'context', content: '' });
               } else if (line.trim().length > 0) {
-                // No prefix - treat as context (LLM forgot the space prefix)
+                // Non-empty line without prefix - treat as context (LLM forgot the space prefix)
                 diffLines.push({ type: 'context', content: line });
               }
             }

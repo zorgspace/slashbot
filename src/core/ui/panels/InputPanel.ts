@@ -51,7 +51,7 @@ export class InputPanel {
 
     this.promptLabel = new TextareaRenderable(renderer, {
       id: 'input-prompt',
-      placeholder: t`${bold(fg(theme.violet)('>'))} `,
+      placeholder: t`${bold(fg(theme.violet)('❯'))} `,
       width: 3,
       height: 1,
     });

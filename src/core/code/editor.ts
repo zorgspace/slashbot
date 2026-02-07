@@ -151,8 +151,9 @@ export class CodeEditor {
   }
 
   /**
-   * Apply a diff edit using line-based hunks
-   * Hunks specify exact line numbers and unified diff content
+   * Apply a diff edit using line-based hunks with content-based matching.
+   * Instead of blindly trusting startLine, searches for the actual content
+   * in the file and adjusts the position automatically.
    */
   async applyDiffEdit(filePath: string, hunks: DiffHunk[]): Promise<EditResult> {
     try {
@@ -174,33 +175,97 @@ export class CodeEditor {
       // Sort hunks bottom-to-top so earlier line numbers stay valid
       const sortedHunks = [...hunks].sort((a, b) => b.startLine - a.startLine);
 
+      // Track adjusted positions for accurate display
+      const adjustedHunks: { originalStartLine: number; adjustedStartLine: number }[] = [];
+
       for (const hunk of sortedHunks) {
-        const startIdx = Math.min(hunk.startLine - 1, lines.length);
+        // Extract expected original lines (context + remove)
+        const expectedLines = hunk.diffLines
+          .filter(l => l.type === 'context' || l.type === 'remove')
+          .map(l => l.content);
 
-        // Count original lines from context + remove entries
-        const originalCount = hunk.diffLines.filter(
-          l => l.type === 'context' || l.type === 'remove',
-        ).length;
-
-        // Soft verification: check removed/context lines match file
-        let lineIdx = startIdx;
-        for (const dl of hunk.diffLines) {
-          if (dl.type === 'context' || dl.type === 'remove') {
-            if (lineIdx < lines.length && lines[lineIdx].trim() !== dl.content.trim()) {
-              display.warningText(
-                `Line ${lineIdx + 1} mismatch: expected "${dl.content.trim().slice(0, 60)}", got "${lines[lineIdx].trim().slice(0, 60)}"`,
-              );
-            }
-            lineIdx++;
-          }
+        // Pure insertion (count=0, no context/remove lines)
+        if (expectedLines.length === 0) {
+          const insertIdx = Math.min(hunk.startLine - 1, lines.length);
+          const addLines = hunk.diffLines.filter(l => l.type === 'add').map(l => l.content);
+          lines.splice(insertIdx, 0, ...addLines);
+          adjustedHunks.push({
+            originalStartLine: hunk.startLine,
+            adjustedStartLine: insertIdx + 1,
+          });
+          continue;
         }
+
+        // Find where the expected lines actually are in the file
+        const preferredIdx = hunk.startLine - 1;
+        let matchIdx = this.findExactMatch(lines, expectedLines, preferredIdx);
+        let matchType: 'exact' | 'fuzzy' | 'none' = matchIdx !== -1 ? 'exact' : 'none';
+
+        if (matchIdx === -1) {
+          matchIdx = this.findFuzzyMatch(lines, expectedLines, preferredIdx);
+          if (matchIdx !== -1) matchType = 'fuzzy';
+        }
+
+        if (matchIdx === -1) {
+          // Content not found — provide detailed error so LLM can retry
+          const showStart = Math.max(0, preferredIdx - 2);
+          const showEnd = Math.min(lines.length, preferredIdx + expectedLines.length + 2);
+          const actualSnippet = lines
+            .slice(showStart, showEnd)
+            .map((l, i) => `  ${showStart + i + 1}│${l}`)
+            .join('\n');
+          const expectedSnippet = expectedLines
+            .map((l, i) => `  ${hunk.startLine + i}│${l}`)
+            .join('\n');
+
+          display.errorText(
+            `Edit rejected: content not found at line ${hunk.startLine} in ${filePath}`,
+          );
+          return {
+            success: false,
+            status: 'no_match',
+            path: filePath,
+            message: `Content mismatch at line ${hunk.startLine}.\nExpected lines:\n${expectedSnippet}\nActual file content:\n${actualSnippet}\nRe-read the file with <read path="${filePath}"/> and retry with the correct line numbers and exact content.`,
+          };
+        }
+
+        if (matchIdx !== preferredIdx) {
+          display.warningText(
+            `Hunk adjusted: line ${hunk.startLine} → ${matchIdx + 1} (${matchType} match) in ${filePath}`,
+          );
+        }
+
+        adjustedHunks.push({
+          originalStartLine: hunk.startLine,
+          adjustedStartLine: matchIdx + 1,
+        });
 
         // Build replacement: context + add lines in order
         const newLines = hunk.diffLines
           .filter(l => l.type === 'context' || l.type === 'add')
           .map(l => l.content);
 
-        lines.splice(startIdx, originalCount, ...newLines);
+        // For fuzzy matches, use the file's actual content for context lines
+        // to preserve exact whitespace from the original file
+        if (matchType === 'fuzzy') {
+          let fileLineIdx = matchIdx;
+          let newLineIdx = 0;
+          for (const dl of hunk.diffLines) {
+            if (dl.type === 'context') {
+              if (fileLineIdx < lines.length) {
+                newLines[newLineIdx] = lines[fileLineIdx];
+              }
+              fileLineIdx++;
+              newLineIdx++;
+            } else if (dl.type === 'remove') {
+              fileLineIdx++;
+            } else if (dl.type === 'add') {
+              newLineIdx++;
+            }
+          }
+        }
+
+        lines.splice(matchIdx, expectedLines.length, ...newLines);
       }
 
       const newContent = lines.join('\n');
@@ -218,7 +283,13 @@ export class CodeEditor {
 
       await fsPromises.writeFile(fullPath, newContent, 'utf8');
       display.successText(`Modified: ${filePath}`);
-      return { success: true, status: 'applied', path: filePath, message: `Modified: ${filePath}` };
+      return {
+        success: true,
+        status: 'applied',
+        path: filePath,
+        message: `Modified: ${filePath}`,
+        adjustedHunks,
+      };
     } catch (error) {
       display.errorText(`Edit error: ${error}`);
       return {
@@ -228,6 +299,66 @@ export class CodeEditor {
         message: `Edit error: ${error}`,
       };
     }
+  }
+
+  /**
+   * Find exact match for expected lines in the file, searching outward from preferredIdx
+   */
+  private findExactMatch(lines: string[], expected: string[], preferredIdx: number): number {
+    // Try at preferred index first
+    if (this.matchesAt(lines, expected, preferredIdx, false)) return preferredIdx;
+
+    // Search outward from preferred position
+    const maxDist = lines.length;
+    for (let dist = 1; dist <= maxDist; dist++) {
+      const before = preferredIdx - dist;
+      const after = preferredIdx + dist;
+      if (before >= 0 && this.matchesAt(lines, expected, before, false)) return before;
+      if (after < lines.length && this.matchesAt(lines, expected, after, false)) return after;
+      if (before < 0 && after >= lines.length) break;
+    }
+
+    return -1;
+  }
+
+  /**
+   * Find fuzzy match (trimmed whitespace comparison), searching outward from preferredIdx
+   */
+  private findFuzzyMatch(lines: string[], expected: string[], preferredIdx: number): number {
+    // Try at preferred index first
+    if (this.matchesAt(lines, expected, preferredIdx, true)) return preferredIdx;
+
+    // Search outward
+    const maxDist = lines.length;
+    for (let dist = 1; dist <= maxDist; dist++) {
+      const before = preferredIdx - dist;
+      const after = preferredIdx + dist;
+      if (before >= 0 && this.matchesAt(lines, expected, before, true)) return before;
+      if (after < lines.length && this.matchesAt(lines, expected, after, true)) return after;
+      if (before < 0 && after >= lines.length) break;
+    }
+
+    return -1;
+  }
+
+  /**
+   * Check if expected lines match at a given position in the file
+   */
+  private matchesAt(
+    lines: string[],
+    expected: string[],
+    startIdx: number,
+    fuzzy: boolean,
+  ): boolean {
+    if (startIdx < 0 || startIdx + expected.length > lines.length) return false;
+    for (let i = 0; i < expected.length; i++) {
+      if (fuzzy) {
+        if (lines[startIdx + i].trim() !== expected[i].trim()) return false;
+      } else {
+        if (lines[startIdx + i] !== expected[i]) return false;
+      }
+    }
+    return true;
   }
 
   async createFile(filePath: string, content: string): Promise<boolean> {
