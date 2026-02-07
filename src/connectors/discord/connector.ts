@@ -17,7 +17,6 @@ import {
   ChannelType,
   ThreadAutoArchiveDuration,
   TextChannel,
-  PermissionFlagsBits,
 } from 'discord.js';
 import { display } from '../../core/ui';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from '../base';
@@ -75,11 +74,25 @@ export class DiscordConnector implements Connector {
     this.client.once('ready', () => {
       display.connector('discord', 'connected');
       display.connectorResult(this.client.user?.tag || 'unknown');
+      if (this.eventBus) {
+        this.eventBus.emit({ type: 'connector:connected', source: 'discord' });
+      }
     });
 
     this.client.on('messageCreate', async (message: DiscordMessage) => {
       // Ignore bot messages
       if (message.author.bot) return;
+
+      // Emit discord:message event
+      if (this.eventBus) {
+        this.eventBus.emit({
+          type: 'discord:message',
+          channelId: message.channel.id,
+          userId: message.author.id,
+          content: message.content,
+          attachments: message.attachments.map(a => a.url),
+        });
+      }
 
       // Only respond in authorized channels
       if (!this.channelIds.has(message.channelId)) return;
@@ -174,6 +187,16 @@ export class DiscordConnector implements Connector {
           if (response) {
             await this.sendMessageToChannel(message.channelId, response);
           }
+
+          // Emit connector:message event
+          if (this.eventBus) {
+            this.eventBus.emit({
+              type: 'connector:message',
+              source: 'discord',
+              message: textContent,
+              metadata: { sessionId: `discord:${message.channelId}` },
+            });
+          }
         } finally {
           if (typingInterval) clearInterval(typingInterval);
         }
@@ -263,6 +286,12 @@ export class DiscordConnector implements Connector {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  async banUser(userId: string, reason?: string): Promise<void> {
+    const guild = this.client.guilds.cache.first();
+    if (!guild) throw new Error('No guild found');
+    await guild.members.ban(userId, { reason: reason || 'Auto-banned by Slashbot' });
   }
 
   /**

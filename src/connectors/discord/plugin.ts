@@ -1,131 +1,18 @@
 /**
- * Connector Plugin - Discord
+ * Discord Plugin for Slashbot
+ *
+ * Manages the Discord connector integration
  */
 
-import type {
-  ConnectorPlugin,
-  PluginMetadata,
-  PluginContext,
-  ActionContribution,
-  PromptContribution,
-} from '../../plugins/types';
-import type { ActionResult, ActionHandlers } from '../../core/actions/types';
-import { registerActionParser } from '../../core/actions/parser';
-import { display } from '../../core/ui';
-import { getDiscordParserConfigs } from './parser';
-
-async function executeDiscordConfig(
-  action: { type: 'discord-config'; botToken: string; channelId: string },
-  handlers: ActionHandlers,
-): Promise<ActionResult | null> {
-  if (!handlers.onDiscordConfig) return null;
-
-  display.tool('DiscordConfig', `channel_id: ${action.channelId}`);
-
-  try {
-    const result = await handlers.onDiscordConfig(action.botToken, action.channelId);
-
-    if (result.success) {
-      display.result(`Discord configured! Channel ID: ${action.channelId}`);
-    } else {
-      display.error(result.message);
-    }
-
-    return {
-      action: 'DiscordConfig',
-      success: result.success,
-      result: result.message,
-      error: result.success ? undefined : result.message,
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Discord config failed: ${errorMsg}`);
-    return {
-      action: 'DiscordConfig',
-      success: false,
-      result: 'Failed',
-      error: errorMsg,
-    };
-  }
-}
-
-async function executeDiscordThread(
-  action: { type: 'discord-thread'; name: string; message?: string; channelId?: string },
-  handlers: ActionHandlers,
-): Promise<ActionResult | null> {
-  if (!handlers.onDiscordThread) return null;
-
-  display.tool('DiscordThread', `name: "${action.name}"`);
-
-  try {
-    const result = await handlers.onDiscordThread(action.name, action.message, action.channelId);
-
-    if (result.success) {
-      display.result(`Thread created: ${result.threadId}`);
-    } else {
-      display.error(result.message);
-    }
-
-    return {
-      action: 'DiscordThread',
-      success: result.success,
-      result: result.success ? `Thread created: ${result.threadId}` : result.message,
-      error: result.success ? undefined : result.message,
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Discord thread creation failed: ${errorMsg}`);
-    return {
-      action: 'DiscordThread',
-      success: false,
-      result: 'Failed',
-      error: errorMsg,
-    };
-  }
-}
-
-async function executeDiscordAddChannel(
-  action: { type: 'discord-add-channel'; channelId: string },
-  handlers: ActionHandlers,
-): Promise<ActionResult | null> {
-  if (!handlers.onDiscordAddChannel) return null;
-
-  display.tool('DiscordAddChannel', `channel_id: ${action.channelId}`);
-
-  try {
-    const result = await handlers.onDiscordAddChannel(action.channelId);
-
-    if (result.success) {
-      display.result(`Channel added: ${action.channelId}`);
-    } else {
-      display.error(result.message);
-    }
-
-    return {
-      action: 'DiscordAddChannel',
-      success: result.success,
-      result: result.message,
-      error: result.success ? undefined : result.message,
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Discord add channel failed: ${errorMsg}`);
-    return {
-      action: 'DiscordAddChannel',
-      success: false,
-      result: 'Failed',
-      error: errorMsg,
-    };
-  }
-}
+import type { ConnectorPlugin, PluginMetadata, PluginContext } from '../../plugins/types';
 
 export class DiscordPlugin implements ConnectorPlugin {
   readonly metadata: PluginMetadata = {
     id: 'connector.discord',
-    name: 'Discord',
+    name: 'Discord Connector',
     version: '1.0.0',
     category: 'connector',
-    description: 'Discord bot connector',
+    description: 'Provides Discord bot integration for messaging',
   };
 
   private context!: PluginContext;
@@ -133,9 +20,6 @@ export class DiscordPlugin implements ConnectorPlugin {
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
-    for (const config of getDiscordParserConfigs()) {
-      registerActionParser(config);
-    }
     const { discordCommands } = await import('./commands');
     this.discordCmds = discordCommands;
   }
@@ -152,60 +36,28 @@ export class DiscordPlugin implements ConnectorPlugin {
     return this.discordCmds || [];
   }
 
-  getActionContributions(): ActionContribution[] {
-    const context = this.context;
-
-    return [
-      {
-        type: 'discord-config',
-        tagName: 'discord-config',
-        handler: {
-          onDiscordConfig: async (botToken: string, channelId: string) => {
-            try {
-              await (context.configManager as any)?.saveDiscordConfig?.(botToken, channelId);
-              return { success: true, message: 'Discord configured! Restart to connect.' };
-            } catch (error: any) {
-              return { success: false, message: error.message || 'Configuration failed' };
-            }
-          },
-        },
-        execute: executeDiscordConfig as any,
-      },
-    ];
+  getActionContributions(): any[] {
+    return [];
   }
 
-  getPromptContributions(): PromptContribution[] {
+  getPromptContributions(): any[] {
     return [
       {
-        id: 'connector.discord.docs',
-        title: 'Platform [DISCORD]',
-        priority: 210,
-        content: `- Execute actions, end with 1-2 sentence summary in plain language
-- NEVER include code snippets or technical details in the final summary
-
-## Discord Configuration
-\`\`\`
-<discord-config bot_token="MTk..." channel_id="123456789"/>
-\`\`\`
-- Get token from Developer Portal, channel ID from right-click > Copy ID
-- After config, restart slashbot to connect
-
-## Multi-Channel Support
-Each channel has its own isolated conversation history.
-
-## Discord Thread Management
-\`\`\`
-<discord-thread name="Project Discussion">Initial message here</discord-thread>
-<discord-add-channel channel_id="987654321"/>
-\`\`\``,
-        enabled: () => {
-          try {
-            return !!(this.context.configManager as any)?.getDiscordConfig?.();
-          } catch {
-            return false;
-          }
-        },
-      },
+        id: 'connector.discord.installation',
+        title: 'Discord Connector Installation',
+        priority: 100,
+        content: [
+          'To install and configure the Discord connector:',
+          '',
+          '1. Create a Discord application at https://discord.com/developers/applications',
+          '2. Go to the Bot section and create a bot.',
+          '3. Copy the bot token.',
+          '4. Invite the bot to your server with appropriate permissions.',
+          '5. Get the channel ID by right-clicking the channel > Copy ID (enable Developer Mode in User Settings > App Settings > Advanced).',
+          '6. In Slashbot, run /discord <bot_token> <channel_id>',
+          '7. The bot will connect and respond to messages in that channel.'
+        ]
+      }
     ];
   }
 }

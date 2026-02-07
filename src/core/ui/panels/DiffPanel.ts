@@ -3,12 +3,14 @@
  *
  * Auto-shows when edits happen, toggle with Ctrl+D.
  * Accumulates diffs across the session. Cleared on /clear.
+ * Uses OpenTUI DiffRenderable for proper diff rendering.
  */
 
 import {
   BoxRenderable,
   ScrollBoxRenderable,
   TextRenderable,
+  DiffRenderable,
   t,
   fg,
   bold,
@@ -17,15 +19,16 @@ import {
 } from '@opentui/core';
 import { theme } from '../theme';
 import { diffLines } from '../../code/diff3';
+import { basename } from 'path';
 
 const MAX_DIFF_LINES = 300;
+const MAX_ENTRIES = 50;
 
 export class DiffPanel {
   private container: BoxRenderable;
   private scrollBox: ScrollBoxRenderable;
   private renderer: CliRenderer;
   private _visible = false;
-  private lineCounter = 0;
   private entryCount = 0;
 
   constructor(renderer: CliRenderer) {
@@ -36,7 +39,7 @@ export class DiffPanel {
       width: 0,
       flexDirection: 'column',
       borderColor: theme.violetDark,
-      border:["left"],
+      border: ['left'],
       visible: false,
       flexShrink: 0,
     });
@@ -70,67 +73,51 @@ export class DiffPanel {
   }
 
   /**
-   * Add a diff for an edited file. Computes unified diff and appends to panel.
+   * Add a diff for an edited file using OpenTUI DiffRenderable.
    */
   addDiff(filePath: string, before: string, after: string): void {
-    const beforeLines = before.split('\n');
-    const afterLines = after.split('\n');
-    const regions = diffLines(beforeLines, afterLines);
-
-    // Build diff output lines
-    const diffOutput: { text: string; type: 'header' | 'add' | 'del' | 'ctx' }[] = [];
-
-    for (const region of regions) {
-      if (region.type === 'equal') {
-        // Show context lines (max 2 around changes)
-        for (const line of region.oldLines) {
-          diffOutput.push({ text: ' ' + line, type: 'ctx' });
-        }
-      } else if (region.type === 'delete' || region.type === 'replace') {
-        for (const line of region.oldLines) {
-          diffOutput.push({ text: '-' + line, type: 'del' });
-        }
-        if (region.type === 'replace') {
-          for (const line of region.newLines) {
-            diffOutput.push({ text: '+' + line, type: 'add' });
-          }
-        }
-      } else if (region.type === 'insert') {
-        for (const line of region.newLines) {
-          diffOutput.push({ text: '+' + line, type: 'add' });
-        }
-      }
-    }
-
-    // Trim context: keep only 2 context lines around changes
-    const trimmed = this.trimContext(diffOutput);
-
-    // Truncate if too long
-    const truncated = trimmed.length > MAX_DIFF_LINES;
-    const lines = truncated ? trimmed.slice(0, MAX_DIFF_LINES) : trimmed;
+    const unifiedDiff = this.buildUnifiedDiff(filePath, before, after);
+    if (!unifiedDiff) return;
 
     this.entryCount++;
 
-    // File header
-    this.addLine(t`${bold(fg(theme.violet)('--- ' + filePath))}`);
+    // File header label
+    const header = new TextRenderable(this.renderer, {
+      id: `diff-header-${this.entryCount}`,
+      content: t`${bold(fg(theme.violet)(filePath))}`,
+    });
+    this.scrollBox.add(header);
 
-    // Diff lines
-    for (const line of lines) {
-      if (line.type === 'add') {
-        this.addLine(t`${fg(theme.green)(line.text)}`);
-      } else if (line.type === 'del') {
-        this.addLine(t`${fg(theme.red)(line.text)}`);
-      } else {
-        this.addLine(t`${dim(fg(theme.muted)(line.text))}`);
-      }
+    // DiffRenderable (no syntax highlighting to avoid tree-sitter native crashes)
+    const lineCount = unifiedDiff.split('\n').length;
+    try {
+      const diff = new DiffRenderable(this.renderer, {
+        id: `diff-entry-${this.entryCount}`,
+        diff: unifiedDiff,
+        view: 'unified',
+        showLineNumbers: true,
+        height: Math.min(lineCount + 2, 40),
+        fg: theme.white,
+        addedBg: '#0a3d0a',
+        removedBg: '#3d0a0a',
+        addedSignColor: theme.success,
+        removedSignColor: theme.error,
+        lineNumberFg: theme.muted,
+        lineNumberBg: theme.bgPanel,
+        contextBg: theme.bgPanel,
+        wrapMode: 'word',
+      });
+      this.scrollBox.add(diff);
+    } catch {
+      // Fallback: render as plain text lines
+      this.addDiffFallback(unifiedDiff);
     }
 
-    if (truncated) {
-      this.addLine(t`${dim(fg(theme.warning)('... (' + (trimmed.length - MAX_DIFF_LINES) + ' more lines)'))}`);
+    // Prune old entries
+    const children = this.scrollBox.getChildren();
+    while (children.length > MAX_ENTRIES * 2) {
+      this.scrollBox.remove(children[0].id);
     }
-
-    // Separator
-    this.addLine(t`${dim(fg(theme.muted)(''))}`);
 
     // Auto-show on first diff
     if (!this._visible) {
@@ -139,37 +126,156 @@ export class DiffPanel {
   }
 
   /**
-   * Trim context lines: keep only 2 lines of context around add/del regions.
-   * Insert separator markers between disconnected hunks.
+   * Build a unified diff string from before/after content.
    */
-  private trimContext(
-    lines: { text: string; type: 'header' | 'add' | 'del' | 'ctx' }[],
-  ): { text: string; type: 'header' | 'add' | 'del' | 'ctx' }[] {
-    if (lines.length === 0) return [];
+  private buildUnifiedDiff(filePath: string, before: string, after: string): string | null {
+    const beforeLines = before.split('\n');
+    const afterLines = after.split('\n');
+    const regions = diffLines(beforeLines, afterLines);
 
-    // Mark which lines are within 2 of a change
-    const keep = new Array(lines.length).fill(false);
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].type === 'add' || lines[i].type === 'del') {
-        for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 2); j++) {
+    // Check if there are actual changes
+    const hasChanges = regions.some((r) => r.type !== 'equal');
+    if (!hasChanges) return null;
+
+    const hunks = this.buildHunks(regions, beforeLines, afterLines);
+    if (hunks.length === 0) return null;
+
+    const lines: string[] = [
+      `--- a/${basename(filePath)}`,
+      `+++ b/${basename(filePath)}`,
+      ...hunks,
+    ];
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Build unified diff hunks with context lines from diff regions.
+   */
+  private buildHunks(
+    regions: ReturnType<typeof diffLines>,
+    _beforeLines: string[],
+    _afterLines: string[],
+  ): string[] {
+    // Flatten regions into raw diff lines with original line numbers
+    const rawLines: { text: string; type: 'ctx' | 'add' | 'del'; oldLineNo: number; newLineNo: number }[] = [];
+    let oldLine = 1;
+    let newLine = 1;
+
+    for (const region of regions) {
+      if (region.type === 'equal') {
+        for (const line of region.oldLines) {
+          rawLines.push({ text: ' ' + line, type: 'ctx', oldLineNo: oldLine, newLineNo: newLine });
+          oldLine++;
+          newLine++;
+        }
+      } else if (region.type === 'delete') {
+        for (const line of region.oldLines) {
+          rawLines.push({ text: '-' + line, type: 'del', oldLineNo: oldLine, newLineNo: newLine });
+          oldLine++;
+        }
+      } else if (region.type === 'insert') {
+        for (const line of region.newLines) {
+          rawLines.push({ text: '+' + line, type: 'add', oldLineNo: oldLine, newLineNo: newLine });
+          newLine++;
+        }
+      } else if (region.type === 'replace') {
+        for (const line of region.oldLines) {
+          rawLines.push({ text: '-' + line, type: 'del', oldLineNo: oldLine, newLineNo: newLine });
+          oldLine++;
+        }
+        for (const line of region.newLines) {
+          rawLines.push({ text: '+' + line, type: 'add', oldLineNo: oldLine, newLineNo: newLine });
+          newLine++;
+        }
+      }
+    }
+
+    // Mark which lines to keep (within 3 context lines of a change)
+    const contextRadius = 3;
+    const keep = new Array(rawLines.length).fill(false);
+    for (let i = 0; i < rawLines.length; i++) {
+      if (rawLines[i].type === 'add' || rawLines[i].type === 'del') {
+        for (let j = Math.max(0, i - contextRadius); j <= Math.min(rawLines.length - 1, i + contextRadius); j++) {
           keep[j] = true;
         }
       }
     }
 
-    const result: { text: string; type: 'header' | 'add' | 'del' | 'ctx' }[] = [];
-    let lastKept = -1;
-    for (let i = 0; i < lines.length; i++) {
+    // Group kept lines into hunks separated by gaps
+    const hunkGroups: number[][] = [];
+    let currentGroup: number[] = [];
+    for (let i = 0; i < rawLines.length; i++) {
       if (keep[i]) {
-        if (lastKept >= 0 && i - lastKept > 1) {
-          result.push({ text: ' ...', type: 'ctx' });
+        if (currentGroup.length > 0 && i - currentGroup[currentGroup.length - 1] > 1) {
+          hunkGroups.push(currentGroup);
+          currentGroup = [];
         }
-        result.push(lines[i]);
-        lastKept = i;
+        currentGroup.push(i);
       }
     }
+    if (currentGroup.length > 0) hunkGroups.push(currentGroup);
 
-    return result;
+    // Build hunk output, respecting MAX_DIFF_LINES
+    const output: string[] = [];
+    let totalLines = 0;
+
+    for (const group of hunkGroups) {
+      if (totalLines >= MAX_DIFF_LINES) {
+        break;
+      }
+
+      // Compute hunk header from line numbers
+      const firstIdx = group[0];
+      const lastIdx = group[group.length - 1];
+
+      let hunkOldStart = rawLines[firstIdx].oldLineNo;
+      let hunkNewStart = rawLines[firstIdx].newLineNo;
+      let hunkOldCount = 0;
+      let hunkNewCount = 0;
+
+      const hunkLines: string[] = [];
+      for (const idx of group) {
+        const rl = rawLines[idx];
+        hunkLines.push(rl.text);
+        if (rl.type === 'ctx') {
+          hunkOldCount++;
+          hunkNewCount++;
+        } else if (rl.type === 'del') {
+          hunkOldCount++;
+        } else if (rl.type === 'add') {
+          hunkNewCount++;
+        }
+      }
+
+      output.push(`@@ -${hunkOldStart},${hunkOldCount} +${hunkNewStart},${hunkNewCount} @@`);
+      output.push(...hunkLines);
+      totalLines += hunkLines.length + 1;
+    }
+
+    return output;
+  }
+
+  private addDiffFallback(diffContent: string): void {
+    const lines = diffContent.split('\n');
+    for (const line of lines) {
+      this.entryCount++;
+      let content;
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        content = t`${fg(theme.success)(line)}`;
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        content = t`${fg(theme.error)(line)}`;
+      } else if (line.startsWith('@@')) {
+        content = t`${fg(theme.violet)(line)}`;
+      } else {
+        content = t`${dim(fg(theme.muted)(line))}`;
+      }
+      const text = new TextRenderable(this.renderer, {
+        id: `diff-fallback-${this.entryCount}`,
+        content,
+      });
+      this.scrollBox.add(text);
+    }
   }
 
   show(): void {
@@ -200,26 +306,8 @@ export class DiffPanel {
     for (const child of this.scrollBox.getChildren()) {
       this.scrollBox.remove(child.id);
     }
-    this.lineCounter = 0;
     this.entryCount = 0;
     this.hide();
-  }
-
-  private addLine(content: any): void {
-    this.lineCounter++;
-    const line = new TextRenderable(this.renderer, {
-      id: `diff-line-${this.lineCounter}`,
-      content,
-      selectionBg: theme.violetDark,
-      selectionFg: theme.white,
-    });
-    this.scrollBox.add(line);
-
-    // Keep max 500 entries
-    const children = this.scrollBox.getChildren();
-    if (children.length > 500) {
-      this.scrollBox.remove(children[0].id);
-    }
   }
 
   getRenderable(): BoxRenderable {

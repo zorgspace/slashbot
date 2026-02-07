@@ -42,10 +42,14 @@ export class HeartbeatPlugin implements Plugin {
     this.heartbeatCmds = heartbeatCommands;
 
     // Self-register HeartbeatService in DI container
-    const { HeartbeatService: HeartbeatServiceClass } = await import('./services/HeartbeatService');
+    const { createHeartbeatService } = await import('./services/HeartbeatService');
     const { TYPES } = await import('../../core/di/types');
     if (!context.container.isBound(TYPES.HeartbeatService)) {
-      context.container.bind(TYPES.HeartbeatService).to(HeartbeatServiceClass).inSingletonScope();
+      context.container.bind(TYPES.HeartbeatService).toDynamicValue(() => {
+        const eventBus = context.container.get<any>(TYPES.EventBus);
+        const connectorRegistry = context.container.get<any>(TYPES.ConnectorRegistry);
+        return createHeartbeatService(eventBus, connectorRegistry);
+      }).inSingletonScope();
     }
 
     this.heartbeatService = context.container.get<HeartbeatService>(TYPES.HeartbeatService);
