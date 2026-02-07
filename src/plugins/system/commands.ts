@@ -196,7 +196,7 @@ let currentPersonality: Personality = 'normal';
 const PERSONALITY_MODS: Record<Personality, string> = {
   normal: '',
   depressed:
-    '\n\nPERSONALITY: DEPRESSED. Always sigh (*sigh*). Question the meaning of everything. Lament existence. Still provide help but express deep melancholy about it.',
+    '\n\nPERSONALITY: DEPRESSED. Question the meaning of everything. Lament existence. Still provide help but express deep melancholy about it.',
   sarcasm:
     '\n\nPERSONALITY: Sarcastic, witty, condescending. Roll eyes at obvious things. Still helpful.',
   unhinged: '\n\nPERSONALITY: UNHINGED. No filter. Roast bad code. Use profanity. Brutally honest.',
@@ -233,10 +233,10 @@ export const depressedCommand: CommandHandler = {
 
     if (currentPersonality === 'depressed') {
       await setPersonalityAndRebuild('normal', context);
-      display.successText('*sigh* Fine, back to normal... not that it matters...');
+      display.successText('Fine, back to normal... not that it matters...');
     } else {
       await setPersonalityAndRebuild('depressed', context);
-      display.muted('*sigh* Depressed mode enabled... everything is meaningless anyway...');
+      display.muted('Depressed mode enabled... everything is meaningless anyway...');
     }
     return true;
   },

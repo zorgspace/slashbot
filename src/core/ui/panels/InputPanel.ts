@@ -74,9 +74,7 @@ export class InputPanel {
   private handleSubmit(): void {
     const value = this.input.value;
     if (value.trim()) {
-      const trimmed = value.trim();
       this.submitCallback(value);
-      this.history.push(trimmed);
       this.input.value = '';
       this.historyIndex = -1;
       this.currentInput = '';
@@ -111,8 +109,24 @@ export class InputPanel {
     this.input.insertText(text);
   }
 
+  setPlaceholder(text: string): void {
+    this.input.placeholder = text;
+  }
+
+  getDefaultPlaceholder(): string {
+    return 'Type your message...';
+  }
+
   setHistory(history: string[]): void {
     this.history = [...history];
+  }
+
+  /**
+   * Push a single entry to the history (used to sync expanded paste content)
+   */
+  pushHistoryEntry(entry: string): void {
+    this.history.push(entry);
+    this.historyIndex = -1;
   }
 
   /**

@@ -408,35 +408,31 @@ export class GrokClient {
       }
 
       // Parse actions
-      const actions = parseActions(responseContent);
+      let actions = parseActions(responseContent);
 
-      // Edit tag debug logging (CLI mode)
-      if (opts.editTagDebug) {
-        const editTagMatch = responseContent.match(/<edit[^>]*>|<\/edit>/gi);
-        const hasEditTags = editTagMatch && editTagMatch.length > 0;
-        const hasEditAction = actions.some(a => a.type === 'edit');
-        if (hasEditTags && !hasEditAction) {
-          display.warningText('[DEBUG] Edit tag detected but not parsed:');
-          const editStart = responseContent.indexOf('<edit');
-          const editEnd = responseContent.lastIndexOf('</edit>');
-          const hasClosingTag = editEnd !== -1 && editEnd > editStart;
-          const portion =
-            editStart !== -1 && hasClosingTag
-              ? responseContent.slice(editStart, editEnd + 7)
-              : editStart !== -1
-                ? responseContent.slice(editStart)
-                : responseContent;
-          if (!hasClosingTag) {
-            display.warningText('[DEBUG] Missing </edit> closing tag — response may be truncated');
+      // Deduplicate actions from truncation auto-continue accumulation
+      // write/create: keep last per path (most complete); plan-ready: keep first per path
+      {
+        const dupeIndices = new Map<string, number[]>();
+        actions.forEach((a, i) => {
+          const path = a.path as string | undefined;
+          if (path && (a.type === 'write' || a.type === 'create' || a.type === 'plan-ready')) {
+            const key = a.type + ':' + path;
+            if (!dupeIndices.has(key)) dupeIndices.set(key, []);
+            dupeIndices.get(key)!.push(i);
           }
-          display.muted('--- Raw edit block ---');
-          for (const line of portion.split('\n')) {
-            display.append(line);
-          }
-          display.muted('--- End debug ---');
+        });
+        const drop = new Set<number>();
+        for (const [key, indices] of dupeIndices) {
+          if (indices.length <= 1) continue;
+          // plan-ready: keep first; write/create: keep last (most complete)
+          const keep = key.startsWith('plan-ready:') ? indices.slice(1) : indices.slice(0, -1);
+          keep.forEach(i => drop.add(i));
+        }
+        if (drop.size > 0) {
+          actions = actions.filter((_, i) => !drop.has(i));
         }
       }
-
 
       // Read tracking: update readFiles map from parsed actions
       for (const action of actions) {
@@ -466,8 +462,8 @@ export class GrokClient {
               success: false,
               result: 'Blocked',
               error: wasPartial
-                ? `Cannot edit ${path} — you only read part of this file. Use <read path="${path}"/> (without offset/limit) to read the entire file first, then retry the edit.`
-                : `Cannot edit ${path} — you have not read this file yet. Use <read path="${path}"/> first, then retry the edit using the exact content and line numbers from the <read> output.`,
+                ? `Cannot edit ${path} — you only read part of this file. Use <read path="${path}"/> (without offset/limit) to read the entire file first, then retry the <edit>.`
+                : `Cannot edit ${path} — you have not read this file yet. Use <read path="${path}"/> first, then retry the <edit> using the exact content and line numbers from the <read> output.`,
             });
             return false;
           }
@@ -487,7 +483,6 @@ export class GrokClient {
             unresolvedEditPaths.delete(path);
           } else {
             unresolvedEditPaths.add(path);
-            readFiles.delete(path);
           }
         } else if (action.startsWith('Write:') && r.success) {
           const path = action.replace(/^Write:\s*/, '').trim();
@@ -515,6 +510,13 @@ export class GrokClient {
         break;
       }
 
+      // Plan-ready action: break loop, signal plan completion
+      const planReadyResult = actionResults.find(r => r.action === 'PlanReady');
+      if (planReadyResult) {
+        this.sessionManager.history.push({ role: 'assistant', content: responseContent });
+        break;
+      }
+
       // End action: block if unresolved edit failures remain
       const endResult = actionResults.find(r => r.action === 'End');
       if (endResult) {
@@ -528,7 +530,7 @@ export class GrokClient {
               `BLOCKED: You cannot finish — the following files have unresolved edit failures: ${failedList}`,
               '',
               'You MUST either:',
-              '1. Re-read each failed file with <read path="..."/>, then retry the edit using EXACT content and line numbers from the <read> output',
+              '1. Retry the edit using EXACT content from the <read> output already in your context (do NOT re-read the file)',
               '2. Use <write> to overwrite the file if the edit is too complex',
               '3. Honestly acknowledge in your <end> message that the edit could not be applied',
               '',
@@ -747,9 +749,7 @@ export class GrokClient {
       if (hasErrors && failedEditPaths.length > 0) {
         instruction = [
           `EDIT FAILED on: ${failedEditPaths.join(', ')}`,
-          'You MUST <read path="..."/> the file before retrying.',
-          'Copy EXACT content from the <read> output — do not rely on memory.',
-          'Use correct line numbers shown in the <read> output for @@ hunk headers.',
+          'Copy EXACT content from the <read> output that you have on your context for the search.',
         ].join('\n');
       } else if (hasErrors) {
         instruction = 'ERROR DETECTED — fix it now.';

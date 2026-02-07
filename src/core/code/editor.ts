@@ -336,12 +336,11 @@ export class CodeEditor {
       if (idx === -1) {
         // Search block not found — provide context for retry
         const searchPreview = searchStr.split('\n').slice(0, 5).join('\n');
-        display.errorText(`Search block not found in ${filePath}`);
         return {
           success: false,
           status: 'no_match',
           path: filePath,
-          message: `Search block not found in ${filePath}.\nSearching for:\n${searchPreview}\n\nRe-read the file with <read path="${filePath}"/> and use the exact content from the file.`,
+          message: `Search block not found in ${filePath}.\nSearching for:\n${searchPreview}. Verify your search query.`,
         };
       }
 

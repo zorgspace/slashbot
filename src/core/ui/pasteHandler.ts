@@ -45,6 +45,7 @@ class PasteBuffer {
   private nextId = 1;
   private imageEntries: Map<number, string> = new Map();
   private nextImageId = 1;
+  private lastPaste: { content: string; lines: number } | null = null;
 
   /**
    * Store pasted content and return a placeholder
@@ -77,6 +78,9 @@ class PasteBuffer {
       // Find the oldest unused entry (FIFO order)
       for (const [id, content] of this.entries) {
         this.entries.delete(id);
+        // Save as lastPaste for persistent paste feature
+        const lines = content.split('\n').length;
+        this.lastPaste = { content, lines };
         return content;
       }
       return _match;
@@ -86,6 +90,9 @@ class PasteBuffer {
       const content = this.entries.get(id);
       if (content !== undefined) {
         this.entries.delete(id);
+        // Save as lastPaste for persistent paste feature
+        const lines = content.split('\n').length;
+        this.lastPaste = { content, lines };
         return content;
       }
       return match;
@@ -124,6 +131,29 @@ class PasteBuffer {
   clear(): void {
     this.entries.clear();
     this.imageEntries.clear();
+  }
+
+  /**
+   * Get the last expanded paste content (for persistent paste feature)
+   */
+  getLastPaste(): { content: string; lines: number } | null {
+    return this.lastPaste;
+  }
+
+  /**
+   * Clear the last paste (user pressed Escape or pasted new content)
+   */
+  clearLastPaste(): void {
+    this.lastPaste = null;
+  }
+
+  /**
+   * Get a summary string for the last paste, e.g. "[pasted: 50 lines]"
+   */
+  getLastPasteSummary(): string | null {
+    if (!this.lastPaste) return null;
+    const { lines } = this.lastPaste;
+    return `[pasted: ${lines} line${lines > 1 ? 's' : ''}]`;
   }
 }
 
@@ -312,6 +342,27 @@ export function storePaste(content: string): string {
  */
 export function clearPasteBuffer(): void {
   pasteBuffer.clear();
+}
+
+/**
+ * Get the last expanded paste (for persistent paste feature)
+ */
+export function getLastPaste(): { content: string; lines: number } | null {
+  return pasteBuffer.getLastPaste();
+}
+
+/**
+ * Clear the persistent last paste
+ */
+export function clearLastPaste(): void {
+  pasteBuffer.clearLastPaste();
+}
+
+/**
+ * Get summary string for the persistent last paste, e.g. "[pasted: 50 lines]"
+ */
+export function getLastPasteSummary(): string | null {
+  return pasteBuffer.getLastPasteSummary();
 }
 
 /**

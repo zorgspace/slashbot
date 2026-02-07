@@ -18,6 +18,7 @@ import { SessionPlugin } from './session';
 
 // Feature plugins
 import { ExplorePlugin } from './explore';
+import { PlanningPlugin } from './planning';
 import { SkillsPlugin } from './skills';
 import { SchedulingPlugin } from './scheduling';
 import { HeartbeatPlugin } from './heartbeat';
@@ -43,6 +44,7 @@ export function loadBuiltinPlugins(): Plugin[] {
 
     // Features
     new ExplorePlugin(),
+    new PlanningPlugin(),
     new SkillsPlugin(),
     new SchedulingPlugin(),
     new HeartbeatPlugin(),

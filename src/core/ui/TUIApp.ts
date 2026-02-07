@@ -28,6 +28,8 @@ import {
   disableBracketedPaste,
   storePaste,
   readImageFromClipboard,
+  getLastPasteSummary,
+  clearLastPaste,
 } from './pasteHandler';
 import { addImage, imageBuffer } from '../code/imageBuffer';
 import { spawn } from 'child_process';
@@ -297,12 +299,20 @@ export class TUIApp implements UIOutput {
           return;
         }
 
-        // Hide palette on Escape
+        // Hide palette on Escape, or clear persistent paste when input is empty
         if (key.name === 'escape') {
           if (this.commandPalette.isVisible()) {
             key.stopPropagation();
             key.preventDefault();
             this.commandPalette.hide();
+            return;
+          }
+          // Clear persistent paste when input is empty
+          if (!this.inputPanel.getValue().trim() && getLastPasteSummary()) {
+            key.stopPropagation();
+            key.preventDefault();
+            clearLastPaste();
+            this.inputPanel.setPlaceholder(this.inputPanel.getDefaultPlaceholder());
             return;
           }
         }
@@ -344,6 +354,9 @@ export class TUIApp implements UIOutput {
       if (!this.inputPanel.isFocused()) return;
       event.preventDefault();
       event.stopPropagation();
+      // New paste replaces any persistent paste
+      clearLastPaste();
+      this.inputPanel.setPlaceholder(this.inputPanel.getDefaultPlaceholder());
       const placeholder = storePaste(event.text);
       this.inputPanel.insertText(placeholder);
     });
@@ -392,6 +405,14 @@ export class TUIApp implements UIOutput {
 
   focusInput(): void {
     this.inputPanel.focus();
+  }
+
+  setInputPlaceholder(text: string): void {
+    this.inputPanel.setPlaceholder(text);
+  }
+
+  pushInputHistory(entry: string): void {
+    this.inputPanel.pushHistoryEntry(entry);
   }
 
   showSpinner(label: string = 'Thinking...'): void {

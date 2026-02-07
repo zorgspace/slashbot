@@ -21,6 +21,7 @@ export type SlashbotEvent =
   | { type: 'connector:connected'; source: ConnectorSource }
   | { type: 'connector:disconnected'; source: ConnectorSource }
   | { type: 'edit:applied'; filePath: string; beforeContent: string; afterContent: string }
+  | { type: 'plan:ready'; planPath: string }
   | { type: 'grok:initialized' }
   | { type: 'grok:disconnected' }
   | { type: 'prompt:redraw' };
