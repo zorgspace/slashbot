@@ -64,6 +64,8 @@ export class CommPanel {
       flexGrow: 1,
       paddingLeft: 1,
       paddingRight: 1,
+      stickyScroll: true,
+      stickyStart: 'bottom',
     });
 
     this.container.add(titleBar);
@@ -176,7 +178,6 @@ export class CommPanel {
       selectionFg: theme.white,
     });
     this.scrollBox.add(line);
-    this.scrollBox.scrollTo(Infinity);
 
     // Keep max 200 entries
     const children = this.scrollBox.getChildren();

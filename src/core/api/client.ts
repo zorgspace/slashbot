@@ -61,7 +61,6 @@ interface AgenticLoopOptions {
   hallucinationDetection: 'full' | 'basic';
   emptyResponseRetry: boolean;
   editTagDebug: boolean;
-  codeBlockRetry: boolean;
   continueActions: boolean;
   maxConsecutiveErrors?: number;
 }
@@ -438,30 +437,6 @@ export class GrokClient {
         }
       }
 
-      // Code-in-codeblock retry
-      if (opts.codeBlockRetry && actions.length === 0) {
-        const actionTagRegex = /<(bash|read|edit|write|glob|grep|explore)\b[^>]*>/gi;
-        const foundTags = responseContent.match(actionTagRegex);
-        if (foundTags && foundTags.length > 0) {
-          const inCodeBlock = foundTags.some(tag => {
-            const tagIndex = responseContent.indexOf(tag);
-            if (tagIndex === -1) return false;
-            const before = responseContent.slice(Math.max(0, tagIndex - 50), tagIndex);
-            const after = responseContent.slice(tagIndex + tag.length, tagIndex + tag.length + 10);
-            return (before.includes('`') && after.includes('`')) || before.includes('```');
-          });
-
-          if (inCodeBlock) {
-            this.sessionManager.history.push({ role: 'assistant', content: responseContent });
-            this.sessionManager.history.push({
-              role: 'user',
-              content:
-                'ERROR: Action tag inside code block. Write action tags directly WITHOUT backticks.',
-            });
-            continue;
-          }
-        }
-      }
 
       // Read tracking: update readFiles map from parsed actions
       for (const action of actions) {
@@ -820,7 +795,6 @@ export class GrokClient {
       hallucinationDetection: 'full',
       emptyResponseRetry: true,
       editTagDebug: true,
-      codeBlockRetry: true,
       continueActions: true,
     });
 
@@ -908,7 +882,6 @@ export class GrokClient {
       hallucinationDetection: 'basic',
       emptyResponseRetry: false,
       editTagDebug: false,
-      codeBlockRetry: false,
       continueActions: false,
       maxConsecutiveErrors: AGENTIC.MAX_CONSECUTIVE_ERRORS,
     });

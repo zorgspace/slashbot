@@ -33,6 +33,16 @@ export class FilesystemPlugin implements Plugin {
     for (const config of getFilesystemParserConfigs()) {
       registerActionParser(config);
     }
+
+    // Wire EventBus into CodeEditor for edit:applied events
+    try {
+      const { TYPES } = require('../../core/di/types');
+      const codeEditor = context.container.get<any>(TYPES.CodeEditor);
+      const eventBus = context.container.get<any>(TYPES.EventBus);
+      codeEditor.setEventBus(eventBus);
+    } catch {
+      // EventBus or CodeEditor not yet bound
+    }
   }
 
   getActionContributions(): ActionContribution[] {

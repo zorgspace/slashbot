@@ -20,6 +20,7 @@ export type SlashbotEvent =
   | { type: 'connector:response'; source: ConnectorSource; response: string }
   | { type: 'connector:connected'; source: ConnectorSource }
   | { type: 'connector:disconnected'; source: ConnectorSource }
+  | { type: 'edit:applied'; filePath: string; beforeContent: string; afterContent: string }
   | { type: 'grok:initialized' }
   | { type: 'grok:disconnected' }
   | { type: 'prompt:redraw' };

@@ -92,7 +92,12 @@ export const clearCommand: CommandHandler = {
   group: 'System',
   execute: async (_, context) => {
     context.grokClient?.clearHistory();
-    console.clear();
+    if (context.tuiApp) {
+      context.tuiApp.clearChat();
+      context.tuiApp.clearDiffPanel();
+    } else {
+      console.clear();
+    }
     display.successText('Conversation history cleared');
     return true;
   },

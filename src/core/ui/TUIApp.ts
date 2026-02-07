@@ -19,6 +19,7 @@ import type { HeaderOptions } from './panels/HeaderPanel';
 import { HeaderPanel } from './panels/HeaderPanel';
 import { ChatPanel } from './panels/ChatPanel';
 import { CommPanel } from './panels/CommPanel';
+import { DiffPanel } from './panels/DiffPanel';
 import { CommandPalettePanel } from './panels/CommandPalettePanel';
 import { InputPanel } from './panels/InputPanel';
 import { ModelSelectModal } from './panels/ModelSelectModal';
@@ -60,6 +61,7 @@ export class TUIApp implements UIOutput {
   private headerPanel!: HeaderPanel;
   private chatPanel!: ChatPanel;
   private commPanel!: CommPanel;
+  private diffPanel!: DiffPanel;
   private commandPalette!: CommandPalettePanel;
   private inputPanel!: InputPanel;
   private modelSelectModal!: ModelSelectModal;
@@ -106,9 +108,16 @@ export class TUIApp implements UIOutput {
     this.headerPanel = new HeaderPanel(this.renderer);
     root.add(this.headerPanel.getRenderable());
 
-    // Content column: chat + comm panel
-    const contentColumn = new BoxRenderable(this.renderer, {
-      id: 'content-column',
+    // Content row: left column (chat + comm) + right diff panel
+    const contentRow = new BoxRenderable(this.renderer, {
+      id: 'content-row',
+      flexDirection: 'row',
+      flexGrow: 1,
+    });
+
+    // Left column: chat + comm panel
+    const leftColumn = new BoxRenderable(this.renderer, {
+      id: 'left-column',
       flexDirection: 'column',
       flexGrow: 1,
       justifyContent: 'flex-end',
@@ -116,13 +125,19 @@ export class TUIApp implements UIOutput {
 
     // Chat panel
     this.chatPanel = new ChatPanel(this.renderer);
-    contentColumn.add(this.chatPanel.getRenderable());
+    leftColumn.add(this.chatPanel.getRenderable());
 
     // Communication log panel (hidden by default, Ctrl+T to toggle)
     this.commPanel = new CommPanel(this.renderer);
-    contentColumn.add(this.commPanel.getRenderable());
+    leftColumn.add(this.commPanel.getRenderable());
 
-    root.add(contentColumn);
+    contentRow.add(leftColumn);
+
+    // Diff panel (right side, hidden by default, Ctrl+D to toggle)
+    this.diffPanel = new DiffPanel(this.renderer);
+    contentRow.add(this.diffPanel.getRenderable());
+
+    root.add(contentRow);
 
     // Command palette (hidden by default, shown on Tab with '/')
     this.commandPalette = new CommandPalettePanel(this.renderer);
@@ -214,6 +229,14 @@ export class TUIApp implements UIOutput {
         key.stopPropagation();
         key.preventDefault();
         this.commPanel.toggle();
+        return;
+      }
+
+      // Ctrl+D - toggle diff panel
+      if (key.ctrl && key.name === 'd' && !key.shift) {
+        key.stopPropagation();
+        key.preventDefault();
+        this.diffPanel.toggle();
         return;
       }
 
@@ -430,6 +453,20 @@ export class TUIApp implements UIOutput {
         this.inputPanel.focus();
       },
     );
+  }
+
+  // --- Diff panel methods ---
+
+  addDiffEntry(filePath: string, before: string, after: string): void {
+    this.diffPanel.addDiff(filePath, before, after);
+  }
+
+  clearDiffPanel(): void {
+    this.diffPanel.clear();
+  }
+
+  clearChat(): void {
+    this.chatPanel.clear();
   }
 
   destroy(): void {

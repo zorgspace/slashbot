@@ -54,7 +54,7 @@ export class ChatPanel {
     this.scrollBox = new ScrollBoxRenderable(renderer, {
       id: 'chat-scroll',
       flexGrow: 1,
-      stickyScroll: false,
+      stickyScroll: true,
       stickyStart: 'bottom',
     });
 
@@ -198,7 +198,6 @@ export class ChatPanel {
   private updateSpinnerFrame(label: string): void {
     const frame = SPINNER_FRAMES[this.spinnerFrame];
     this.spinnerText.content = t`${fg(theme.violetLight)(frame + ' ' + label)}`;
-    this.scrollBox.scrollTo(Infinity);
   }
 
   private addLine(content: StyledText | string): void {

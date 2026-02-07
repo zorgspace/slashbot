@@ -11,6 +11,7 @@ import { promises as fsPromises } from 'fs';
 import type { EditResult, GrepOptions } from '../actions/types';
 import { EXCLUDED_DIRS, EXCLUDED_FILES } from '../config/constants';
 import { merge3 } from './diff3';
+import type { EventBus } from '../events/EventBus';
 
 export interface SearchResult {
   file: string;
@@ -28,9 +29,14 @@ export class CodeEditor {
   private workDir: string;
   /** Snapshots stored at read time: path → content */
   private snapshots: Map<string, string> = new Map();
+  private eventBus?: EventBus;
 
   constructor(workDir: string = process.cwd()) {
     this.workDir = workDir;
+  }
+
+  setEventBus(eventBus: EventBus): void {
+    this.eventBus = eventBus;
   }
 
   async init(): Promise<void> {
@@ -238,6 +244,7 @@ export class CodeEditor {
       await fsPromises.writeFile(fullPath, newContent, 'utf8');
       // Update snapshot to new content
       this.snapshots.set(fullPath, newContent);
+      this.emitEditApplied(filePath, currentContent, newContent);
       display.successText(`Modified: ${filePath}`);
       return {
         success: true,
@@ -269,6 +276,7 @@ export class CodeEditor {
 
       await fsPromises.writeFile(fullPath, mergedContent, 'utf8');
       this.snapshots.set(fullPath, mergedContent);
+      this.emitEditApplied(filePath, currentContent, mergedContent);
       display.warningText(`Merged (file changed since read): ${filePath}`);
       return {
         success: true,
@@ -282,6 +290,7 @@ export class CodeEditor {
     const mergedContent = result.merged.join('\n');
     await fsPromises.writeFile(fullPath, mergedContent, 'utf8');
     this.snapshots.set(fullPath, mergedContent);
+    this.emitEditApplied(filePath, currentContent, mergedContent);
     display.warningText(`Applied with ${result.conflictCount} conflict(s): ${filePath}`);
     return {
       success: true,
@@ -360,6 +369,7 @@ export class CodeEditor {
     await fsPromises.writeFile(fullPath, content, 'utf8');
     // Update snapshot
     this.snapshots.set(fullPath, content);
+    this.emitEditApplied(filePath, currentContent, content);
     display.successText(`Modified: ${filePath}`);
     return {
       success: true,
@@ -433,6 +443,10 @@ export class CodeEditor {
     }
 
     return content;
+  }
+
+  private emitEditApplied(filePath: string, beforeContent: string, afterContent: string): void {
+    this.eventBus?.emit({ type: 'edit:applied', filePath, beforeContent, afterContent });
   }
 
   async createFile(filePath: string, content: string): Promise<boolean> {
