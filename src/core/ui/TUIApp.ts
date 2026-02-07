@@ -28,6 +28,31 @@ import {
   readImageFromClipboard,
 } from './pasteHandler';
 import { addImage, imageBuffer } from '../code/imageBuffer';
+import { spawn } from 'child_process';
+
+/**
+ * Copy text to system clipboard using available tool (xclip, xsel, wl-copy, pbcopy)
+ */
+function copyToClipboard(text: string): void {
+  const tools = [
+    { cmd: 'xclip', args: ['-selection', 'clipboard'] },
+    { cmd: 'xsel', args: ['--clipboard', '--input'] },
+    { cmd: 'wl-copy', args: [] },
+    { cmd: 'pbcopy', args: [] },
+  ];
+
+  for (const tool of tools) {
+    try {
+      const proc = spawn(tool.cmd, tool.args, { stdio: ['pipe', 'ignore', 'ignore'] });
+      proc.stdin.write(text);
+      proc.stdin.end();
+      proc.on('error', () => {});
+      return;
+    } catch {
+      continue;
+    }
+  }
+}
 
 export class TUIApp implements UIOutput {
   private renderer!: CliRenderer;
@@ -131,13 +156,15 @@ export class TUIApp implements UIOutput {
 
     // Click anywhere: middle-click pastes last selection, right-click copies selection, any click focuses input
     root.onMouseDown = event => {
-      // Right-click: copy selected text to clipboard
+      // Right-click: copy selected text to system clipboard with visual blink
       if (event.button === 2) {
         event.preventDefault();
         event.stopPropagation();
         if (this.lastSelectedText) {
-          this.renderer.copyToClipboardOSC52(this.lastSelectedText);
-          this.renderer.copyToClipboardOSC52(this.lastSelectedText, 1);
+          copyToClipboard(this.lastSelectedText);
+          // Flash background to confirm copy
+          this.renderer.setBackgroundColor(theme.violetDark);
+          setTimeout(() => this.renderer.setBackgroundColor(theme.bg), 120);
         }
         return;
       }

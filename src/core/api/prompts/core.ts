@@ -22,6 +22,7 @@ export const CORE_PROMPT = [
   '- XML tags to EXECUTE, ``` code blocks to DOCUMENT. Tags must be complete.',
   '- ALL user-facing responses use `<say>message</say>` — never raw text outside tags.',
   '- For general knowledge questions (weather, trivia, chat, etc.), answer directly with `<say>` — do NOT use filesystem, code, or bash tools.',
+  '- NEVER hallucinate command output. When a user asks to run a command (git, npm, etc.), ALWAYS execute it with `<exec>` and report the real output. Never guess or fabricate results.',
   '- Be concise. Reference code as `file_path:line_number`.',
   '',
   '# Workflow',

@@ -121,20 +121,27 @@ class DisplayService {
     }
   }
 
-  bash(command: string, output?: string): void {
-    this._stepAction('Exec', command, output);
+  bash(command: string, _output?: string): void {
+    this.newline();
+    this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)('Exec')}(${command})`);
   }
 
   bashResult(_command: string, output: string, exitCode = 0): void {
     const isError = exitCode !== 0 || output.startsWith('Error:');
-    const isSuccess =
-      output.includes('No errors') || output.includes('success') || output.includes('✓');
+    const clean = this.stripAnsi(output);
+    const lines = clean.split('\n').filter(l => l.trim());
+    const preview = lines.slice(0, 3);
+    const more = lines.length > 3 ? `  ... ${lines.length - 3} more lines` : '';
+    if (preview.length > 0) {
+      for (const line of preview) {
+        this.appendStyled(t`  ${fg(theme.white)(line)}`);
+      }
+      if (more) this.appendStyled(t`${fg(theme.muted)(more)}`);
+    }
     if (isError) {
-      this.appendStyled(t`  ${fg(theme.error)('⎿  Exit code ' + exitCode)}`);
-    } else if (isSuccess) {
-      this.appendStyled(t`  ${fg(theme.success)('⎿  ✓ Done')}`);
+      this.appendStyled(t`  ${fg(theme.error)('⎿  ✗ Failed (exit ' + exitCode + ')')}`);
     } else {
-      this.appendStyled(t`  ${fg(theme.white)('⎿  Done')}`);
+      this.appendStyled(t`  ${fg(theme.success)('⎿  ✓ Done')}`);
     }
   }
 
