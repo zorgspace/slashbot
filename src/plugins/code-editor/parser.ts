@@ -95,24 +95,5 @@ export function getCodeEditorParserConfigs(): ActionParserConfig[] {
         return actions;
       },
     },
-    // Format action
-    {
-      tags: ['format'],
-      selfClosingTags: ['format'],
-      parse(content, { extractAttr }): Action[] {
-        const actions: Action[] = [];
-        const regex = /<format(?:\s+[^>]*)?\s*\/?>/gi;
-        let match;
-        while ((match = regex.exec(content)) !== null) {
-          const fullTag = match[0];
-          const path = extractAttr(fullTag, 'path');
-          actions.push({
-            type: 'format',
-            path: path || undefined,
-          } as Action);
-        }
-        return actions;
-      },
-    },
   ];
 }

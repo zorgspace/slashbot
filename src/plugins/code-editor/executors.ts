@@ -1,9 +1,9 @@
 /**
- * Search & Quality Action Handlers - Glob, Grep, LS, Format operations
+ * Search & Quality Action Handlers - Glob, Grep, LS operations
  */
 
 import type { ActionResult, ActionHandlers, GrepOptions } from '../../core/actions/types';
-import type { GlobAction, GrepAction, LSAction, FormatAction } from './types';
+import type { GlobAction, GrepAction, LSAction } from './types';
 import { display } from '../../core/ui';
 
 export async function executeGlob(
@@ -120,36 +120,6 @@ export async function executeLS(
     display.error(`LS failed: ${errorMsg}`);
     return {
       action: `LS: ${action.path}`,
-      success: false,
-      result: 'Failed',
-      error: errorMsg,
-    };
-  }
-}
-
-export async function executeFormat(
-  action: FormatAction,
-  handlers: ActionHandlers,
-): Promise<ActionResult | null> {
-  if (!handlers.onFormat) return null;
-
-  const pathInfo = action.path ? `(${action.path})` : '';
-  display.tool('Format', pathInfo);
-
-  try {
-    const output = await handlers.onFormat(action.path);
-    display.result(output || 'Formatted');
-
-    return {
-      action: 'Format',
-      success: true,
-      result: output || 'OK',
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Format failed: ${errorMsg}`);
-    return {
-      action: 'Format',
       success: false,
       result: 'Failed',
       error: errorMsg,

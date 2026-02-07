@@ -1,5 +1,5 @@
 /**
- * Core Code Editor Plugin - Search & navigation (grep, glob, ls, format)
+ * Core Code Editor Plugin - Search & navigation (grep, glob, ls)
  */
 
 import type {
@@ -11,7 +11,7 @@ import type {
 } from '../types';
 import type { CommandHandler } from '../../core/commands/registry';
 import { registerActionParser } from '../../core/actions/parser';
-import { executeGlob, executeGrep, executeLS, executeFormat } from './executors';
+import { executeGlob, executeGrep, executeLS } from './executors';
 import { getCodeEditorParserConfigs } from './parser';
 import { codeEditorCommands } from './commands';
 import { CODE_EDITOR_PROMPT } from './prompt';
@@ -22,7 +22,7 @@ export class CodeEditorPlugin implements Plugin {
     name: 'Code Editor',
     version: '1.0.0',
     category: 'core',
-    description: 'Search & navigation (glob, grep, ls, format)',
+    description: 'Search & navigation (glob, grep, ls)',
   };
 
   private context!: PluginContext;
@@ -111,30 +111,6 @@ export class CodeEditorPlugin implements Plugin {
           },
         },
         execute: executeLS,
-      },
-      {
-        type: 'format',
-        tagName: 'format',
-        handler: {
-          onFormat: async (path?: string) => {
-            const codeEditor = getCodeEditor();
-            const workDir = codeEditor.getWorkDir();
-            try {
-              const { exec } = await import('child_process');
-              const { promisify } = await import('util');
-              const execAsync = promisify(exec);
-              const target = path || '.';
-              const { stdout, stderr } = await execAsync(`npx prettier --write "${target}"`, {
-                cwd: workDir,
-                timeout: 30000,
-              });
-              return stdout || stderr || 'Formatted';
-            } catch (error: any) {
-              return `Error: ${error.message || error}`;
-            }
-          },
-        },
-        execute: executeFormat,
       },
     ];
   }

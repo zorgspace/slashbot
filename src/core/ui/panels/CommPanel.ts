@@ -98,8 +98,7 @@ export class CommPanel {
    * Log an outgoing prompt (CLI or connector)
    */
   logPrompt(text: string): void {
-    const preview = text.length > 200 ? text.slice(0, 200) + '...' : text;
-    this.addEntry(t`${bold(fg(theme.green)('\u2192'))} ${fg(theme.white)(preview)}`);
+    this.addEntry(t`${bold(fg(theme.green)('\u2192'))} ${fg(theme.white)(text)}`);
   }
 
   /**
@@ -116,19 +115,13 @@ export class CommPanel {
     if (this.thinkingBuffer) {
       const fullThinking = this.thinkingBuffer.trim();
       if (fullThinking) {
-        const preview =
-          fullThinking.length > 300 ? fullThinking.slice(0, 300) + '...' : fullThinking;
-        this.addEntry(t`${dim(fg(theme.violetLight)('\u{1F4AD} ' + preview))}`);
+        this.addEntry(t`${dim(fg(theme.violetLight)('\u{1F4AD} ' + fullThinking))}`);
       }
       this.thinkingBuffer = '';
     }
 
     if (this.responseBuffer) {
-      const preview =
-        this.responseBuffer.length > 300
-          ? this.responseBuffer.slice(0, 300) + '...'
-          : this.responseBuffer;
-      this.addEntry(t`${fg(theme.muted)('\u2190')} ${dim(fg(theme.white)(preview.trim()))}`);
+      this.addEntry(t`${fg(theme.muted)('\u2190')} ${dim(fg(theme.white)(this.responseBuffer.trim()))}`);
       this.responseBuffer = '';
     }
   }
@@ -151,10 +144,9 @@ export class CommPanel {
    * Log a connector message (incoming from Telegram/Discord)
    */
   logConnectorIn(source: string, message: string): void {
-    const preview = message.length > 200 ? message.slice(0, 200) + '...' : message;
     const label = source.charAt(0).toUpperCase() + source.slice(1);
     this.addEntry(
-      t`${bold(fg(theme.violet)('\u2192'))} ${dim(fg(theme.muted)('[' + label + ']'))} ${fg(theme.white)(preview)}`,
+      t`${bold(fg(theme.violet)('\u2192'))} ${dim(fg(theme.muted)('[' + label + ']'))} ${fg(theme.white)(message)}`,
     );
   }
 
@@ -162,10 +154,9 @@ export class CommPanel {
    * Log a connector response (outgoing to Telegram/Discord)
    */
   logConnectorOut(source: string, response: string): void {
-    const preview = response.length > 200 ? response.slice(0, 200) + '...' : response;
     const label = source.charAt(0).toUpperCase() + source.slice(1);
     this.addEntry(
-      t`${fg(theme.muted)('\u2190')} ${dim(fg(theme.muted)('[' + label + ']'))} ${dim(fg(theme.white)(preview))}`,
+      t`${fg(theme.muted)('\u2190')} ${dim(fg(theme.muted)('[' + label + ']'))} ${dim(fg(theme.white)(response))}`,
     );
   }
 
@@ -181,7 +172,6 @@ export class CommPanel {
     const line = new TextRenderable(this.renderer, {
       id: `comm-line-${this.lineCounter}`,
       content,
-      height: 1,
       selectionBg: theme.violetDark,
       selectionFg: theme.white,
     });

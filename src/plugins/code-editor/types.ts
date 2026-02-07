@@ -24,8 +24,3 @@ export interface LSAction {
   path: string;
   ignore?: string[];
 }
-
-export interface FormatAction {
-  type: 'format';
-  path?: string;
-}

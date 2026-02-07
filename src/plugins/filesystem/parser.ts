@@ -6,6 +6,11 @@ import type { Action } from '../../core/actions/types';
 const Q = `["']`;
 const NQR = `[^"']+`;
 
+/** Decode HTML entities that LLM APIs may produce inside XML tag content */
+function decodeEntities(s: string): string {
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
 export function getFilesystemParserConfigs(): ActionParserConfig[] {
   return [
     // Read action (post-strip)
@@ -60,7 +65,7 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
 
         while ((outerMatch = outerRegex.exec(content)) !== null) {
           const path = outerMatch[1];
-          const innerContent = outerMatch[2];
+          const innerContent = decodeEntities(outerMatch[2]);
 
           // Find all hunk headers: @@ -startLine,count @@
           const hunkRegex = /@@ -(\d+),(\d+)(?:\s+\+\d+(?:,\d+)?)? @@/g;
@@ -159,7 +164,7 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
           actions.push({
             type: 'write',
             path,
-            content: fileContent.trim(),
+            content: decodeEntities(fileContent.trim()),
           } as Action);
         }
         return actions;
@@ -181,7 +186,7 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
           actions.push({
             type: 'create',
             path,
-            content: fileContent.trim(),
+            content: decodeEntities(fileContent.trim()),
           } as Action);
         }
         return actions;

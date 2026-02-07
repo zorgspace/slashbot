@@ -12,7 +12,6 @@ Depths: quick|medium(default)|deep|comprehensive. Use before grep for broad disc
 
 ## Glob — \`<glob pattern="**/*.ts"/>\` \`<glob pattern="*.json" path="src"/>\`
 ## LS — \`<ls path="src"/>\` \`<ls path="." ignore="node_modules,dist"/>\`
-## Format — \`<format path="file.ts"/>\` — Run after edits to verify syntax. Fix ALL errors before \`<end>\`.
 
-**Workflow:** \`<explore/grep>\` → \`<read>\` → \`<edit>\` → \`<format path="file"/>\` → fix errors → \`<end>\`.
-**Tips:** Use grep/read to verify that APIs, imports, and types exist before using them. Fix ALL format errors before \`<end>\`.`;
+**Workflow:** \`<explore/grep>\` → \`<read>\` → \`<edit>\` → \`<end>\`.
+**Tips:** Use grep/read to verify that APIs, imports, and types exist before using them.`;

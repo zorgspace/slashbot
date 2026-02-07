@@ -9,7 +9,7 @@ import {
   hasImages as hasImagesInBuffer,
   clearImages,
 } from '../code/imageBuffer';
-import { parseActions, executeActions, type ActionHandlers } from '../actions';
+import { parseActions, executeActions, type ActionHandlers, type ActionResult } from '../actions';
 import { cleanXmlTags, cleanSelfDialogue } from '../utils/xml';
 import { getRegisteredTags } from '../utils/tagRegistry';
 import { GROK_CONFIG, AGENTIC } from '../config/constants';
@@ -284,7 +284,14 @@ export class GrokClient {
     let iteration = 0;
     let isFirstIteration = true;
     let consecutiveErrors = 0;
+    let truncatedContent = '';
     const startTime = Date.now();
+
+    // Edit safety guards
+    const unresolvedEditPaths = new Set<string>();
+    let blockedEndCount = 0;
+    const MAX_BLOCKED_ENDS = 2;
+    const readFiles = new Map<string, 'full' | 'partial'>();
 
     while (true) {
       iteration++;
@@ -312,6 +319,7 @@ export class GrokClient {
 
       let responseContent: string;
       let thinkingContent: string;
+      let finishReason: string | null = null;
 
       try {
         const result = await this.streamResponse({
@@ -323,6 +331,7 @@ export class GrokClient {
         isFirstIteration = false;
         responseContent = result.content;
         thinkingContent = result.thinking;
+        finishReason = result.finishReason;
 
         if (opts.displayStream) {
           responseContent = responseContent.replace(/``/g, '');
@@ -350,6 +359,7 @@ export class GrokClient {
             const result = await this.streamResponse({ displayStream: opts.displayStream });
             responseContent = result.content;
             thinkingContent = result.thinking;
+            finishReason = result.finishReason;
           } catch (retryError: any) {
             display.errorText(`[API Error after condensation] ${retryError.message || retryError}`);
             throw retryError;
@@ -364,12 +374,36 @@ export class GrokClient {
         }
       }
 
+      // Merge with previously truncated content
+      if (truncatedContent) {
+        responseContent = truncatedContent + responseContent;
+        truncatedContent = '';
+      }
+
       finalResponse = responseContent;
       finalThinking += thinkingContent;
 
       // Clear images after first API call
       if (messageHasImages && hasImagesInBuffer()) {
         clearImages();
+      }
+
+      // Auto-continue on truncated edit/write (regardless of finish_reason)
+      const hasUnclosedEdit = /<edit\b[^>]*>/i.test(responseContent) && !/<\/edit>/i.test(responseContent);
+      const hasUnclosedWrite = /<write\b[^>]*>/i.test(responseContent) && !/<\/write>/i.test(responseContent);
+      if (hasUnclosedEdit || hasUnclosedWrite) {
+        const tag = hasUnclosedEdit ? 'edit' : 'write';
+        display.warningText(`[Truncated] Response cut off mid-<${tag}> — auto-continuing...`);
+        truncatedContent = responseContent;
+        this.sessionManager.history.push({ role: 'assistant', content: responseContent });
+        this.sessionManager.history.push({
+          role: 'user',
+          content: `Your response was truncated mid-<${tag}> block (output token limit reached). Continue EXACTLY where you left off — output only the remaining content to complete the <${tag}> block and close it with </${tag}>.`,
+        });
+        continue;
+      }
+      if (finishReason === 'length') {
+        display.muted(`[finish_reason: length] Response may be truncated`);
       }
 
       // Parse actions
@@ -382,14 +416,21 @@ export class GrokClient {
         const hasEditAction = actions.some(a => a.type === 'edit');
         if (hasEditTags && !hasEditAction) {
           display.warningText('[DEBUG] Edit tag detected but not parsed:');
-          display.muted('--- Raw response containing edit tags (FULL) ---');
           const editStart = responseContent.indexOf('<edit');
           const editEnd = responseContent.lastIndexOf('</edit>');
-          if (editStart !== -1 && editEnd !== -1) {
-            const editPortion = responseContent.slice(editStart, editEnd + 7);
-            display.append(editPortion);
-          } else {
-            display.append(responseContent);
+          const hasClosingTag = editEnd !== -1 && editEnd > editStart;
+          const portion =
+            editStart !== -1 && hasClosingTag
+              ? responseContent.slice(editStart, editEnd + 7)
+              : editStart !== -1
+                ? responseContent.slice(editStart)
+                : responseContent;
+          if (!hasClosingTag) {
+            display.warningText('[DEBUG] Missing </edit> closing tag — response may be truncated');
+          }
+          display.muted('--- Raw edit block ---');
+          for (const line of portion.split('\n')) {
+            display.append(line);
           }
           display.muted('--- End debug ---');
         }
@@ -420,7 +461,62 @@ export class GrokClient {
         }
       }
 
-      const actionResults = await executeActions(actions, this.actionHandlers);
+      // Read tracking: update readFiles map from parsed actions
+      for (const action of actions) {
+        if (action.type === 'read') {
+          const path = (action as { path?: string }).path;
+          if (path) {
+            const hasOffset = (action as { offset?: number }).offset !== undefined;
+            const hasLimit = (action as { limit?: number }).limit !== undefined;
+            const coverage = hasOffset || hasLimit ? 'partial' : 'full';
+            // Never downgrade full → partial
+            if (readFiles.get(path) !== 'full') {
+              readFiles.set(path, coverage);
+            }
+          }
+        }
+      }
+
+      // Edit validation: reject edits on files not fully read
+      const syntheticResults: ActionResult[] = [];
+      const filteredActions = actions.filter(action => {
+        if (action.type === 'edit') {
+          const path = (action as { path?: string }).path;
+          if (path && readFiles.get(path) !== 'full') {
+            const wasPartial = readFiles.get(path) === 'partial';
+            syntheticResults.push({
+              action: `Edit: ${path}`,
+              success: false,
+              result: 'Blocked',
+              error: wasPartial
+                ? `Cannot edit ${path} — you only read part of this file. Use <read path="${path}"/> (without offset/limit) to read the entire file first, then retry the edit.`
+                : `Cannot edit ${path} — you have not read this file yet. Use <read path="${path}"/> first, then retry the edit using the exact content and line numbers from the <read> output.`,
+            });
+            return false;
+          }
+        }
+        return true;
+      });
+
+      const executedResults = await executeActions(filteredActions, this.actionHandlers);
+      const actionResults = [...syntheticResults, ...executedResults];
+
+      // Track unresolved edit failures
+      for (const r of actionResults) {
+        const action = String(r.action ?? '');
+        if (action.startsWith('Edit:')) {
+          const path = action.replace(/^Edit:\s*/, '').trim();
+          if (r.success) {
+            unresolvedEditPaths.delete(path);
+          } else {
+            unresolvedEditPaths.add(path);
+            readFiles.delete(path);
+          }
+        } else if (action.startsWith('Write:') && r.success) {
+          const path = action.replace(/^Write:\s*/, '').trim();
+          unresolvedEditPaths.delete(path);
+        }
+      }
 
       // Continue action support
       if (opts.continueActions) {
@@ -442,9 +538,28 @@ export class GrokClient {
         break;
       }
 
-      // End action: display final message and stop the loop
+      // End action: block if unresolved edit failures remain
       const endResult = actionResults.find(r => r.action === 'End');
       if (endResult) {
+        if (unresolvedEditPaths.size > 0 && blockedEndCount < MAX_BLOCKED_ENDS) {
+          blockedEndCount++;
+          const failedList = Array.from(unresolvedEditPaths).join(', ');
+          this.sessionManager.history.push({ role: 'assistant', content: responseContent });
+          this.sessionManager.history.push({
+            role: 'user',
+            content: [
+              `BLOCKED: You cannot finish — the following files have unresolved edit failures: ${failedList}`,
+              '',
+              'You MUST either:',
+              '1. Re-read each failed file with <read path="..."/>, then retry the edit using EXACT content and line numbers from the <read> output',
+              '2. Use <write> to overwrite the file if the edit is too complex',
+              '3. Honestly acknowledge in your <end> message that the edit could not be applied',
+              '',
+              'Do NOT claim success when edits have failed.',
+            ].join('\n'),
+          });
+          continue;
+        }
         if (endResult.result) {
           display.sayResult(endResult.result);
         }
@@ -641,15 +756,28 @@ export class GrokClient {
 
       // Build continuation prompt
       const hasErrors = actionResults.some(r => !r.success);
+      const failedEditPaths = actionResults
+        .filter(r => !r.success && String(r.action ?? '').startsWith('Edit:'))
+        .map(r => String(r.action ?? '').replace(/^Edit:\s*/, '').trim());
 
       const iterationWarning =
         iteration >= 15
           ? `\n[WARNING] ${iteration} iterations. Use <continue/> or <end> to finish.`
           : '';
 
-      const instruction = hasErrors
-        ? 'ERROR DETECTED — fix it now.'
-        : 'Continue or <end> to finish.';
+      let instruction: string;
+      if (hasErrors && failedEditPaths.length > 0) {
+        instruction = [
+          `EDIT FAILED on: ${failedEditPaths.join(', ')}`,
+          'You MUST <read path="..."/> the file before retrying.',
+          'Copy EXACT content from the <read> output — do not rely on memory.',
+          'Use correct line numbers shown in the <read> output for @@ hunk headers.',
+        ].join('\n');
+      } else if (hasErrors) {
+        instruction = 'ERROR DETECTED — fix it now.';
+      } else {
+        instruction = 'Continue or <end> to finish.';
+      }
 
       const continuationPrompt = `${compressedResults}${fileContext}${iterationWarning}\n${instruction}`;
 
@@ -816,7 +944,7 @@ export class GrokClient {
     displayStream?: boolean;
     timeout?: number;
     thinkingLabel?: string;
-  }): Promise<{ content: string; thinking: string }> {
+  }): Promise<{ content: string; thinking: string; finishReason: string | null }> {
     const showThinking = options?.showThinking ?? true;
     const displayStream = options?.displayStream ?? true;
     const timeout = options?.timeout;
@@ -842,6 +970,7 @@ export class GrokClient {
     let thinkingContent = '';
     let displayedContent = '';
     let buffer = '';
+    let finishReason: string | null = null;
     this.thinkingActive = true;
     let firstChunk = true;
     let thinkingStreamStarted = false;
@@ -931,8 +1060,13 @@ export class GrokClient {
               this.authProvider.onStreamChunk(parsed);
             }
 
-            const delta = parsed.choices?.[0]?.delta;
+            const choice = parsed.choices?.[0];
+            const delta = choice?.delta;
             const content = delta?.content;
+
+            if (choice?.finish_reason) {
+              finishReason = choice.finish_reason;
+            }
 
             if (parsed.usage) {
               this.usage.promptTokens += parsed.usage.prompt_tokens || 0;
@@ -1029,7 +1163,7 @@ export class GrokClient {
       display.warningText('[Model produced thinking but no response - may need to retry]');
     }
 
-    return { content: responseContent, thinking: thinkingContent };
+    return { content: responseContent, thinking: thinkingContent, finishReason };
   }
 
   // ===== Usage tracking =====

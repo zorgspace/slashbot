@@ -208,8 +208,8 @@ export class CodeEditor {
 
         if (matchIdx === -1) {
           // Content not found — provide detailed error so LLM can retry
-          const showStart = Math.max(0, preferredIdx - 2);
-          const showEnd = Math.min(lines.length, preferredIdx + expectedLines.length + 2);
+          const showStart = Math.max(0, preferredIdx - 5);
+          const showEnd = Math.min(lines.length, preferredIdx + expectedLines.length + 5);
           const actualSnippet = lines
             .slice(showStart, showEnd)
             .map((l, i) => `  ${showStart + i + 1}│${l}`)

@@ -128,7 +128,7 @@ export async function executeEdit(
         ? 'Skipped (already applied)'
         : result.success
           ? 'OK'
-          : 'Failed',
+          : (result.message || 'Failed'),
     error: result.success ? undefined : errorMsg,
   };
 }
