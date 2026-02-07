@@ -10,8 +10,8 @@
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build --compile --minify src/index.ts --external '@opentui/core-*' --outfile dist/slashbot",
-    "install-global": "bun run build && sudo cp dist/slashbot /usr/local/bin/slashbot",
+    "build": "bun build --compile --minify src/index.ts --external '@opentui/core-*' --outfile dist/slashbot && mkdir -p dist/node_modules/@opentui && cp -r node_modules/@opentui/core-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/') dist/node_modules/@opentui/",
+    "install-global": "bun run build && sudo mkdir -p /usr/local/lib/slashbot/node_modules/@opentui && sudo cp dist/slashbot /usr/local/lib/slashbot/slashbot && sudo cp -r dist/node_modules/@opentui/* /usr/local/lib/slashbot/node_modules/@opentui/ && sudo ln -sf /usr/local/lib/slashbot/slashbot /usr/local/bin/slashbot",
     "start": "./dist/slashbot",
     "tsc": "tsc",
     "typecheck": "tsc --noEmit -p tsconfig.json",
