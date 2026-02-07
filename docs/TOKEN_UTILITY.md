@@ -8,14 +8,14 @@ $SLASHBOT is an SPL token on Solana that lets users pay for Grok API calls throu
 
 ## Token Details
 
-| Property         | Value                                              |
-| ---------------- | -------------------------------------------------- |
-| **Name**         | SLASHBOT                                           |
-| **Chain**        | Solana                                             |
-| **Standard**     | SPL Token                                          |
-| **Decimals**     | 9                                                  |
-| **Mint Address** | `AtiFyHm6UMNLXCWJGLqhxSwvr3n3MgFKxppkKWUoBAGS`   |
-| **Treasury**     | `DVGjCZVJ3jMw8gsHAQjuYFMj8xQJyVf17qKrciYCS9u7`   |
+| Property         | Value                                          |
+| ---------------- | ---------------------------------------------- |
+| **Name**         | SLASHBOT                                       |
+| **Chain**        | Solana                                         |
+| **Standard**     | SPL Token                                      |
+| **Decimals**     | 9                                              |
+| **Mint Address** | `AtiFyHm6UMNLXCWJGLqhxSwvr3n3MgFKxppkKWUoBAGS` |
+| **Treasury**     | `DVGjCZVJ3jMw8gsHAQjuYFMj8xQJyVf17qKrciYCS9u7` |
 
 ---
 
@@ -25,10 +25,10 @@ $SLASHBOT is an SPL token on Solana that lets users pay for Grok API calls throu
 
 Slashbot supports two payment modes:
 
-| Mode        | Command          | How it works                                           |
-| ----------- | ---------------- | ------------------------------------------------------ |
-| **API Key** | `/mode apikey`   | You provide your own X.AI API key. You pay X.AI directly. |
-| **Token**   | `/mode token`    | You pay with $SLASHBOT tokens via the proxy billing system. |
+| Mode        | Command        | How it works                                                |
+| ----------- | -------------- | ----------------------------------------------------------- |
+| **API Key** | `/mode apikey` | You provide your own X.AI API key. You pay X.AI directly.   |
+| **Token**   | `/mode token`  | You pay with $SLASHBOT tokens via the proxy billing system. |
 
 ### Token Mode Flow
 
@@ -55,6 +55,7 @@ Slashbot CLI  →  Proxy (getslashbot.com)  →  X.AI API
 ```
 
 **Why a proxy?**
+
 - Users don't need to create an X.AI account or manage API keys
 - One-click setup: create wallet, buy tokens, start using
 - Usage metering and credit management handled server-side
@@ -68,11 +69,11 @@ Slashbot CLI  →  Proxy (getslashbot.com)  →  X.AI API
 
 Pricing is based on X.AI's official rates. The proxy adds a markup to cover infrastructure and treasury costs.
 
-| Model                          | Input (per 1M tokens) | Output (per 1M tokens) |
-| ------------------------------ | --------------------- | ---------------------- |
-| `grok-4-1-fast-reasoning`      | $0.20                 | $0.50                  |
-| `grok-4-1-fast-non-reasoning`  | $0.20                 | $0.50                  |
-| `grok-code-fast-1`             | $0.20                 | $1.50                  |
+| Model                         | Input (per 1M tokens) | Output (per 1M tokens) |
+| ----------------------------- | --------------------- | ---------------------- |
+| `grok-4-1-fast-reasoning`     | $0.20                 | $0.50                  |
+| `grok-4-1-fast-non-reasoning` | $0.20                 | $0.50                  |
+| `grok-code-fast-1`            | $0.20                 | $1.50                  |
 
 ### Real-Time Conversion
 
@@ -85,6 +86,7 @@ SLASHBOT cost = SOL cost / SLASHBOT_SOL_price
 ```
 
 Exchange rate sources (with fallback chain):
+
 1. **SOL/USD** — CoinGecko API (fallback: $150)
 2. **SLASHBOT/SOL** — Jupiter quote API → DexScreener → Birdeye → hardcoded fallback
 
@@ -123,14 +125,14 @@ Slashbot includes a built-in Solana wallet for managing $SLASHBOT tokens.
 
 ### Security
 
-| Feature              | Implementation                                |
-| -------------------- | --------------------------------------------- |
-| **Encryption**       | AES-256-GCM with password-derived key         |
-| **Key storage**      | Encrypted in `~/.slashbot/wallet.json`        |
-| **Session auth**     | Keypair signs each API request body           |
-| **Session timeout**  | 30-minute inactivity timeout                  |
-| **Seed backup**      | Encrypted seed phrase stored alongside key    |
-| **Password policy**  | Never stored, never logged, never transmitted |
+| Feature             | Implementation                                |
+| ------------------- | --------------------------------------------- |
+| **Encryption**      | AES-256-GCM with password-derived key         |
+| **Key storage**     | Encrypted in `~/.slashbot/wallet.json`        |
+| **Session auth**    | Keypair signs each API request body           |
+| **Session timeout** | 30-minute inactivity timeout                  |
+| **Seed backup**     | Encrypted seed phrase stored alongside key    |
+| **Password policy** | Never stored, never logged, never transmitted |
 
 ### Wallet Architecture
 
@@ -156,6 +158,7 @@ The wallet is password-protected. On startup in token mode, Slashbot prompts for
 ### Balance Checks
 
 Before each API call in token mode, the `ProxyAuthProvider` validates:
+
 1. Wallet exists and is configured
 2. Proxy is reachable
 3. User has sufficient $SLASHBOT balance or credits
@@ -207,16 +210,16 @@ slashbot
 
 ### Key Components
 
-| Component            | Location                                     | Purpose                           |
-| -------------------- | -------------------------------------------- | --------------------------------- |
-| WalletPlugin         | `src/plugins/wallet/index.ts`                | Plugin entry point                |
-| ProxyAuthProvider    | `src/plugins/wallet/provider.ts`             | Routes requests through proxy     |
-| PricingService       | `src/plugins/wallet/services/pricingService.ts` | Cost calculation               |
-| ExchangeRates        | `src/plugins/wallet/services/exchangeRates.ts`  | Real-time price feeds          |
-| xaiPricing           | `src/plugins/wallet/services/xaiPricing.ts`     | Model pricing table            |
-| WalletService        | `src/plugins/wallet/services/wallet.ts`          | Wallet lifecycle               |
-| SolanaService        | `src/plugins/wallet/services/solana.ts`          | On-chain operations            |
-| CryptoService        | `src/plugins/wallet/services/crypto.ts`          | AES-256-GCM encryption         |
+| Component         | Location                                        | Purpose                       |
+| ----------------- | ----------------------------------------------- | ----------------------------- |
+| WalletPlugin      | `src/plugins/wallet/index.ts`                   | Plugin entry point            |
+| ProxyAuthProvider | `src/plugins/wallet/provider.ts`                | Routes requests through proxy |
+| PricingService    | `src/plugins/wallet/services/pricingService.ts` | Cost calculation              |
+| ExchangeRates     | `src/plugins/wallet/services/exchangeRates.ts`  | Real-time price feeds         |
+| xaiPricing        | `src/plugins/wallet/services/xaiPricing.ts`     | Model pricing table           |
+| WalletService     | `src/plugins/wallet/services/wallet.ts`         | Wallet lifecycle              |
+| SolanaService     | `src/plugins/wallet/services/solana.ts`         | On-chain operations           |
+| CryptoService     | `src/plugins/wallet/services/crypto.ts`         | AES-256-GCM encryption        |
 
 ### Configuration
 
@@ -234,14 +237,14 @@ Constants in `src/core/config/constants.ts`:
 
 ```typescript
 PROXY_CONFIG = {
-  BASE_URL: "https://getslashbot.com",
-  GROK_ENDPOINT: "/api/grok",
-  CREDITS_ENDPOINT: "/api/credits",
-  TREASURY_ADDRESS: "DVGjCZVJ3jMw8gsHAQjuYFMj8xQJyVf17qKrciYCS9u7",
-  TOKEN_MINT: "AtiFyHm6UMNLXCWJGLqhxSwvr3n3MgFKxppkKWUoBAGS",
-}
+  BASE_URL: 'https://getslashbot.com',
+  GROK_ENDPOINT: '/api/grok',
+  CREDITS_ENDPOINT: '/api/credits',
+  TREASURY_ADDRESS: 'DVGjCZVJ3jMw8gsHAQjuYFMj8xQJyVf17qKrciYCS9u7',
+  TOKEN_MINT: 'AtiFyHm6UMNLXCWJGLqhxSwvr3n3MgFKxppkKWUoBAGS',
+};
 ```
 
 ---
 
-*See also: [ARCHITECTURE.md](./ARCHITECTURE.md) | [ROADMAP.md](./ROADMAP.md)*
+_See also: [ARCHITECTURE.md](./ARCHITECTURE.md) | [ROADMAP.md](./ROADMAP.md)_

@@ -53,18 +53,8 @@ class PasteBuffer {
     const id = this.nextId++;
     this.entries.set(id, content);
 
-    // Create a descriptive placeholder
     const lines = content.split('\n').length;
-    const chars = content.length;
-
-    let desc: string;
-    if (lines > 1) {
-      desc = `${lines} lines, ${chars} chars`;
-    } else {
-      desc = `${chars} chars`;
-    }
-
-    return `[pasted:${id}:${desc}]`;
+    return `[pasted content ${lines} line${lines > 1 ? 's' : ''}]`;
   }
 
   /**
@@ -82,14 +72,23 @@ class PasteBuffer {
    */
   async expand(text: string): Promise<string> {
     // First expand paste placeholders
-    let result = text.replace(/\[pasted:(\d+):[^\]]+\]/g, (match, idStr) => {
+    // Match both new format [pasted content X line(s)] and legacy [pasted:id:desc]
+    let result = text.replace(/\[pasted content \d+ lines?\]/g, (_match) => {
+      // Find the oldest unused entry (FIFO order)
+      for (const [id, content] of this.entries) {
+        this.entries.delete(id);
+        return content;
+      }
+      return _match;
+    });
+    result = result.replace(/\[pasted:(\d+):[^\]]+\]/g, (match, idStr) => {
       const id = parseInt(idStr, 10);
       const content = this.entries.get(id);
       if (content !== undefined) {
-        this.entries.delete(id); // Clean up after use
+        this.entries.delete(id);
         return content;
       }
-      return match; // Keep placeholder if not found
+      return match;
     });
 
     // Then expand image placeholders
@@ -299,6 +298,13 @@ export function createPasteTransform(): Transform {
  */
 export async function expandPaste(text: string): Promise<string> {
   return pasteBuffer.expand(text);
+}
+
+/**
+ * Store pasted content and return a compressed placeholder
+ */
+export function storePaste(content: string): string {
+  return pasteBuffer.store(content);
 }
 
 /**

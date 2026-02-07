@@ -26,6 +26,7 @@ import {
   enableBracketedPaste,
   disableBracketedPaste,
   readImageFromClipboard,
+  storePaste,
 } from './pasteHandler';
 import { addImage, imageBuffer } from '../code/imageBuffer';
 import { spawn } from 'child_process';
@@ -309,6 +310,15 @@ export class TUIApp implements UIOutput {
           return;
         }
       }
+    });
+
+    // Intercept paste events: compress pasted content into a placeholder
+    keyHandler.on('paste', event => {
+      if (!this.inputPanel.isFocused()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const placeholder = storePaste(event.text);
+      this.inputPanel.insertText(placeholder);
     });
 
     // Bind display service so all styled output goes through TUI natively

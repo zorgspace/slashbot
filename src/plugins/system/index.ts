@@ -29,7 +29,8 @@ export class SystemPlugin implements Plugin {
   private getCurrentPersonality: (() => string) | null = null;
 
   async init(_context: PluginContext): Promise<void> {
-    const { systemPluginCommands, getPersonalityMod, getCurrentPersonality } = await import('./commands');
+    const { systemPluginCommands, getPersonalityMod, getCurrentPersonality } =
+      await import('./commands');
     this.commands = systemPluginCommands;
     this.getPersonalityMod = getPersonalityMod;
     this.getCurrentPersonality = getCurrentPersonality;

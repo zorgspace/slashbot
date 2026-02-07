@@ -28,11 +28,29 @@ export async function executeRead(
     const lines = fileContent.split('\n');
     const lineCount = lines.length;
     display.readResult(lineCount);
-    // Send full content to LLM with line numbers
+    // Detect language from file extension so the LLM knows the syntax
+    const ext = action.path.split('.').pop()?.toLowerCase() || '';
+    const langMap: Record<string, string> = {
+      ts: 'typescript', tsx: 'typescript (tsx)', js: 'javascript', jsx: 'javascript (jsx)',
+      py: 'python', rs: 'rust', go: 'go', rb: 'ruby', java: 'java', kt: 'kotlin',
+      c: 'c', cpp: 'c++', h: 'c header', hpp: 'c++ header', cs: 'c#',
+      swift: 'swift', sh: 'bash', bash: 'bash', zsh: 'zsh', fish: 'fish',
+      json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml',
+      html: 'html', css: 'css', scss: 'scss', less: 'less', svelte: 'svelte', vue: 'vue',
+      sql: 'sql', md: 'markdown', txt: 'plain text', dockerfile: 'dockerfile',
+      lua: 'lua', zig: 'zig', nim: 'nim', ex: 'elixir', exs: 'elixir',
+      php: 'php', r: 'r', pl: 'perl', dart: 'dart', sol: 'solidity',
+    };
+    const lang = langMap[ext] || ext;
+    const header = lang ? `[${lang}] ${action.path}` : action.path;
+    // Send full content to LLM with language header and line numbers
+    const startLine = (action.offset || 0) + 1;
+    const maxLineNum = startLine + lines.length - 1;
+    const pad = String(maxLineNum).length;
     const numberedContent = lines
-      .map((line, i) => `${String(i + 1).padStart(4, ' ')}: ${line}`)
+      .map((line, i) => `${String(startLine + i).padStart(pad, ' ')}│${line}`)
       .join('\n');
-    return { action: `Read: ${action.path}`, success: true, result: numberedContent };
+    return { action: `Read: ${action.path}`, success: true, result: `${header}\n${numberedContent}` };
   } else {
     display.error('File not found');
     return {

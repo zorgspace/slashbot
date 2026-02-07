@@ -8,7 +8,7 @@ interface SignalContext {
   getBot: () => {
     isThinking: () => boolean;
     abortCurrentOperation: () => void;
-    stop: () => void;
+    stop: () => Promise<void>;
   } | null;
   getTUI?: () => { destroy: () => void } | null;
 }
@@ -42,9 +42,13 @@ export function setupSignalHandlers(context: SignalContext): () => void {
       // Destroy TUI first to restore terminal state
       context.getTUI?.()?.destroy();
       display.violet('\n\nSee you soon!');
-      // Stop the bot (and scheduler) before exiting
-      bot?.stop();
-      process.exit(0);
+      // Await full async shutdown before exiting to avoid
+      // in-flight async ops during Bun teardown (causes segfault)
+      (async () => {
+        await bot?.stop();
+        process.exit(0);
+      })();
+      return;
     }
 
     // First Ctrl+C - show warning and redraw prompt
@@ -56,16 +60,20 @@ export function setupSignalHandlers(context: SignalContext): () => void {
   const sigtermHandler = () => {
     // In non-interactive mode (spawned as child), exit cleanly on SIGTERM
     if (process.env.SLASHBOT_NON_INTERACTIVE || !process.stdin.isTTY) {
-      context.getBot()?.stop();
-      process.exit(0);
+      (async () => {
+        await context.getBot()?.stop();
+        process.exit(0);
+      })();
+      return;
     }
     display.warningText('\nReceived SIGTERM - use /exit or Ctrl+C twice to quit');
   };
 
-  // Handler for exit
+  // Handler for exit - only synchronous cleanup (restoring terminal state)
+  // Do NOT call bot.stop() here: it's async and won't complete in exit handlers,
+  // and it's already called before process.exit() in all exit paths.
   const exitHandler = () => {
     context.getTUI?.()?.destroy();
-    context.getBot()?.stop();
   };
 
   // Handler for uncaught exceptions

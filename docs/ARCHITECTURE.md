@@ -126,16 +126,16 @@ The plugin system is the backbone of Slashbot. Every capability — file operati
 
 ```typescript
 interface Plugin {
-  readonly metadata: PluginMetadata;    // id, name, version, category, dependencies
-  init(context: PluginContext): void;   // Called during bootstrap
+  readonly metadata: PluginMetadata; // id, name, version, category, dependencies
+  init(context: PluginContext): void; // Called during bootstrap
 
   // Contributions
-  getActionContributions(): ActionContribution[];     // XML action tags
-  getPromptContributions(): PromptContribution[];     // System prompt sections
-  getCommandContributions?(): CommandHandler[];        // Slash commands
-  getContextProviders?(): ContextProvider[];           // Dynamic context
-  getEventSubscriptions?(): EventSubscription[];       // Event listeners
-  getSidebarContributions?(): SidebarContribution[];   // TUI sidebar items
+  getActionContributions(): ActionContribution[]; // XML action tags
+  getPromptContributions(): PromptContribution[]; // System prompt sections
+  getCommandContributions?(): CommandHandler[]; // Slash commands
+  getContextProviders?(): ContextProvider[]; // Dynamic context
+  getEventSubscriptions?(): EventSubscription[]; // Event listeners
+  getSidebarContributions?(): SidebarContribution[]; // TUI sidebar items
 
   // Lifecycle hooks
   onBeforeGrokInit?(context: PluginContext): void;
@@ -146,11 +146,11 @@ interface Plugin {
 
 ### Plugin Categories
 
-| Category    | Purpose                              | Examples                    |
-| ----------- | ------------------------------------ | --------------------------- |
-| **Core**    | Essential capabilities               | bash, filesystem, say       |
-| **Feature** | Optional functionality               | wallet, heartbeat, skills   |
-| **Connector** | Platform integrations             | telegram, discord           |
+| Category      | Purpose                | Examples                  |
+| ------------- | ---------------------- | ------------------------- |
+| **Core**      | Essential capabilities | bash, filesystem, say     |
+| **Feature**   | Optional functionality | wallet, heartbeat, skills |
+| **Connector** | Platform integrations  | telegram, discord         |
 
 ### Plugin Lifecycle
 
@@ -168,10 +168,10 @@ Plugins receive a `PluginContext` at init time:
 
 ```typescript
 interface PluginContext {
-  container: Container;           // DI container for service access
-  eventBus?: EventBus;            // Event system
-  configManager?: ConfigManager;  // App configuration
-  workDir?: string;               // Current working directory
+  container: Container; // DI container for service access
+  eventBus?: EventBus; // Event system
+  configManager?: ConfigManager; // App configuration
+  workDir?: string; // Current working directory
   getGrokClient?: () => GrokClient; // API client accessor
 }
 ```
@@ -182,8 +182,8 @@ Each plugin defines the XML action tags it handles. The LLM generates these tags
 
 ```typescript
 interface ActionContribution {
-  type: string;                    // e.g., "bash", "read", "edit"
-  tagName: string;                 // XML tag name
+  type: string; // e.g., "bash", "read", "edit"
+  tagName: string; // XML tag name
   handler: Record<string, Function>; // Business logic functions
   execute: (action, handlers) => ActionResult; // Display/formatting
 }
@@ -197,11 +197,11 @@ Each plugin has a `parser.ts` that defines how its XML tags are parsed:
 
 ```typescript
 interface ActionParserConfig {
-  tags: string[];               // Tags this parser handles
-  selfClosingTags?: string[];   // Self-closing tag variants
+  tags: string[]; // Tags this parser handles
+  selfClosingTags?: string[]; // Self-closing tag variants
   parse: (content, utils) => Action[]; // Parse raw XML to Action objects
-  protectedTags?: string[];     // Tags that shouldn't be stripped
-  fixups?: Array<{from: RegExp, to: string}>; // Pre-parse corrections
+  protectedTags?: string[]; // Tags that shouldn't be stripped
+  fixups?: Array<{ from: RegExp; to: string }>; // Pre-parse corrections
 }
 ```
 
@@ -217,9 +217,18 @@ Slashbot uses InversifyJS with a singleton container. Services are registered at
 
 ```typescript
 const TYPES = {
-  GrokClient, TaskScheduler, FileSystem, ConfigManager,
-  CodeEditor, SkillManager, CommandPermissions, HeartbeatService,
-  ConnectorRegistry, CommandRegistry, EventBus, PluginRegistry,
+  GrokClient,
+  TaskScheduler,
+  FileSystem,
+  ConfigManager,
+  CodeEditor,
+  SkillManager,
+  CommandPermissions,
+  HeartbeatService,
+  ConnectorRegistry,
+  CommandRegistry,
+  EventBus,
+  PluginRegistry,
 };
 ```
 
@@ -242,18 +251,18 @@ The EventBus is a typed pub/sub system built on Node.js `EventEmitter`.
 
 ### Core Events (Typed)
 
-| Event                       | Payload                                    |
-| --------------------------- | ------------------------------------------ |
-| `task:complete`             | taskId, taskName, output                   |
-| `task:error`                | taskId, taskName, error                    |
-| `task:started`              | taskId, taskName                           |
-| `connector:message`         | source (cli/telegram/discord), message     |
-| `connector:response`        | source, response                           |
-| `connector:connected`       | source                                     |
-| `connector:disconnected`    | source                                     |
-| `grok:initialized`          | —                                          |
-| `grok:disconnected`         | —                                          |
-| `prompt:redraw`             | —                                          |
+| Event                    | Payload                                |
+| ------------------------ | -------------------------------------- |
+| `task:complete`          | taskId, taskName, output               |
+| `task:error`             | taskId, taskName, error                |
+| `task:started`           | taskId, taskName                       |
+| `connector:message`      | source (cli/telegram/discord), message |
+| `connector:response`     | source, response                       |
+| `connector:connected`    | source                                 |
+| `connector:disconnected` | source                                 |
+| `grok:initialized`       | —                                      |
+| `grok:disconnected`      | —                                      |
+| `prompt:redraw`          | —                                      |
 
 ### Plugin Events (Generic)
 
@@ -282,9 +291,9 @@ CORE_PROMPT (universal behavioral rules)
 
 ```typescript
 interface PromptContribution {
-  id: string;           // Unique identifier
-  title: string;        // Section heading in prompt
-  priority: number;     // Sort order (lower = earlier in prompt)
+  id: string; // Unique identifier
+  title: string; // Section heading in prompt
+  priority: number; // Sort order (lower = earlier in prompt)
   content?: string | Function | readonly string[];
   enabled?: boolean | Function; // Conditional inclusion
 }
@@ -299,7 +308,7 @@ Plugins can also provide dynamic context that changes at runtime:
 ```typescript
 interface ContextProvider {
   priority?: number;
-  isActive?: () => boolean;  // Only included when active
+  isActive?: () => boolean; // Only included when active
   getContext: () => Promise<string | null>;
 }
 ```
@@ -339,8 +348,8 @@ Connectors bridge Slashbot to different platforms. Each connector implements the
 
 ```typescript
 interface Connector {
-  readonly source: ConnectorSource;  // 'cli' | 'telegram' | 'discord' | ...
-  readonly config: ConnectorConfig;  // maxMessageLength, supportsMarkdown, etc.
+  readonly source: ConnectorSource; // 'cli' | 'telegram' | 'discord' | ...
+  readonly config: ConnectorConfig; // maxMessageLength, supportsMarkdown, etc.
   setMessageHandler(handler: MessageHandler): void;
   start(): Promise<void>;
   stop(): void;
@@ -371,13 +380,13 @@ Messages are automatically split at platform-specific limits (4096 for Telegram,
 
 The full-screen TUI is built with `@opentui/core` and consists of:
 
-| Panel           | Purpose                                          |
-| --------------- | ------------------------------------------------ |
-| **HeaderPanel** | App name, status indicators, model info          |
-| **ChatPanel**   | Main conversation display                        |
-| **CommPanel**   | Communication log (Ctrl+T toggle) — prompts/responses |
-| **InputPanel**  | User input with history                          |
-| **CommandPalettePanel** | Fuzzy command search                     |
+| Panel                   | Purpose                                               |
+| ----------------------- | ----------------------------------------------------- |
+| **HeaderPanel**         | App name, status indicators, model info               |
+| **ChatPanel**           | Main conversation display                             |
+| **CommPanel**           | Communication log (Ctrl+T toggle) — prompts/responses |
+| **InputPanel**          | User input with history                               |
+| **CommandPalettePanel** | Fuzzy command search                                  |
 
 ### Output Interceptor
 
@@ -444,19 +453,19 @@ Slashbot uses a unified diff format for code edits, allowing the LLM to specify 
 
 All configuration is centralized in `src/core/config/constants.ts` with sensible defaults. User configuration lives in `~/.slashbot/`:
 
-| File                  | Purpose                          |
-| --------------------- | -------------------------------- |
-| `config/config.json`  | Model, payment mode, temperature |
-| `credentials.json`    | API keys                         |
-| `wallet.json`         | Encrypted Solana wallet          |
-| `wallet-config.json`  | Proxy URL, wallet address        |
-| `permissions.json`    | Command permissions              |
-| `heartbeat.json`      | Heartbeat settings               |
-| `skills/`             | Installed skill files            |
-| `tasks/`              | Scheduled task definitions       |
-| `context/`            | Conversation dumps               |
-| `history`             | Command history                  |
+| File                 | Purpose                          |
+| -------------------- | -------------------------------- |
+| `config/config.json` | Model, payment mode, temperature |
+| `credentials.json`   | API keys                         |
+| `wallet.json`        | Encrypted Solana wallet          |
+| `wallet-config.json` | Proxy URL, wallet address        |
+| `permissions.json`   | Command permissions              |
+| `heartbeat.json`     | Heartbeat settings               |
+| `skills/`            | Installed skill files            |
+| `tasks/`             | Scheduled task definitions       |
+| `context/`           | Conversation dumps               |
+| `history`            | Command history                  |
 
 ---
 
-*See also: [TOKEN_UTILITY.md](./TOKEN_UTILITY.md) | [PLUGIN_GUIDE.md](./PLUGIN_GUIDE.md) | [ROADMAP.md](./ROADMAP.md)*
+_See also: [TOKEN_UTILITY.md](./TOKEN_UTILITY.md) | [PLUGIN_GUIDE.md](./PLUGIN_GUIDE.md) | [ROADMAP.md](./ROADMAP.md)_

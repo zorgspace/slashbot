@@ -589,7 +589,7 @@ export class GrokClient {
             this.sessionManager.history.push({ role: 'assistant', content: responseContent });
             this.sessionManager.history.push({
               role: 'user',
-              content: `ERROR: Malformed edit tag. You must use the EXACT unified diff format:\n<edit path="file.ts">\n@@ -10,3 @@\n-old line\n+new line\n context line\n</edit>\n\nRead the file first with <read> to get line numbers. Use @@ -startLine,count @@ hunk headers with -/+/space-prefixed lines.`,
+              content: `ERROR: Malformed <edit> tag. You must use the unified diff format exactly:\n\n<edit path="file.ts">\n@@ -startLine,count @@\n-line to remove\n+line to add\n context line (unchanged, starts with a space)\n</edit>\n\n- startLine: 1-based line number from <read> output where this hunk begins.\n- count: number of existing lines this hunk spans (context + removed). Use 0 for pure insertion.\n- Every line inside a hunk MUST start with \` \` (space), \`-\`, or \`+\`.\n\nRead the file first with <read> to see actual line numbers and content.`,
             });
             continue;
           }

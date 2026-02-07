@@ -214,34 +214,19 @@ class ProcessManager {
     let killed = 0;
     for (const managed of this.processes.values()) {
       try {
-        // Kill entire process group (negative PID kills all children)
+        // Kill entire process group with SIGKILL directly during shutdown
+        // to avoid scheduling setTimeout (which can fire during Bun teardown
+        // and cause segfaults)
         try {
-          process.kill(-managed.pid, 'SIGTERM');
+          process.kill(-managed.pid, 'SIGKILL');
         } catch {
-          managed.process.kill('SIGTERM');
+          managed.process.kill('SIGKILL');
         }
         killed++;
       } catch {
         // Ignore
       }
     }
-
-    // Force kill any remaining after 1 second
-    setTimeout(() => {
-      for (const managed of this.processes.values()) {
-        if (!managed.process.killed) {
-          try {
-            process.kill(-managed.pid, 'SIGKILL');
-          } catch {
-            try {
-              managed.process.kill('SIGKILL');
-            } catch {
-              // Ignore
-            }
-          }
-        }
-      }
-    }, 1000);
 
     this.processes.clear();
     return killed;
