@@ -110,7 +110,7 @@ Slashbot includes a built-in Solana wallet for managing $SLASHBOT tokens.
 
 ```
 /wallet create    # Generate a new wallet (shows seed phrase — save it!)
-/wallet import    # Import an existing wallet from seed phrase or private key
+/wallet useRoadmap    # Import an existing wallet from seed phrase or private key
 ```
 
 ### Daily Use

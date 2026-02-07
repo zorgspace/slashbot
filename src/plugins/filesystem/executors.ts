@@ -72,29 +72,16 @@ export async function executeEdit(
 
   display.update(action.path);
 
-  const result = await handlers.onEdit(action.path, action.hunks);
+  const result = await handlers.onEdit(action.path, action.mode, action.content, action.blocks);
 
   if (result.status === 'applied') {
-    // Build a lookup from original startLine → adjusted startLine
-    const adjustMap = new Map<number, number>();
-    if (result.adjustedHunks) {
-      for (const adj of result.adjustedHunks) {
-        adjustMap.set(adj.originalStartLine, adj.adjustedStartLine);
-      }
-    }
-
-    // Show diff for each hunk, using adjusted line numbers
-    for (const hunk of action.hunks) {
-      const removed = hunk.diffLines.filter(l => l.type === 'remove').map(l => l.content);
-      const added = hunk.diffLines.filter(l => l.type === 'add').map(l => l.content);
-      const displayLine = adjustMap.get(hunk.startLine) ?? hunk.startLine;
-      display.updateResult(true, removed.length, added.length);
-      if (removed.length > 0 || added.length > 0) {
-        display.diff(removed, added, action.path, displayLine);
-      }
-    }
+    display.updateResult(true, 0, 0);
   } else if (result.status === 'already_applied') {
     display.success('Already applied (skipped)');
+  } else if (result.status === 'conflict') {
+    display.updateResult(true, 0, 0);
+    const conflictCount = result.conflicts?.length || 0;
+    display.warning(`Applied with ${conflictCount} conflict(s) — LLM version used for conflicts`);
   } else if (result.status === 'not_found') {
     display.updateResult(false, 0, 0);
     display.error(
@@ -104,7 +91,7 @@ export async function executeEdit(
     );
   } else if (result.status === 'no_match') {
     display.updateResult(false, 0, 0);
-    display.error(`Content mismatch in ${action.path} — re-read and retry.`);
+    display.error(`Search block not found in ${action.path} — re-read and retry.`);
   } else {
     display.updateResult(false, 0, 0);
   }

@@ -1,3 +1,7 @@
+import useRoadmap
+
+import useRoadmap
+
 # Slashbot Roadmap
 
 ## Vision
@@ -47,15 +51,12 @@ The v2.0.0 release is a complete rewrite of the internal architecture, moving fr
 
 - **PLUGIN_GUIDE.md** — Complete plugin development documentation
 - **Plugin template repo** — Scaffold for third-party plugin projects
-- **Plugin marketplace** — Browsable directory of community plugins
 - **Hot reload** — Reload plugins without restarting the app
 
 ### Token Economy
 
-- **Credit system refinement** — Smooth deposit-to-credit conversion flow
-- **Usage dashboard** — Detailed per-session and per-model cost breakdown
-- **Spending limits** — Configurable daily/weekly caps on token spend
 - **Multi-token support** — Accept other SPL tokens or stablecoins
+- **Burn liquidity progressively** — Implement progressive liquidity burning mechanism
 
 ### Quality
 
@@ -69,46 +70,24 @@ The v2.0.0 release is a complete rewrite of the internal architecture, moving fr
 
 ### Platform Expansion
 
-- **Web interface** — Browser-based frontend for Slashbot
 - **Slack connector** — Plugin for Slack workspace integration
-- **GitHub connector** — PR reviews, issue triage, CI monitoring
-- **API mode** — Run Slashbot as a headless API server
 
 ### AI Capabilities
 
-- **Multi-model support** — Switch between Grok models, add support for other providers
 - **Context management v2** — Smarter compression, retrieval-augmented context
 - **Agent chains** — Multi-step autonomous workflows with checkpoints
-- **Voice mode** — Real-time voice interaction via transcription plugin
 
 ### Wallet & Payments
 
 - **On-chain analytics** — Token holder stats, usage metrics, burn tracking
-- **Staking** — Stake $SLASHBOT for reduced pricing tiers
-- **Referral system** — Earn tokens by referring users
-- **Fiat on-ramp** — Buy $SLASHBOT directly with card/bank transfer
 
 ---
 
 ## Long-Term Vision
 
-### Ecosystem
-
-- **Plugin SDK** — Published npm package with types, testing utilities, and CLI scaffolding
-- **Community marketplace** — Public plugin registry with ratings and reviews
-- **Plugin revenue sharing** — Plugin authors earn $SLASHBOT when their plugins are used
-
-### Enterprise
-
-- **Team mode** — Shared context, audit logs, centralized billing
-- **Self-hosted proxy** — Run your own billing proxy for org-level API key management
-- **Compliance** — SOC2-ready logging, data residency controls
-
 ### Protocol
 
-- **Decentralized proxy network** — Multiple proxy operators, user picks closest/cheapest
 - **On-chain governance** — Token holders vote on pricing, features, treasury allocation
-- **Open billing protocol** — Standard for AI tool payments with any SPL token
 
 ---
 

@@ -5,21 +5,17 @@ export interface ReadAction {
   limit?: number;
 }
 
-export interface DiffLine {
-  type: 'context' | 'add' | 'remove';
-  content: string;
-}
-
-export interface DiffHunk {
-  startLine: number;
-  lineCount: number;
-  diffLines: DiffLine[];
+export interface SearchReplaceBlock {
+  search: string;
+  replace: string;
 }
 
 export interface EditAction {
   type: 'edit';
   path: string;
-  hunks: DiffHunk[];
+  mode: 'full' | 'search-replace';
+  content?: string;              // full mode
+  blocks?: SearchReplaceBlock[]; // search-replace mode
 }
 
 export interface WriteAction {

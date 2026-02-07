@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import type { EditResult, GrepOptions } from '../actions/types';
 import { EXCLUDED_DIRS, EXCLUDED_FILES } from '../config/constants';
+import { merge3 } from './diff3';
 
 export interface SearchResult {
   file: string;
@@ -18,19 +19,15 @@ export interface SearchResult {
   match: string;
 }
 
-interface DiffLine {
-  type: 'context' | 'add' | 'remove';
-  content: string;
-}
-
-interface DiffHunk {
-  startLine: number;
-  lineCount: number;
-  diffLines: DiffLine[];
+interface SearchReplaceBlock {
+  search: string;
+  replace: string;
 }
 
 export class CodeEditor {
   private workDir: string;
+  /** Snapshots stored at read time: path → content */
+  private snapshots: Map<string, string> = new Map();
 
   constructor(workDir: string = process.cwd()) {
     this.workDir = workDir;
@@ -42,6 +39,22 @@ export class CodeEditor {
 
   async isAuthorized(): Promise<boolean> {
     return true; // Always authorized
+  }
+
+  /**
+   * Store a snapshot of file content (called after every read).
+   */
+  storeSnapshot(filePath: string, content: string): void {
+    const key = this.resolvePath(filePath);
+    this.snapshots.set(key, content);
+  }
+
+  /**
+   * Retrieve stored snapshot for a file.
+   */
+  getSnapshot(filePath: string): string | undefined {
+    const key = this.resolvePath(filePath);
+    return this.snapshots.get(key);
   }
 
   async grep(
@@ -82,7 +95,6 @@ export class CodeEditor {
       }
 
       // Use -r only for directories, not files
-      const fs = await import('fs');
       const isFile = fs.existsSync(searchPath) && fs.statSync(searchPath).isFile();
       const recursiveArg = isFile ? '' : '-r';
 
@@ -125,7 +137,10 @@ export class CodeEditor {
   async readFile(filePath: string): Promise<string | null> {
     try {
       const fullPath = this.resolvePath(filePath);
-      return await fsPromises.readFile(fullPath, 'utf8');
+      const content = await fsPromises.readFile(fullPath, 'utf8');
+      // Store snapshot on every read
+      this.snapshots.set(fullPath, content);
+      return content;
     } catch {
       return null;
     }
@@ -151,11 +166,20 @@ export class CodeEditor {
   }
 
   /**
-   * Apply a diff edit using line-based hunks with content-based matching.
-   * Instead of blindly trusting startLine, searches for the actual content
-   * in the file and adjusts the position automatically.
+   * Apply a merge-based edit. Supports two modes:
+   *
+   * - 'full': LLM provides the complete intended file content.
+   *   Uses diff3 merge if the file changed since read.
+   *
+   * - 'search-replace': LLM provides search/replace blocks.
+   *   Finds each search block in the file and replaces it.
    */
-  async applyDiffEdit(filePath: string, hunks: DiffHunk[]): Promise<EditResult> {
+  async applyMergeEdit(
+    filePath: string,
+    mode: 'full' | 'search-replace',
+    content?: string,
+    blocks?: SearchReplaceBlock[],
+  ): Promise<EditResult> {
     try {
       const fullPath = this.resolvePath(filePath);
 
@@ -169,127 +193,13 @@ export class CodeEditor {
         };
       }
 
-      const content = await fsPromises.readFile(fullPath, 'utf8');
-      const lines = content.split('\n');
+      const currentContent = await fsPromises.readFile(fullPath, 'utf8');
 
-      // Sort hunks bottom-to-top so earlier line numbers stay valid
-      const sortedHunks = [...hunks].sort((a, b) => b.startLine - a.startLine);
-
-      // Track adjusted positions for accurate display
-      const adjustedHunks: { originalStartLine: number; adjustedStartLine: number }[] = [];
-
-      for (const hunk of sortedHunks) {
-        // Extract expected original lines (context + remove)
-        const expectedLines = hunk.diffLines
-          .filter(l => l.type === 'context' || l.type === 'remove')
-          .map(l => l.content);
-
-        // Pure insertion (count=0, no context/remove lines)
-        if (expectedLines.length === 0) {
-          const insertIdx = Math.min(hunk.startLine - 1, lines.length);
-          const addLines = hunk.diffLines.filter(l => l.type === 'add').map(l => l.content);
-          lines.splice(insertIdx, 0, ...addLines);
-          adjustedHunks.push({
-            originalStartLine: hunk.startLine,
-            adjustedStartLine: insertIdx + 1,
-          });
-          continue;
-        }
-
-        // Find where the expected lines actually are in the file
-        const preferredIdx = hunk.startLine - 1;
-        let matchIdx = this.findExactMatch(lines, expectedLines, preferredIdx);
-        let matchType: 'exact' | 'fuzzy' | 'none' = matchIdx !== -1 ? 'exact' : 'none';
-
-        if (matchIdx === -1) {
-          matchIdx = this.findFuzzyMatch(lines, expectedLines, preferredIdx);
-          if (matchIdx !== -1) matchType = 'fuzzy';
-        }
-
-        if (matchIdx === -1) {
-          // Content not found — provide detailed error so LLM can retry
-          const showStart = Math.max(0, preferredIdx - 5);
-          const showEnd = Math.min(lines.length, preferredIdx + expectedLines.length + 5);
-          const actualSnippet = lines
-            .slice(showStart, showEnd)
-            .map((l, i) => `  ${showStart + i + 1}│${l}`)
-            .join('\n');
-          const expectedSnippet = expectedLines
-            .map((l, i) => `  ${hunk.startLine + i}│${l}`)
-            .join('\n');
-
-          display.errorText(
-            `Edit rejected: content not found at line ${hunk.startLine} in ${filePath}`,
-          );
-          return {
-            success: false,
-            status: 'no_match',
-            path: filePath,
-            message: `Content mismatch at line ${hunk.startLine}.\nExpected lines:\n${expectedSnippet}\nActual file content:\n${actualSnippet}\nRe-read the file with <read path="${filePath}"/> and retry with the correct line numbers and exact content.`,
-          };
-        }
-
-        if (matchIdx !== preferredIdx) {
-          display.warningText(
-            `Hunk adjusted: line ${hunk.startLine} → ${matchIdx + 1} (${matchType} match) in ${filePath}`,
-          );
-        }
-
-        adjustedHunks.push({
-          originalStartLine: hunk.startLine,
-          adjustedStartLine: matchIdx + 1,
-        });
-
-        // Build replacement: context + add lines in order
-        const newLines = hunk.diffLines
-          .filter(l => l.type === 'context' || l.type === 'add')
-          .map(l => l.content);
-
-        // For fuzzy matches, use the file's actual content for context lines
-        // to preserve exact whitespace from the original file
-        if (matchType === 'fuzzy') {
-          let fileLineIdx = matchIdx;
-          let newLineIdx = 0;
-          for (const dl of hunk.diffLines) {
-            if (dl.type === 'context') {
-              if (fileLineIdx < lines.length) {
-                newLines[newLineIdx] = lines[fileLineIdx];
-              }
-              fileLineIdx++;
-              newLineIdx++;
-            } else if (dl.type === 'remove') {
-              fileLineIdx++;
-            } else if (dl.type === 'add') {
-              newLineIdx++;
-            }
-          }
-        }
-
-        lines.splice(matchIdx, expectedLines.length, ...newLines);
+      if (mode === 'full') {
+        return await this.applyFullEdit(filePath, fullPath, currentContent, content || '');
+      } else {
+        return await this.applySearchReplaceEdit(filePath, fullPath, currentContent, blocks || []);
       }
-
-      const newContent = lines.join('\n');
-
-      // Idempotency check
-      if (newContent === content) {
-        display.muted(`Edit already applied: ${filePath}`);
-        return {
-          success: true,
-          status: 'already_applied',
-          path: filePath,
-          message: 'Edit already applied',
-        };
-      }
-
-      await fsPromises.writeFile(fullPath, newContent, 'utf8');
-      display.successText(`Modified: ${filePath}`);
-      return {
-        success: true,
-        status: 'applied',
-        path: filePath,
-        message: `Modified: ${filePath}`,
-        adjustedHunks,
-      };
     } catch (error) {
       display.errorText(`Edit error: ${error}`);
       return {
@@ -302,63 +212,227 @@ export class CodeEditor {
   }
 
   /**
-   * Find exact match for expected lines in the file, searching outward from preferredIdx
+   * Full-file edit: diff3 merge between snapshot, current disk, and LLM output.
    */
-  private findExactMatch(lines: string[], expected: string[], preferredIdx: number): number {
-    // Try at preferred index first
-    if (this.matchesAt(lines, expected, preferredIdx, false)) return preferredIdx;
-
-    // Search outward from preferred position
-    const maxDist = lines.length;
-    for (let dist = 1; dist <= maxDist; dist++) {
-      const before = preferredIdx - dist;
-      const after = preferredIdx + dist;
-      if (before >= 0 && this.matchesAt(lines, expected, before, false)) return before;
-      if (after < lines.length && this.matchesAt(lines, expected, after, false)) return after;
-      if (before < 0 && after >= lines.length) break;
+  private async applyFullEdit(
+    filePath: string,
+    fullPath: string,
+    currentContent: string,
+    newContent: string,
+  ): Promise<EditResult> {
+    // Idempotency: if new content matches current, nothing to do
+    if (newContent === currentContent) {
+      display.muted(`Edit already applied: ${filePath}`);
+      return {
+        success: true,
+        status: 'already_applied',
+        path: filePath,
+        message: 'Edit already applied',
+      };
     }
 
-    return -1;
+    const snapshot = this.snapshots.get(fullPath);
+
+    // Fast path: no snapshot (file was never read) or snapshot matches current disk
+    if (!snapshot || snapshot === currentContent) {
+      await fsPromises.writeFile(fullPath, newContent, 'utf8');
+      // Update snapshot to new content
+      this.snapshots.set(fullPath, newContent);
+      display.successText(`Modified: ${filePath}`);
+      return {
+        success: true,
+        status: 'applied',
+        path: filePath,
+        message: `Modified: ${filePath}`,
+      };
+    }
+
+    // Merge path: file changed since read — three-way merge
+    const baseLines = snapshot.split('\n');
+    const oursLines = currentContent.split('\n');
+    const theirsLines = newContent.split('\n');
+
+    const result = merge3(baseLines, oursLines, theirsLines);
+
+    if (result.success) {
+      const mergedContent = result.merged.join('\n');
+
+      if (mergedContent === currentContent) {
+        display.muted(`Edit already applied: ${filePath}`);
+        return {
+          success: true,
+          status: 'already_applied',
+          path: filePath,
+          message: 'Edit already applied',
+        };
+      }
+
+      await fsPromises.writeFile(fullPath, mergedContent, 'utf8');
+      this.snapshots.set(fullPath, mergedContent);
+      display.warningText(`Merged (file changed since read): ${filePath}`);
+      return {
+        success: true,
+        status: 'applied',
+        path: filePath,
+        message: `Merged: ${filePath} (${result.conflictCount} conflicts resolved)`,
+      };
+    }
+
+    // Conflict path: apply with conflicts (favor LLM intent) but report
+    const mergedContent = result.merged.join('\n');
+    await fsPromises.writeFile(fullPath, mergedContent, 'utf8');
+    this.snapshots.set(fullPath, mergedContent);
+    display.warningText(`Applied with ${result.conflictCount} conflict(s): ${filePath}`);
+    return {
+      success: true,
+      status: 'conflict',
+      path: filePath,
+      message: `Applied with ${result.conflictCount} conflict(s) in ${filePath}. The LLM's version was used for conflicting regions.`,
+      conflicts: result.conflicts,
+    };
   }
 
   /**
-   * Find fuzzy match (trimmed whitespace comparison), searching outward from preferredIdx
+   * Search/Replace edit: find exact search blocks in file and replace them.
    */
-  private findFuzzyMatch(lines: string[], expected: string[], preferredIdx: number): number {
-    // Try at preferred index first
-    if (this.matchesAt(lines, expected, preferredIdx, true)) return preferredIdx;
-
-    // Search outward
-    const maxDist = lines.length;
-    for (let dist = 1; dist <= maxDist; dist++) {
-      const before = preferredIdx - dist;
-      const after = preferredIdx + dist;
-      if (before >= 0 && this.matchesAt(lines, expected, before, true)) return before;
-      if (after < lines.length && this.matchesAt(lines, expected, after, true)) return after;
-      if (before < 0 && after >= lines.length) break;
+  private async applySearchReplaceEdit(
+    filePath: string,
+    fullPath: string,
+    currentContent: string,
+    blocks: SearchReplaceBlock[],
+  ): Promise<EditResult> {
+    if (blocks.length === 0) {
+      return {
+        success: false,
+        status: 'error',
+        path: filePath,
+        message: 'No search/replace blocks provided',
+      };
     }
 
-    return -1;
-  }
+    let content = currentContent;
 
-  /**
-   * Check if expected lines match at a given position in the file
-   */
-  private matchesAt(
-    lines: string[],
-    expected: string[],
-    startIdx: number,
-    fuzzy: boolean,
-  ): boolean {
-    if (startIdx < 0 || startIdx + expected.length > lines.length) return false;
-    for (let i = 0; i < expected.length; i++) {
-      if (fuzzy) {
-        if (lines[startIdx + i].trim() !== expected[i].trim()) return false;
+    for (const block of blocks) {
+      const searchStr = block.search;
+      const replaceStr = block.replace;
+
+      // Try exact match first
+      let idx = content.indexOf(searchStr);
+
+      if (idx === -1) {
+        // Try trimmed-whitespace matching: normalize both sides
+        idx = this.findFuzzyBlock(content, searchStr);
+      }
+
+      if (idx === -1) {
+        // Search block not found — provide context for retry
+        const searchPreview = searchStr.split('\n').slice(0, 5).join('\n');
+        display.errorText(`Search block not found in ${filePath}`);
+        return {
+          success: false,
+          status: 'no_match',
+          path: filePath,
+          message: `Search block not found in ${filePath}.\nSearching for:\n${searchPreview}\n\nRe-read the file with <read path="${filePath}"/> and use the exact content from the file.`,
+        };
+      }
+
+      // Replace the matched content
+      if (idx === content.indexOf(searchStr)) {
+        // Exact match — simple replace
+        content = content.slice(0, idx) + replaceStr + content.slice(idx + searchStr.length);
       } else {
-        if (lines[startIdx + i] !== expected[i]) return false;
+        // Fuzzy match — replace using line-based approach
+        content = this.replaceFuzzyBlock(content, searchStr, replaceStr);
       }
     }
-    return true;
+
+    // Idempotency check
+    if (content === currentContent) {
+      display.muted(`Edit already applied: ${filePath}`);
+      return {
+        success: true,
+        status: 'already_applied',
+        path: filePath,
+        message: 'Edit already applied',
+      };
+    }
+
+    await fsPromises.writeFile(fullPath, content, 'utf8');
+    // Update snapshot
+    this.snapshots.set(fullPath, content);
+    display.successText(`Modified: ${filePath}`);
+    return {
+      success: true,
+      status: 'applied',
+      path: filePath,
+      message: `Modified: ${filePath}`,
+    };
+  }
+
+  /**
+   * Find a search block in content using trimmed-line matching.
+   * Returns the character index of the match start, or -1.
+   */
+  private findFuzzyBlock(content: string, search: string): number {
+    const contentLines = content.split('\n');
+    const searchLines = search.split('\n');
+
+    // Remove leading/trailing empty lines from search
+    while (searchLines.length > 0 && searchLines[0].trim() === '') searchLines.shift();
+    while (searchLines.length > 0 && searchLines[searchLines.length - 1].trim() === '') searchLines.pop();
+
+    if (searchLines.length === 0) return -1;
+
+    for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
+      let matches = true;
+      for (let j = 0; j < searchLines.length; j++) {
+        if (contentLines[i + j].trim() !== searchLines[j].trim()) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        // Calculate character offset to the start of line i
+        let offset = 0;
+        for (let k = 0; k < i; k++) {
+          offset += contentLines[k].length + 1; // +1 for \n
+        }
+        return offset;
+      }
+    }
+
+    return -1;
+  }
+
+  /**
+   * Replace a fuzzy-matched block using line-based matching.
+   */
+  private replaceFuzzyBlock(content: string, search: string, replace: string): string {
+    const contentLines = content.split('\n');
+    const searchLines = search.split('\n');
+
+    // Remove leading/trailing empty lines from search
+    while (searchLines.length > 0 && searchLines[0].trim() === '') searchLines.shift();
+    while (searchLines.length > 0 && searchLines[searchLines.length - 1].trim() === '') searchLines.pop();
+
+    if (searchLines.length === 0) return content;
+
+    for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
+      let matches = true;
+      for (let j = 0; j < searchLines.length; j++) {
+        if (contentLines[i + j].trim() !== searchLines[j].trim()) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        const replaceLines = replace.split('\n');
+        contentLines.splice(i, searchLines.length, ...replaceLines);
+        return contentLines.join('\n');
+      }
+    }
+
+    return content;
   }
 
   async createFile(filePath: string, content: string): Promise<boolean> {

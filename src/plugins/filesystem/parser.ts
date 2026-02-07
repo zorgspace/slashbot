@@ -11,6 +11,37 @@ function decodeEntities(s: string): string {
   return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
+/**
+ * Parse search/replace blocks from edit content.
+ * Format:
+ *   <<<<<<< SEARCH
+ *   exact lines to find
+ *   =======
+ *   replacement lines
+ *   >>>>>>> REPLACE
+ */
+function parseSearchReplaceBlocks(content: string): { search: string; replace: string }[] {
+  const blocks: { search: string; replace: string }[] = [];
+  const regex = /<<<<<<< SEARCH[ \t]*\n([\s\S]*?)\n[ \t]*=======[ \t]*\n([\s\S]*?)\n[ \t]*>>>>>>> REPLACE[ \t]*/g;
+  let match;
+
+  while ((match = regex.exec(content)) !== null) {
+    blocks.push({
+      search: match[1],
+      replace: match[2],
+    });
+  }
+
+  return blocks;
+}
+
+/**
+ * Detect whether edit content uses search/replace mode or full-file mode.
+ */
+function detectEditMode(content: string): 'full' | 'search-replace' {
+  return content.includes('<<<<<<< SEARCH') ? 'search-replace' : 'full';
+}
+
 export function getFilesystemParserConfigs(): ActionParserConfig[] {
   return [
     // Read action (post-strip)
@@ -39,9 +70,9 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         return actions;
       },
     },
-    // Edit action - unified diff format with line numbers
+    // Edit action - full file or search/replace blocks
     // preStrip: content-bearing tag — parsed first, then stripped so inner tags
-    // (e.g. <bash> inside diff content) are not executed as actions.
+    // (e.g. <bash> inside edit content) are not executed as actions.
     {
       tags: ['edit'],
       preStrip: true,
@@ -67,85 +98,59 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
           const path = outerMatch[1];
           const innerContent = decodeEntities(outerMatch[2]);
 
-          // Find all hunk headers: @@ -startLine,count @@
-          const hunkRegex = /@@ -(\d+),(\d+)(?:\s+\+\d+(?:,\d+)?)? @@/g;
-          let hunkMatch;
-          const headers: {
-            startLine: number;
-            lineCount: number;
-            matchStart: number;
-            matchEnd: number;
-          }[] = [];
+          const mode = detectEditMode(innerContent);
 
-          while ((hunkMatch = hunkRegex.exec(innerContent)) !== null) {
-            headers.push({
-              startLine: parseInt(hunkMatch[1], 10),
-              lineCount: parseInt(hunkMatch[2], 10),
-              matchStart: hunkMatch.index,
-              matchEnd: hunkMatch.index + hunkMatch[0].length,
-            });
-          }
-
-          if (headers.length === 0) continue;
-
-          const hunks: {
-            startLine: number;
-            lineCount: number;
-            diffLines: { type: 'context' | 'add' | 'remove'; content: string }[];
-          }[] = [];
-          for (let i = 0; i < headers.length; i++) {
-            const header = headers[i];
-            const contentStart = header.matchEnd;
-            const contentEnd =
-              i + 1 < headers.length ? headers[i + 1].matchStart : innerContent.length;
-            const hunkContent = innerContent.substring(contentStart, contentEnd);
-
-            const diffLines: { type: 'context' | 'add' | 'remove'; content: string }[] = [];
-            const rawLines = hunkContent.split('\n');
-            for (let li = 0; li < rawLines.length; li++) {
-              const line = rawLines[li];
-              if (line.startsWith('-')) {
-                diffLines.push({ type: 'remove', content: line.substring(1) });
-              } else if (line.startsWith('+')) {
-                diffLines.push({ type: 'add', content: line.substring(1) });
-              } else if (line.startsWith(' ')) {
-                diffLines.push({ type: 'context', content: line.substring(1) });
-              } else if (line.length === 0 && diffLines.length > 0 && li < rawLines.length - 1) {
-                // Empty line WITHIN diff content = blank line in source (LLM omitted space prefix).
-                // Only skip leading/trailing empty lines (artifacts of split around hunk headers).
-                diffLines.push({ type: 'context', content: '' });
-              } else if (line.trim().length > 0) {
-                // Non-empty line without prefix - treat as context (LLM forgot the space prefix)
-                diffLines.push({ type: 'context', content: line });
-              }
+          if (mode === 'search-replace') {
+            const blocks = parseSearchReplaceBlocks(innerContent);
+            if (blocks.length > 0) {
+              actions.push({
+                type: 'edit',
+                path,
+                mode: 'search-replace',
+                blocks,
+              } as Action);
             }
+          } else {
+            // Full file mode: trim leading/trailing newline from content
+            // (the content between <edit> tags often has a leading newline)
+            let fullContent = innerContent;
+            if (fullContent.startsWith('\n')) fullContent = fullContent.slice(1);
+            if (fullContent.endsWith('\n')) fullContent = fullContent.slice(0, -1);
 
-            hunks.push({
-              startLine: header.startLine,
-              lineCount: header.lineCount,
-              diffLines,
-            });
+            actions.push({
+              type: 'edit',
+              path,
+              mode: 'full',
+              content: fullContent,
+            } as Action);
           }
-
-          actions.push({
-            type: 'edit',
-            path,
-            hunks,
-          } as Action);
         }
 
-        // Merge multiple <edit> blocks targeting the same file into one action
-        // so all hunks are applied bottom-to-top in a single pass
+        // Merge multiple <edit> blocks targeting the same file (search-replace mode)
         const byPath = new Map<string, Action>();
         const merged: Action[] = [];
         for (const action of actions) {
-          const editAction = action as { type: string; path: string; hunks: any[] };
-          const existing = byPath.get(editAction.path);
-          if (existing) {
-            (existing as any).hunks.push(...editAction.hunks);
+          const editAction = action as any;
+          if (editAction.mode === 'search-replace') {
+            const existing = byPath.get(editAction.path);
+            if (existing && (existing as any).mode === 'search-replace') {
+              (existing as any).blocks.push(...editAction.blocks);
+            } else {
+              byPath.set(editAction.path, action);
+              merged.push(action);
+            }
           } else {
-            byPath.set(editAction.path, action);
-            merged.push(action);
+            // Full mode: last one wins
+            const existing = byPath.get(editAction.path);
+            if (existing && (existing as any).mode === 'full') {
+              // Replace the previous full edit
+              const idx = merged.indexOf(existing);
+              if (idx !== -1) merged[idx] = action;
+              byPath.set(editAction.path, action);
+            } else {
+              byPath.set(editAction.path, action);
+              merged.push(action);
+            }
           }
         }
         return merged;

@@ -64,9 +64,14 @@ export class FilesystemPlugin implements Plugin {
       return content;
     };
 
-    const onEdit = async (path: string, hunks: import('./types').DiffHunk[]) => {
+    const onEdit = async (
+      path: string,
+      mode: 'full' | 'search-replace',
+      content?: string,
+      blocks?: import('./types').SearchReplaceBlock[],
+    ) => {
       const codeEditor = getCodeEditor();
-      return await codeEditor.applyDiffEdit(path, hunks);
+      return await codeEditor.applyMergeEdit(path, mode, content, blocks);
     };
 
     const onCreate = async (path: string, content: string) => {
