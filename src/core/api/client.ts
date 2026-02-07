@@ -442,6 +442,16 @@ export class GrokClient {
         break;
       }
 
+      // End action: display final message and stop the loop
+      const endResult = actionResults.find(r => r.action === 'End');
+      if (endResult) {
+        if (endResult.result) {
+          display.sayResult(endResult.result);
+        }
+        this.sessionManager.history.push({ role: 'assistant', content: responseContent });
+        break;
+      }
+
       // Say action: display message but continue the loop
       const hasSayAction = actionResults.some(r => r.action === 'Says');
       if (hasSayAction) {
@@ -634,12 +644,12 @@ export class GrokClient {
 
       const iterationWarning =
         iteration >= 15
-          ? `\n[WARNING] ${iteration} iterations. Use <continue/> or <say> to finish.`
+          ? `\n[WARNING] ${iteration} iterations. Use <continue/> or <end> to finish.`
           : '';
 
       const instruction = hasErrors
         ? 'ERROR DETECTED — fix it now.'
-        : 'Continue or <say> to finish.';
+        : 'Continue or <end> to finish.';
 
       const continuationPrompt = `${compressedResults}${fileContext}${iterationWarning}\n${instruction}`;
 

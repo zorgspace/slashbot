@@ -112,7 +112,7 @@ export const PROXY_CONFIG = {
 export const AGENTIC = {
   MAX_ITERATIONS_CLI: 10000,
   MAX_ITERATIONS_CONNECTOR: 10000,
-  MAX_CONSECUTIVE_ERRORS: 10,
+  MAX_CONSECUTIVE_ERRORS: 30,
 } as const;
 
 // ============================================================================

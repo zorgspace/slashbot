@@ -38,6 +38,10 @@ class DisplayService {
 
   // === Core output ===
 
+  scrollToBottom(): void {
+    // No-op: content panel grows dynamically, no forced scroll
+  }
+
   append(text: string): void {
     if (this.tui) {
       this.tui.appendChat(text);
@@ -50,8 +54,11 @@ class DisplayService {
     if (this.tui) {
       this.tui.appendStyledChat(content);
     } else {
-      // Fallback: plain text (strip ANSI codes to avoid garbled output)
-      const plain = this.stripAnsi(String(content));
+      // Fallback: extract plain text from StyledText chunks
+      const plain =
+        typeof content === 'string'
+          ? this.stripAnsi(content)
+          : content.chunks.map(c => c.text).join('');
       console.log(plain);
     }
   }
@@ -69,6 +76,7 @@ class DisplayService {
 
   tool(name: string, args?: string): void {
     this.newline();
+    this.scrollToBottom();
     const argsStr = args ? `(${args})` : '';
     this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)(name)}${argsStr}`);
   }
@@ -123,21 +131,24 @@ class DisplayService {
 
   bash(command: string, _output?: string): void {
     this.newline();
+    this.scrollToBottom();
     this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)('Exec')}(${command})`);
   }
 
   bashResult(_command: string, output: string, exitCode = 0): void {
     const isError = exitCode !== 0 || output.startsWith('Error:');
-    const clean = this.stripAnsi(output);
-    const lines = clean.split('\n').filter(l => l.trim());
-    const preview = lines.slice(0, 3);
-    const more = lines.length > 3 ? `  ... ${lines.length - 3} more lines` : '';
-    if (preview.length > 0) {
+    // Route raw command output to OpenTUI console overlay (safe container)
+    const lines = output.split('\n').filter(l => l.trim());
+    if (lines.length > 0) {
+      const preview = lines.slice(0, 3);
       for (const line of preview) {
-        this.appendStyled(t`  ${fg(theme.white)(line)}`);
+        console.log(line);
       }
-      if (more) this.appendStyled(t`${fg(theme.muted)(more)}`);
+      if (lines.length > 3) {
+        console.log(`... ${lines.length - 3} more lines`);
+      }
     }
+    // Status in chat panel
     if (isError) {
       this.appendStyled(t`  ${fg(theme.error)('⎿  ✗ Failed (exit ' + exitCode + ')')}`);
     } else {
@@ -398,6 +409,7 @@ class DisplayService {
 
   statusLine(action: string, elapsed?: string, tokens?: number, thinkTime?: string): void {
     this.newline();
+    this.scrollToBottom();
     const parts = [`* ${action}`];
     if (elapsed) parts.push(elapsed);
     if (tokens) parts.push(`↓ ${tokens} tokens`);
@@ -492,7 +504,8 @@ class DisplayService {
 
   sayResult(msg: string): void {
     this.newline();
-    this.appendStyled(t`${fg(theme.white)('●')} ${msg}`);
+    this.scrollToBottom();
+    this.renderMarkdown(msg);
   }
 
   // === Prompt confirmation (y/n) ===
@@ -521,6 +534,7 @@ class DisplayService {
 
   private _stepAction(name: string, param: string, output?: string): void {
     this.newline();
+    this.scrollToBottom();
     this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)(name)}(${param})`);
     if (output !== undefined) {
       output.split('\n').forEach((line, i) => {

@@ -10,7 +10,7 @@ import type {
   PromptContribution,
 } from '../types';
 import { registerActionParser } from '../../core/actions/parser';
-import { executeSay } from './executors';
+import { executeSay, executeEnd } from './executors';
 import { getSayParserConfigs } from './parser';
 
 export class SayPlugin implements Plugin {
@@ -37,6 +37,12 @@ export class SayPlugin implements Plugin {
         execute: executeSay as any,
       },
       {
+        type: 'end',
+        tagName: 'end',
+        handler: {},
+        execute: executeEnd as any,
+      },
+      {
         type: 'continue',
         tagName: 'continue',
         handler: {},
@@ -51,12 +57,18 @@ export class SayPlugin implements Plugin {
         id: 'core.say.tools',
         title: 'Say - Communicate with User',
         priority: 80,
-        content: `\`\`\`
-<say>Your message to the user here</say>
-\`\`\`
-- ALWAYS use <say> for responses to the user
-- Use for: confirmations, explanations, questions, summaries
-- Keeps output clean - prevents raw code/text from being dumped to console`,
+        content: [
+          '```',
+          '<say>Your message to the user here</say>',
+          '```',
+          '- Use `<say>` for mid-task communication: progress updates, questions, interim findings like important discoveries or insights.',
+          '- Use `<end>` for the FINAL message when the task is complete. This will stop the agentic loop and return to the user the message.',
+          '```',
+          '<end>Your final summary here</end>',
+          '```',
+          '- IMPORTANT: `<end>` stops the agentic loop. Only use it when the task is FULLY verified and done.',
+          '- Keep messages short (1-3 sentences). Never dump code or full file contents.',
+        ].join('\n'),
       },
     ];
   }

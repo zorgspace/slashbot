@@ -3,7 +3,7 @@
  */
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
-import type { SayAction } from './types';
+import type { SayAction, EndAction } from './types';
 
 /**
  * Decode basic HTML entities
@@ -39,6 +39,18 @@ export async function executeSay(
   const decodedMessage = decodeHtmlEntities(action.message.trim());
   return {
     action: 'Says',
+    success: true,
+    result: decodedMessage,
+  };
+}
+
+/**
+ * Execute an end action - like say but signals task completion
+ */
+export async function executeEnd(action: EndAction): Promise<ActionResult> {
+  const decodedMessage = decodeHtmlEntities(action.message.trim());
+  return {
+    action: 'End',
     success: true,
     result: decodedMessage,
   };

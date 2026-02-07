@@ -24,6 +24,27 @@ export function getSayParserConfigs(): ActionParserConfig[] {
         return actions;
       },
     },
+    // End action (pre-strip) — signals task completion with a final message
+    {
+      tags: ['end'],
+      preStrip: true,
+      stripAfterParse: ['end'],
+      parse(content): Action[] {
+        const actions: Action[] = [];
+        const regex = /<end\s*>([\s\S]+?)<\/end>/gi;
+        let match;
+        while ((match = regex.exec(content)) !== null) {
+          const message = match[1].trim();
+          if (message) {
+            actions.push({
+              type: 'end',
+              message,
+            } as Action);
+          }
+        }
+        return actions;
+      },
+    },
     // Continue action (pre-strip)
     {
       tags: ['continue'],

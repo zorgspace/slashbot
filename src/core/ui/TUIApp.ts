@@ -85,12 +85,14 @@ export class TUIApp implements UIOutput {
     // Enable bracketed paste mode for proper input handling
     enableBracketedPaste();
 
-    // Create renderer with Ctrl+C and signal handling disabled
+    // Create renderer in inline mode (no alternate screen, preserves terminal history)
+    // Starts at minimal height, grows as content is added
     this.renderer = await createCliRenderer({
       exitOnCtrlC: false,
       exitSignals: [],
+      useAlternateScreen: false,
+      experimental_splitHeight: 24,
     });
-    this.renderer.setBackgroundColor(theme.bg);
 
     // Create root layout: vertical stack
     const root = new BoxRenderable(this.renderer, {
@@ -129,7 +131,6 @@ export class TUIApp implements UIOutput {
     // Input panel
     this.inputPanel = new InputPanel(this.renderer, {
       onSubmit: async value => {
-        this.chatPanel.addSeparator();
         this.chatPanel.appendUserMessage(value);
         await this.callbacks.onInput(value);
       },
@@ -163,8 +164,8 @@ export class TUIApp implements UIOutput {
         if (this.lastSelectedText) {
           copyToClipboard(this.lastSelectedText);
           // Flash background to confirm copy
-          this.renderer.setBackgroundColor(theme.violetDark);
-          setTimeout(() => this.renderer.setBackgroundColor(theme.bg), 120);
+          this.renderer.setBackgroundColor(theme.violet);
+          setTimeout(() => this.renderer.setBackgroundColor(theme.transparent), 50);
         }
         return;
       }
@@ -182,7 +183,7 @@ export class TUIApp implements UIOutput {
 
     keyHandler.on('keypress', key => {
       // Ctrl+C - clear input (if focused) or abort; double Ctrl+C exits
-      if (key.ctrl && key.name === 'c') {
+      if (key.ctrl && key.name === 'c' && !key.shift) {
         key.stopPropagation();
         key.preventDefault();
         const now = Date.now();
@@ -201,7 +202,7 @@ export class TUIApp implements UIOutput {
       }
 
       // Ctrl+L - clear chat
-      if (key.ctrl && key.name === 'l') {
+      if (key.ctrl && key.name === 'l' && !key.shift) {
         key.stopPropagation();
         key.preventDefault();
         this.chatPanel.clear();
@@ -209,7 +210,7 @@ export class TUIApp implements UIOutput {
       }
 
       // Ctrl+T - toggle communication log
-      if (key.ctrl && key.name === 't') {
+      if (key.ctrl && key.name === 't' && !key.shift) {
         key.stopPropagation();
         key.preventDefault();
         this.commPanel.toggle();
@@ -248,7 +249,6 @@ export class TUIApp implements UIOutput {
           key.preventDefault();
           const value = this.inputPanel.getValue();
           if (value.trim()) {
-            this.chatPanel.addSeparator();
             this.chatPanel.appendUserMessage(value);
             this.inputPanel.clear();
             this.callbacks.onInput(value);
@@ -325,18 +325,22 @@ export class TUIApp implements UIOutput {
 
   appendChat(content: string): void {
     this.chatPanel.append(content);
+    this.growHeight();
   }
 
   appendStyledChat(content: StyledText | string): void {
     this.chatPanel.appendStyled(content);
+    this.growHeight();
   }
 
   appendCodeBlock(content: string, filetype?: string): void {
     this.chatPanel.addCodeBlock(content, filetype);
+    this.growHeight();
   }
 
   appendDiffBlock(diff: string, filetype?: string): void {
     this.chatPanel.addDiffBlock(diff, filetype);
+    this.growHeight();
   }
 
   appendThinking(chunk: string): void {
@@ -357,6 +361,16 @@ export class TUIApp implements UIOutput {
 
   focusInput(): void {
     this.inputPanel.focus();
+  }
+
+  private growHeight(): void {
+    const termRows = process.stdout.rows || 40;
+    // Leave at least 2 terminal lines visible (don't clear the screen)
+    const maxHeight = termRows - 2;
+    const current = this.renderer.experimental_splitHeight;
+    if (current < maxHeight) {
+      this.renderer.experimental_splitHeight = Math.min(current + 1, maxHeight);
+    }
   }
 
   showSpinner(label: string = 'Thinking...'): void {

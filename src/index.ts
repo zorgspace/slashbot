@@ -332,9 +332,6 @@ class Slashbot {
         return response;
       }
 
-      // Log prompt to comm panel
-      this.tuiApp?.logPrompt(trimmed);
-
       // For CLI, stream to console (thinking is streamed in real-time via thinkingDisplay)
       await this.grokClient.chat(trimmed);
       await this.dumpContext();

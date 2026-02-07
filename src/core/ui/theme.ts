@@ -1,8 +1,11 @@
+import { RGBA } from '@opentui/core';
 /**
  * OpenTUI Theme - Violet color scheme mapped to hex
  */
 
 export const theme = {
+  transparent: new RGBA(new Float32Array([0, 0, 0, 0])),
+  
   // Primary violet shades
   violet: '#8A2BE2',
   violetLight: '#B87EFF',

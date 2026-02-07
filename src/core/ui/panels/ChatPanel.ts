@@ -54,7 +54,7 @@ export class ChatPanel {
     this.scrollBox = new ScrollBoxRenderable(renderer, {
       id: 'chat-scroll',
       flexGrow: 1,
-      stickyScroll: true,
+      stickyScroll: false,
       stickyStart: 'bottom',
     });
 
@@ -81,10 +81,6 @@ export class ChatPanel {
     this.addLine(content);
   }
 
-  addSeparator(): void {
-    this.addLine(t`${fg(theme.muted)('────────────────────────────')}`);
-  }
-
   appendUserMessage(value: string): void {
     this.addLine(t`${fg(theme.violetLight)('You:')} ${fg(theme.white)(value)}`);
   }
@@ -101,7 +97,7 @@ export class ChatPanel {
           fg: theme.white,
         });
         this.scrollBox.insertBefore(code, this.spinnerText);
-        this.autoScroll();
+        // scroll managed by display service
         this.pruneLines();
       } catch {
         this.addCodeFallback(content);
@@ -120,7 +116,7 @@ export class ChatPanel {
           diff: diffContent,
           syntaxStyle: this.syntaxStyle,
           showLineNumbers: true,
-          height: Math.min(lineCount + 2, 30),
+          height: Math.min(lineCount + 2, 15),
           fg: theme.white,
           addedBg: '#0a3d0a',
           removedBg: '#3d0a0a',
@@ -129,11 +125,11 @@ export class ChatPanel {
           lineNumberFg: theme.muted,
           lineNumberBg: theme.bgPanel,
           contextBg: theme.bgPanel,
-          wrapMode: 'none',
+          wrapMode: 'word',
         });
 
         this.scrollBox.insertBefore(diff, this.spinnerText);
-        this.autoScroll();
+        // scroll managed by display service
         this.pruneLines();
       } catch {
         this.addDiffFallback(diffContent);
@@ -211,16 +207,14 @@ export class ChatPanel {
       content: typeof content === 'string' ? content : content,
     });
     this.scrollBox.insertBefore(line, this.spinnerText);
-    this.autoScroll();
     this.pruneLines();
   }
 
-  private autoScroll(): void {
-    const currentScroll = (this.scrollBox as any).getScrollTop?.() ?? 0;
-    const maxScroll = (this.scrollBox as any).getMaxScroll?.() ?? 0;
-    if (currentScroll >= maxScroll - 2) {
-      this.scrollBox.scrollTo(Infinity);
-    }
+  /**
+   * Scroll to bottom — call only on action start/finish, not on every line
+   */
+  scrollToBottom(): void {
+    this.scrollBox.scrollTo(Infinity);
   }
 
   private pruneLines(): void {
