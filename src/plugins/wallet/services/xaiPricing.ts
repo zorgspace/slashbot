@@ -24,7 +24,7 @@ export const XAI_MODEL_PRICING: ModelPricing[] = [
     model: 'grok-code-fast-1',
     inputPricePerMillion: 0.2,
     outputPricePerMillion: 1.5,
-  }
+  },
 ];
 
 /** Default pricing for unknown models */

@@ -239,7 +239,7 @@ function getSubcommands(command: string): string[] {
       'status',
       'pricing',
       'mode',
-      'usage'
+      'usage',
     ],
     // Add other commands with subcommands if needed
   };

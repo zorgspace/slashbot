@@ -5,6 +5,8 @@
 import { display } from '../../core/ui';
 import { HOME_SKILLS_DIR } from '../../core/config/constants';
 import type { CommandHandler } from '../../core/commands/registry';
+import { TYPES } from '../../core/di/types';
+import type { SkillManager } from './services/SkillManager';
 
 export const skillCommand: CommandHandler = {
   name: 'skill',
@@ -13,7 +15,10 @@ export const skillCommand: CommandHandler = {
   aliases: ['skills'],
   group: 'Skills',
   execute: async (args, context) => {
-    if (!context.skillManager) {
+    let skillManager: SkillManager;
+    try {
+      skillManager = context.container.get<SkillManager>(TYPES.SkillManager);
+    } catch {
       display.errorText('SkillManager not available');
       return true;
     }
@@ -23,7 +28,7 @@ export const skillCommand: CommandHandler = {
     switch (subcommand) {
       case 'list':
       case 'ls':
-        const skills = await context.skillManager.listSkills();
+        const skills = await skillManager.listSkills();
         if (skills.length === 0) {
           display.append('');
           display.muted('No skills installed');
@@ -59,7 +64,7 @@ export const skillCommand: CommandHandler = {
 
         try {
           display.muted('Downloading skill from ' + url + '...');
-          const skill = await context.skillManager.installSkill(url, customName);
+          const skill = await skillManager.installSkill(url, customName);
           display.successText('Skill installed: ' + skill.name);
           display.muted('Path: ' + skill.path);
           await context.reinitializeGrok();
@@ -78,7 +83,7 @@ export const skillCommand: CommandHandler = {
           return true;
         }
 
-        if (await context.skillManager.removeSkill(nameToRemove)) {
+        if (await skillManager.removeSkill(nameToRemove)) {
           display.successText('Skill removed: ' + nameToRemove);
           await context.reinitializeGrok();
         } else {
@@ -94,7 +99,7 @@ export const skillCommand: CommandHandler = {
           return true;
         }
 
-        const skill = await context.skillManager.getSkill(skillName);
+        const skill = await skillManager.getSkill(skillName);
         if (skill) {
           display.append('');
           display.violet('Skill: ' + skill.name);
@@ -130,7 +135,7 @@ export const skillCommand: CommandHandler = {
       case 'dir':
       case 'path':
         display.append('');
-        display.muted('Skills directory: ' + context.skillManager.getSkillsDir());
+        display.muted('Skills directory: ' + skillManager.getSkillsDir());
         display.append('');
         break;
 

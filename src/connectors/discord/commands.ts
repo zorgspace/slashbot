@@ -23,7 +23,9 @@ export const discordCommand: CommandHandler = {
       display.append('');
 
       if (discordConfig) {
-        display.append('  Status:     ' + (connector?.isRunning() ? 'Connected' : 'Configured but not running'));
+        display.append(
+          '  Status:     ' + (connector?.isRunning() ? 'Connected' : 'Configured but not running'),
+        );
         display.muted('  Bot:        ' + discordConfig.botToken.slice(0, 20) + '...');
         display.muted('  Channel ID: ' + discordConfig.channelId);
       } else {

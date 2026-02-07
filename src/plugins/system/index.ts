@@ -20,7 +20,8 @@ export class SystemPlugin implements Plugin {
     name: 'System',
     version: '1.0.0',
     category: 'core',
-    description: 'System management commands (help, clear, history, exit, personality, images, init, update, ps, kill, plugins)',
+    description:
+      'System management commands (help, clear, history, exit, personality, images, init, update, ps, kill, plugins)',
   };
 
   private commands: CommandHandler[] | null = null;

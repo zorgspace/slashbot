@@ -67,9 +67,10 @@ export class LRUCache<K, V> {
 
 /**
  * Format action results for LLM context
- * No truncation - send full results to the LLM
- * Clearly labeled to distinguish from user input
+ * Truncates long results to limit token usage
  */
+const MAX_RESULT_CHARS = 2000;
+
 export function compressActionResults(
   results: Array<{ action?: string; result: string; success?: boolean; error?: string }>,
 ): string {
@@ -79,7 +80,13 @@ export function compressActionResults(
       const success = r.success ?? false;
       const status = success ? '✓' : '✗';
       const errorNote = r.error ? ` (${r.error})` : '';
-      return `[${status}] ${action}${errorNote}\n${r.result}`;
+      let result = r.result;
+      if (result.length > MAX_RESULT_CHARS) {
+        result =
+          result.slice(0, MAX_RESULT_CHARS) +
+          `\n... (truncated ${result.length - MAX_RESULT_CHARS} chars)`;
+      }
+      return `[${status}] ${action}${errorNote}\n${result}`;
     })
     .join('\n\n');
 
@@ -87,25 +94,14 @@ export function compressActionResults(
 }
 
 /**
- * Generate environment information string
+ * Generate compact environment information string
  */
 export function getEnvironmentInfo(workDir: string): string {
-  const os = require('os');
   const fs = require('fs');
   const path = require('path');
 
   const cwd = workDir || process.cwd();
   const isGitRepo = fs.existsSync(path.join(cwd, '.git'));
-  const platform = process.platform;
-  const osVersion = `${os.type()} ${os.release()}`;
   const today = new Date().toISOString().split('T')[0];
-
-  return `
-<env>
-Working directory: ${cwd}
-Is directory a git repo: ${isGitRepo ? 'Yes' : 'No'}
-Platform: ${platform}
-OS Version: ${osVersion}
-Today's date: ${today}
-</env>`;
+  return `\n<env>cwd=${cwd} git=${isGitRepo ? 'yes' : 'no'} platform=${process.platform} date=${today}</env>`;
 }

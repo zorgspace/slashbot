@@ -3,6 +3,7 @@
  *
  * Manages the full heartbeat lifecycle: init, start, stop.
  * Uses lazy resolution of GrokClient via context.getGrokClient().
+ * Self-registers HeartbeatService in DI container.
  */
 
 import type {
@@ -11,6 +12,7 @@ import type {
   PluginContext,
   ActionContribution,
   PromptContribution,
+  SidebarContribution,
 } from '../types';
 import type { CommandHandler } from '../../core/commands/registry';
 import { registerActionParser } from '../../core/actions/parser';
@@ -39,7 +41,13 @@ export class HeartbeatPlugin implements Plugin {
     const { heartbeatCommands } = await import('./commands');
     this.heartbeatCmds = heartbeatCommands;
 
-    const { TYPES } = require('../../core/di/types');
+    // Self-register HeartbeatService in DI container
+    const { HeartbeatService: HeartbeatServiceClass } = await import('./services/HeartbeatService');
+    const { TYPES } = await import('../../core/di/types');
+    if (!context.container.isBound(TYPES.HeartbeatService)) {
+      context.container.bind(TYPES.HeartbeatService).to(HeartbeatServiceClass).inSingletonScope();
+    }
+
     this.heartbeatService = context.container.get<HeartbeatService>(TYPES.HeartbeatService);
 
     // Initialize the heartbeat service (loads config + state from disk)
@@ -57,7 +65,9 @@ export class HeartbeatPlugin implements Plugin {
         throw new Error('Grok client not initialized');
       }
       const safePrompt = `[HEARTBEAT - REFLECTION MODE]\n${prompt}`;
-      const result = await (grokClient as { chat: (p: string) => Promise<{ response?: string; thinking?: string }> }).chat(safePrompt);
+      const result = await (
+        grokClient as { chat: (p: string) => Promise<{ response?: string; thinking?: string }> }
+      ).chat(safePrompt);
       return { response: result.response || '', thinking: result.thinking };
     });
 
@@ -102,6 +112,21 @@ export class HeartbeatPlugin implements Plugin {
 
   getCommandContributions(): CommandHandler[] {
     return this.heartbeatCmds || [];
+  }
+
+  getSidebarContributions(): SidebarContribution[] {
+    const heartbeatService = this.heartbeatService;
+    return [
+      {
+        id: 'heartbeat',
+        label: 'Heartbeat',
+        order: 20,
+        getStatus: () => {
+          const status = heartbeatService.getStatus();
+          return status.running && status.enabled;
+        },
+      },
+    ];
   }
 
   getPromptContributions(): PromptContribution[] {

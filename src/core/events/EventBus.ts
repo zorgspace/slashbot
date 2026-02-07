@@ -1,17 +1,16 @@
 /**
  * Event Bus - Typed event system for Slashbot
  *
- * Provides decoupled communication between components using typed events.
+ * Core events are typed. Plugin events use generic string-based overloads.
  */
 
 import 'reflect-metadata';
 import { injectable } from 'inversify';
 import { EventEmitter } from 'events';
 import type { ConnectorSource } from '../../connectors/base';
-import type { HeartbeatResult } from '../../plugins/heartbeat/services/types';
 
 /**
- * All possible events in the system
+ * Core events in the system (typed)
  */
 export type SlashbotEvent =
   | { type: 'task:complete'; taskId: string; taskName: string; output: string }
@@ -23,13 +22,7 @@ export type SlashbotEvent =
   | { type: 'connector:disconnected'; source: ConnectorSource }
   | { type: 'grok:initialized' }
   | { type: 'grok:disconnected' }
-  | { type: 'prompt:redraw' }
-  // Heartbeat events
-  | { type: 'heartbeat:started' }
-  | { type: 'heartbeat:complete'; result: HeartbeatResult }
-  | { type: 'heartbeat:alert'; content: string }
-  | { type: 'heartbeat:ok'; content?: string }
-  | { type: 'heartbeat:error'; error: string };
+  | { type: 'prompt:redraw' };
 
 /**
  * Extract event types as string union
@@ -58,18 +51,28 @@ export class EventBus {
   }
 
   /**
-   * Emit an event to all subscribers
+   * Emit a typed core event
    */
-  emit<T extends SlashbotEventType>(event: EventPayload<T>): void {
+  emit<T extends SlashbotEventType>(event: EventPayload<T>): void;
+  /**
+   * Emit a plugin event (untyped)
+   */
+  emit(event: { type: string; [key: string]: any }): void;
+  emit(event: { type: string; [key: string]: any }): void {
     this.emitter.emit(event.type, event);
     // Also emit to wildcard listeners
     this.emitter.emit('*', event);
   }
 
   /**
-   * Subscribe to a specific event type
+   * Subscribe to a typed core event
    */
-  on<T extends SlashbotEventType>(type: T, handler: EventHandler<T>): () => void {
+  on<T extends SlashbotEventType>(type: T, handler: EventHandler<T>): () => void;
+  /**
+   * Subscribe to a plugin event (untyped)
+   */
+  on(type: string, handler: (event: any) => void): () => void;
+  on(type: string, handler: (event: any) => void): () => void {
     this.emitter.on(type, handler);
     // Return unsubscribe function
     return () => this.emitter.off(type, handler);
@@ -78,7 +81,9 @@ export class EventBus {
   /**
    * Subscribe to all events
    */
-  onAny(handler: (event: SlashbotEvent) => void): () => void {
+  onAny(
+    handler: (event: SlashbotEvent | { type: string; [key: string]: any }) => void,
+  ): () => void {
     this.emitter.on('*', handler);
     return () => this.emitter.off('*', handler);
   }
@@ -86,14 +91,16 @@ export class EventBus {
   /**
    * Subscribe once to a specific event type
    */
-  once<T extends SlashbotEventType>(type: T, handler: EventHandler<T>): void {
+  once<T extends SlashbotEventType>(type: T, handler: EventHandler<T>): void;
+  once(type: string, handler: (event: any) => void): void;
+  once(type: string, handler: (event: any) => void): void {
     this.emitter.once(type, handler);
   }
 
   /**
    * Remove all listeners for a specific event type
    */
-  off<T extends SlashbotEventType>(type: T): void {
+  off(type: string): void {
     this.emitter.removeAllListeners(type);
   }
 
@@ -107,7 +114,7 @@ export class EventBus {
   /**
    * Get listener count for an event type
    */
-  listenerCount(type: SlashbotEventType): number {
+  listenerCount(type: string): number {
     return this.emitter.listenerCount(type);
   }
 }

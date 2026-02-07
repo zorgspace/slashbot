@@ -30,6 +30,7 @@ export class InputPanel {
   private currentInput = '';
   private submitCallback: (value: string) => void;
   private completer?: (line: string) => [string[], string];
+  private _isPromptActive = false;
 
   constructor(renderer: CliRenderer, options: InputPanelOptions) {
     this.submitCallback = options.onSubmit;
@@ -53,7 +54,6 @@ export class InputPanel {
       placeholder: t`${bold(fg(theme.violet)('>'))} `,
       width: 3,
       height: 1,
-     
     });
 
     this.input = new InputRenderable(renderer, {
@@ -69,8 +69,6 @@ export class InputPanel {
 
     this.container.add(this.promptLabel);
     this.container.add(this.input);
-
-
   }
 
   private handleSubmit(): void {
@@ -95,6 +93,10 @@ export class InputPanel {
 
   isFocused(): boolean {
     return this.input.focused;
+  }
+
+  isPromptActive(): boolean {
+    return this._isPromptActive;
   }
 
   getValue(): string {
@@ -172,6 +174,7 @@ export class InputPanel {
    */
   promptInput(label: string, options?: { masked?: boolean }): Promise<string> {
     return new Promise(resolve => {
+      this._isPromptActive = true;
       const masked = options?.masked ?? false;
       const savedPlaceholder = this.input.placeholder;
       const savedValue = this.input.value;
@@ -187,6 +190,7 @@ export class InputPanel {
       let enterListener: (() => void) | null = null;
 
       const cleanup = () => {
+        this._isPromptActive = false;
         if (inputListener) this.input.off(InputRenderableEvents.INPUT, inputListener);
         if (enterListener) this.input.off(InputRenderableEvents.ENTER, enterListener);
         // Restore normal state

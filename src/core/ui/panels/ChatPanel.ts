@@ -9,6 +9,10 @@ import {
   BoxRenderable,
   ScrollBoxRenderable,
   TextRenderable,
+  CodeRenderable,
+  DiffRenderable,
+  SyntaxStyle,
+  RGBA,
   t,
   fg,
   type CliRenderer,
@@ -16,86 +20,149 @@ import {
 } from '@opentui/core';
 import { theme } from '../theme';
 
-const SPINNER_FRAMES = [
-  '\u280B',
-  '\u2819',
-  '\u2839',
-  '\u2838',
-  '\u283C',
-  '\u2834',
-  '\u2826',
-  '\u2827',
-  '\u2807',
-  '\u280F',
-];
-
 const MAX_LINES = 500;
 const PRUNE_TO = 400;
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 export class ChatPanel {
   private container: BoxRenderable;
   private scrollBox: ScrollBoxRenderable;
+  private renderer: CliRenderer;
+  private lineCounter = 0;
+  private syntaxStyle: SyntaxStyle | null = null;
   private spinnerText: TextRenderable;
   private spinnerInterval: ReturnType<typeof setInterval> | null = null;
   private spinnerFrame = 0;
-  private renderer: CliRenderer;
-  private lineCounter = 0;
 
   constructor(renderer: CliRenderer) {
     this.renderer = renderer;
+    try {
+      this.syntaxStyle = SyntaxStyle.fromStyles({
+        keyword: { fg: RGBA.fromHex(theme.violet), bold: true },
+        string: { fg: RGBA.fromHex(theme.success) },
+        comment: { fg: RGBA.fromHex(theme.muted), italic: true },
+        number: { fg: RGBA.fromHex(theme.warning) },
+        function: { fg: RGBA.fromHex(theme.violetLight) },
+        type: { fg: RGBA.fromHex(theme.warning) },
+        operator: { fg: RGBA.fromHex(theme.white) },
+        punctuation: { fg: RGBA.fromHex(theme.muted) },
+      });
+    } catch {
+      //
+    }
+
+    this.scrollBox = new ScrollBoxRenderable(renderer, {
+      id: 'chat-scroll',
+      flexGrow: 1,
+      stickyScroll: true,
+      stickyStart: 'bottom',
+    });
+
+    this.spinnerText = new TextRenderable(renderer, {
+      id: 'chat-spinner',
+      content: '',
+    });
+    this.spinnerText.visible = false;
+    this.scrollBox.add(this.spinnerText);
 
     this.container = new BoxRenderable(renderer, {
       id: 'chat-container',
       flexGrow: 1,
       flexDirection: 'column',
-      border: false,
     });
-
-    this.scrollBox = new ScrollBoxRenderable(renderer, {
-      id: 'chat-scroll',
-      flexGrow: 1,
-      paddingLeft: 1,
-      paddingRight: 1,
-    });
-
-    // Spinner line at the bottom of the scroll box (hidden by default)
-    this.spinnerText = new TextRenderable(renderer, {
-      id: 'chat-spinner',
-      content: '',
-      height: 1,
-      visible: false,
-    });
-
-    this.scrollBox.add(this.spinnerText);
     this.container.add(this.scrollBox);
   }
 
-  /**
-   * Append plain text as a new line in the chat
-   */
   append(text: string): void {
     this.addLine(text);
   }
 
-  /**
-   * Append styled content (StyledText or string) as a new line
-   */
   appendStyled(content: StyledText | string): void {
     this.addLine(content);
   }
 
-  /**
-   * Display the user's input message in the chat (styled)
-   */
-  appendUserMessage(text: string): void {
-    this.addLine(t`${fg(theme.violet)('❯')} ${text}`);
+  addSeparator(): void {
+    this.addLine(t`${fg(theme.muted)('────────────────────────────')}`);
   }
 
-  /**
-   * Add a blank line separator (call between chat turns)
-   */
-  addSeparator(): void {
-    this.addLine('');
+  appendUserMessage(value: string): void {
+    this.addLine(t`${fg(theme.violetLight)('You:')} ${fg(theme.white)(value)}`);
+  }
+
+  addCodeBlock(content: string, filetype?: string): void {
+    if (this.syntaxStyle && filetype) {
+      try {
+        const lineCount = content.split('\n').length;
+        const code = new CodeRenderable(this.renderer, {
+          id: `chat-code-${this.lineCounter++}`,
+          content,
+          filetype,
+          syntaxStyle: this.syntaxStyle,
+          fg: theme.white,
+        });
+        this.scrollBox.insertBefore(code, this.spinnerText);
+        this.autoScroll();
+        this.pruneLines();
+      } catch {
+        this.addCodeFallback(content);
+      }
+    } else {
+      this.addCodeFallback(content);
+    }
+  }
+
+  addDiffBlock(diffContent: string, _filetype?: string): void {
+    if (this.syntaxStyle) {
+      try {
+        const lineCount = diffContent.split('\n').length;
+        const diff = new DiffRenderable(this.renderer, {
+          id: `chat-diff-${this.lineCounter++}`,
+          diff: diffContent,
+          syntaxStyle: this.syntaxStyle,
+          showLineNumbers: true,
+          height: Math.min(lineCount + 2, 30),
+          fg: theme.white,
+          addedBg: '#0a3d0a',
+          removedBg: '#3d0a0a',
+          addedSignColor: theme.success,
+          removedSignColor: theme.error,
+          lineNumberFg: theme.muted,
+          lineNumberBg: theme.bgPanel,
+          contextBg: theme.bgPanel,
+          wrapMode: 'none',
+        });
+
+        this.scrollBox.insertBefore(diff, this.spinnerText);
+        this.autoScroll();
+        this.pruneLines();
+      } catch {
+        this.addDiffFallback(diffContent);
+      }
+    } else {
+      this.addDiffFallback(diffContent);
+    }
+  }
+
+  private addCodeFallback(content: string): void {
+    this.addLine(t`${fg(theme.muted)('```')}`);
+    for (const line of content.split('\n')) {
+      this.addLine(t`  ${fg(theme.white)(line)}`);
+    }
+    this.addLine(t`${fg(theme.muted)('```')}`);
+  }
+
+  private addDiffFallback(diffContent: string): void {
+    for (const line of diffContent.split('\n')) {
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        this.addLine(t`  ${fg(theme.success)(line)}`);
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        this.addLine(t`  ${fg(theme.error)(line)}`);
+      } else if (line.startsWith('@@')) {
+        this.addLine(t`  ${fg(theme.violet)(line)}`);
+      } else {
+        this.addLine(t`  ${fg(theme.muted)(line)}`);
+      }
+    }
   }
 
   clear(): void {
@@ -108,11 +175,8 @@ export class ChatPanel {
     this.lineCounter = 0;
   }
 
-  /**
-   * Show a spinning indicator with a label (e.g. "Thinking...")
-   */
   showSpinner(label: string = 'Thinking...'): void {
-    if (this.spinnerInterval) return; // Already showing
+    if (this.spinnerInterval) return;
 
     this.spinnerFrame = 0;
     this.spinnerText.visible = true;
@@ -124,9 +188,6 @@ export class ChatPanel {
     }, 150);
   }
 
-  /**
-   * Hide the spinner
-   */
   hideSpinner(): void {
     if (this.spinnerInterval) {
       clearInterval(this.spinnerInterval);
@@ -144,34 +205,27 @@ export class ChatPanel {
 
   private addLine(content: StyledText | string): void {
     this.lineCounter++;
+    const id = `chat-line-${this.lineCounter}`;
     const line = new TextRenderable(this.renderer, {
-      id: `chat-line-${this.lineCounter}`,
-      content,
-      selectionBg: theme.violetDark,
-      selectionFg: theme.white,
+      id,
+      content: typeof content === 'string' ? content : content,
     });
+    this.scrollBox.insertBefore(line, this.spinnerText);
+    this.autoScroll();
+    this.pruneLines();
+  }
 
-    // Insert before the spinner (spinner should always be last)
-    // Remove spinner, add line, re-add spinner
-    this.scrollBox.remove('chat-spinner');
-    this.scrollBox.add(line);
-    this.scrollBox.add(this.spinnerText);
-
-    // Auto-scroll only if user is at or near the bottom
+  private autoScroll(): void {
     const currentScroll = (this.scrollBox as any).getScrollTop?.() ?? 0;
     const maxScroll = (this.scrollBox as any).getMaxScroll?.() ?? 0;
-    if (currentScroll >= maxScroll - 2) { // Within 2 lines of bottom
+    if (currentScroll >= maxScroll - 2) {
       this.scrollBox.scrollTo(Infinity);
     }
-
-    // Prune old lines
-    this.pruneLines();
   }
 
   private pruneLines(): void {
     const children = this.scrollBox.getChildren();
-    // Count non-spinner children
-    const lineChildren = children.filter(c => c.id !== 'chat-spinner');
+    const lineChildren = children.filter((c: { id: string }) => c.id !== 'chat-spinner');
     if (lineChildren.length > MAX_LINES) {
       const toRemove = lineChildren.slice(0, lineChildren.length - PRUNE_TO);
       for (const child of toRemove) {

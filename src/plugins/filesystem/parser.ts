@@ -6,46 +6,6 @@ import type { Action } from '../../core/actions/types';
 const Q = `["']`;
 const NQR = `[^"']+`;
 
-/**
- * Try to reconstruct malformed edit tags that LLM might produce
- */
-function tryReconstructMalformedEdits(content: string): string {
-  let result = content;
-
-  // Pattern 1: LLM outputs <edit path="..."> then code directly then </edit>
-  const brokenEditPattern =
-    /<edit\s+path\s*=\s*["']([^"']+)["'][^>]*>(?![\s\S]*?<search>)([\s\S]*?)<\/edit>/gi;
-  result = result.replace(brokenEditPattern, (match, _path, codeContent) => {
-    const trimmed = codeContent.trim();
-    if (trimmed && !trimmed.includes('<search>') && !trimmed.includes('<replace>')) {
-      return match;
-    }
-    return match;
-  });
-
-  // Pattern 2: Missing opening <edit>
-  const missingOpenPattern =
-    /(?<!<edit[^>]*>)((?:^|\n)[\w/.]+\.(?:ts|js|tsx|jsx|py|go|rs|java|cpp|c|h|md|json|yaml|yml)\s*\n\s*<search>[\s\S]*?<\/search>\s*<replace>[\s\S]*?<\/replace>\s*<\/edit>)/gi;
-  result = result.replace(missingOpenPattern, (match, content) => {
-    const pathMatch = content.match(
-      /^[\s\n]*([\w/.]+\.(?:ts|js|tsx|jsx|py|go|rs|java|cpp|c|h|md|json|yaml|yml))/i,
-    );
-    if (pathMatch) {
-      const path = pathMatch[1];
-      const rest = content.slice(pathMatch[0].length);
-      return `<edit path="${path}">${rest}`;
-    }
-    return match;
-  });
-
-  // Pattern 3: <edit> without path attribute but path mentioned in content
-  const editWithoutPathPattern =
-    /<edit\s*>[\s\n]*([\w/.]+\.(?:ts|js|tsx|jsx|py|go|rs|java|cpp|c|h|md|json|yaml|yml))[\s\n]*<search>/gi;
-  result = result.replace(editWithoutPathPattern, '<edit path="$1"><search>');
-
-  return result;
-}
-
 export function getFilesystemParserConfigs(): ActionParserConfig[] {
   return [
     // Read action (post-strip)
@@ -74,36 +34,12 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         return actions;
       },
     },
-    // Edit action (post-strip)
+    // Edit action (post-strip) - unified diff format with line numbers
     {
-      tags: ['edit', 'replace', 'search'],
+      tags: ['edit'],
+      protectedTags: ['edit'],
       fixups(content: string): string {
         let result = content;
-
-        // Fix malformed inner tags like <search"> or <replace"> (stray quotes)
-        result = result.replace(/<search["'\s]*>/gi, '<search>');
-        result = result.replace(/<replace["'\s]*>/gi, '<replace>');
-        result = result.replace(/<\/search["'\s]*>/gi, '</search>');
-        result = result.replace(/<\/replace["'\s]*>/gi, '</replace>');
-
-        // Fix extra </search> after </replace> (common LLM mistake)
-        result = result.replace(/<\/replace>\s*<\/search>\s*<\/edit/gi, '</replace></edit');
-
-        // Fix </search> used instead of </replace> at end of replace block
-        result = result.replace(
-          /<replace>([\s\S]*?)<\/search>\s*<\/replace>/gi,
-          '<replace>$1</replace></edit>',
-        );
-        result = result.replace(
-          /<replace>([\s\S]*?)<\/search>\s*<\/edit/gi,
-          '<replace>$1</replace></edit',
-        );
-
-        // Fix <replace>...</search> -> <replace>...</replace>
-        result = result.replace(
-          /<replace>((?:(?!<\/replace>|<\/edit>)[\s\S])*?)<\/search>/gi,
-          '<replace>$1</replace>',
-        );
 
         // Fix variations of edit tag: <edit file="..."> -> <edit path="...">
         result = result.replace(/<edit\s+file\s*=/gi, '<edit path=');
@@ -114,70 +50,91 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         return result;
       },
       parse(content): Action[] {
-        // Apply malformed edit reconstruction
-        const fixedContent = tryReconstructMalformedEdits(content);
-
         const actions: Action[] = [];
-        const editPatterns = [
-          new RegExp(
-            `<edit\\s+path=${Q}(${NQR})${Q}[^>]*>\\s*<search>([\\s\\S]*?)</search>\\s*<replace>([\\s\\S]*?)</replace>\\s*</edit>`,
-            'gi',
-          ),
-          /<edit\s+path\s*=\s*["']([^"']+)["'][^>]*>\s*<search>((?:[\s\S]*?))<\/search>\s*<replace>((?:[\s\S]*?))<\/replace>\s*<\/edit>/gi,
-          /<edit\s+path\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?<search>([\s\S]*?)<\/search>[\s\S]*?<replace>([\s\S]*?)<\/replace>[\s\S]*?<\/edit>/gi,
-          /<edit\s+file\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?<search>([\s\S]*?)<\/search>[\s\S]*?<replace>([\s\S]*?)<\/replace>[\s\S]*?<\/edit>/gi,
-          /<edit\s+path\s*=\s*([^\s>"']+)[^>]*>[\s\S]*?<search>([\s\S]*?)<\/search>[\s\S]*?<replace>([\s\S]*?)<\/replace>[\s\S]*?<\/edit>/gi,
-          /<edit\s+path\s*=\s*["']?([^"'\s>]+)["']?[^>]*><search>([\s\S]*?)<\/search><replace>([\s\S]*?)<\/replace><\/edit>/gi,
-        ];
+        // Match outer <edit path="...">...</edit> wrapper
+        const outerRegex = /<edit\s+path\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/edit>/gi;
+        let outerMatch;
 
-        const parsedEditPaths = new Set<string>();
-        let match;
-        for (const editRegex of editPatterns) {
-          editRegex.lastIndex = 0;
-          while ((match = editRegex.exec(fixedContent)) !== null) {
-            const fullMatch = match[0];
-            const [, path, search, replace] = match;
+        while ((outerMatch = outerRegex.exec(content)) !== null) {
+          const path = outerMatch[1];
+          const innerContent = outerMatch[2];
 
-            const matchKey = `${path}:${search.slice(0, 50)}`;
-            if (parsedEditPaths.has(matchKey)) continue;
-            parsedEditPaths.add(matchKey);
+          // Find all hunk headers: @@ -startLine,count @@
+          const hunkRegex = /@@ -(\d+),(\d+)(?:\s+\+\d+(?:,\d+)?)? @@/g;
+          let hunkMatch;
+          const headers: {
+            startLine: number;
+            lineCount: number;
+            matchStart: number;
+            matchEnd: number;
+          }[] = [];
 
-            const replaceAll =
-              extractBoolAttr(fullMatch, 'replace_all') || extractBoolAttr(fullMatch, 'replaceAll');
-            const cleanSearch = search.replace(/^\n+|\n+$/g, '');
-            const cleanReplace = replace.replace(/^\n+|\n+$/g, '');
-            actions.push({
-              type: 'edit',
-              path,
-              search: cleanSearch,
-              replace: cleanReplace,
-              replaceAll: replaceAll || undefined,
-            } as Action);
+          while ((hunkMatch = hunkRegex.exec(innerContent)) !== null) {
+            headers.push({
+              startLine: parseInt(hunkMatch[1], 10),
+              lineCount: parseInt(hunkMatch[2], 10),
+              matchStart: hunkMatch.index,
+              matchEnd: hunkMatch.index + hunkMatch[0].length,
+            });
           }
-        }
-        return actions;
-      },
-    },
-    // Diff edit action (post-strip) - new format with line numbers
-    {
-      tags: [], // No XML tags for this format
-      parse(content): Action[] {
-        const actions: Action[] = [];
-        // Look for file path followed by diff format
-        const diffRegex = /([\w/.]+\.(?:ts|js|tsx|jsx|py|go|rs|java|cpp|c|h|md|json|yaml|yml))\s*\n<<<<<<< SEARCH@(\d+)-(\d+)\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/gi;
-        let match;
-        while ((match = diffRegex.exec(content)) !== null) {
-          const [, path, startLine, endLine, search, replace] = match;
-          const cleanSearch = search.replace(/^\n+|\n+$/g, '');
-          const cleanReplace = replace.replace(/^\n+|\n+$/g, '');
+
+          if (headers.length === 0) continue;
+
+          const hunks: {
+            startLine: number;
+            lineCount: number;
+            diffLines: { type: 'context' | 'add' | 'remove'; content: string }[];
+          }[] = [];
+          for (let i = 0; i < headers.length; i++) {
+            const header = headers[i];
+            const contentStart = header.matchEnd;
+            const contentEnd =
+              i + 1 < headers.length ? headers[i + 1].matchStart : innerContent.length;
+            const hunkContent = innerContent.substring(contentStart, contentEnd);
+
+            const diffLines: { type: 'context' | 'add' | 'remove'; content: string }[] = [];
+            for (const line of hunkContent.split('\n')) {
+              if (line.startsWith('-')) {
+                diffLines.push({ type: 'remove', content: line.substring(1) });
+              } else if (line.startsWith('+')) {
+                diffLines.push({ type: 'add', content: line.substring(1) });
+              } else if (line.startsWith(' ')) {
+                diffLines.push({ type: 'context', content: line.substring(1) });
+              } else if (line.trim().length > 0) {
+                // No prefix - treat as context (LLM forgot the space prefix)
+                diffLines.push({ type: 'context', content: line });
+              }
+            }
+
+            hunks.push({
+              startLine: header.startLine,
+              lineCount: header.lineCount,
+              diffLines,
+            });
+          }
+
           actions.push({
             type: 'edit',
             path,
-            search: cleanSearch,
-            replace: cleanReplace,
+            hunks,
           } as Action);
         }
-        return actions;
+
+        // Merge multiple <edit> blocks targeting the same file into one action
+        // so all hunks are applied bottom-to-top in a single pass
+        const byPath = new Map<string, Action>();
+        const merged: Action[] = [];
+        for (const action of actions) {
+          const editAction = action as { type: string; path: string; hunks: any[] };
+          const existing = byPath.get(editAction.path);
+          if (existing) {
+            (existing as any).hunks.push(...editAction.hunks);
+          } else {
+            byPath.set(editAction.path, action);
+            merged.push(action);
+          }
+        }
+        return merged;
       },
     },
     // Write action (pre-strip to preserve code blocks inside write tags)

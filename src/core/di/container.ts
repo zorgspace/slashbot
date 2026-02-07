@@ -18,11 +18,10 @@ export async function initializeContainer(options: { basePath?: string }): Promi
 
   // Import and bind core services
   const { createConfigManager } = await import('../config/config');
-  const { createFileSystem } = await import('../../plugins/filesystem/services/filesystem');
+  const { createFileSystem } = await import('../services/filesystem');
   const { createScheduler } = await import('../scheduler/scheduler');
   const { createCodeEditor } = await import('../code/editor');
   const { createCommandPermissions } = await import('../config/permissions');
-  const { createSkillManager } = await import('../../plugins/skills/services/SkillManager');
 
   // Bind factories as dynamic values (they need to be initialized)
   container
@@ -45,22 +44,16 @@ export async function initializeContainer(options: { basePath?: string }): Promi
     .bind(TYPES.CommandPermissions)
     .toDynamicValue(() => createCommandPermissions())
     .inSingletonScope();
-  container
-    .bind(TYPES.SkillManager)
-    .toDynamicValue(() => createSkillManager(basePath))
-    .inSingletonScope();
 
   // Bind composite services
   const { ConnectorRegistry } = await import('../../connectors/registry');
   const { CommandRegistry } = await import('../commands/registry');
   const { EventBus } = await import('../events/EventBus');
-  const { HeartbeatService } = await import('../../plugins/heartbeat/services');
 
   // EventBus should be bound first as other services may depend on it
   container.bind(TYPES.EventBus).to(EventBus).inSingletonScope();
 
   container.bind(TYPES.ConnectorRegistry).to(ConnectorRegistry).inSingletonScope();
-  container.bind(TYPES.HeartbeatService).to(HeartbeatService).inSingletonScope();
 
   // CommandRegistry starts empty - plugins contribute commands via getCommandContributions()
   container

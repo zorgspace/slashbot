@@ -23,7 +23,9 @@ export const telegramCommand: CommandHandler = {
       display.append('');
 
       if (telegramConfig) {
-        display.append('  Status:  ' + (connector?.isRunning() ? 'Connected' : 'Configured but not running'));
+        display.append(
+          '  Status:  ' + (connector?.isRunning() ? 'Connected' : 'Configured but not running'),
+        );
         display.muted('  Bot:     ' + telegramConfig.botToken.slice(0, 10) + '...');
         display.muted('  Chat ID: ' + telegramConfig.chatId);
       } else {
@@ -81,7 +83,9 @@ export const telegramCommand: CommandHandler = {
           finalChatId = String(update.message.chat.id);
           display.successText('Found chat_id: ' + finalChatId);
         } else {
-          display.warningText('No messages found. Send a message to your bot first, then run this command again.');
+          display.warningText(
+            'No messages found. Send a message to your bot first, then run this command again.',
+          );
           return true;
         }
       } catch (error) {

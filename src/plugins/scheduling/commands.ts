@@ -31,7 +31,11 @@ export const taskCommand: CommandHandler = {
             const statusIcon = task.enabled ? '[*]' : '[ ]';
             display.append('  ' + statusIcon + ' [' + (i + 1) + '] ' + task.name);
             display.muted('      Cron:    ' + task.cron);
-            display.muted('      Command: ' + task.command.slice(0, 50) + (task.command.length > 50 ? '...' : ''));
+            display.muted(
+              '      Command: ' +
+                task.command.slice(0, 50) +
+                (task.command.length > 50 ? '...' : ''),
+            );
             display.muted('      Next:    ' + task.next + '  (' + task.runs + ' runs)');
           });
           display.append('');

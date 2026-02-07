@@ -61,9 +61,7 @@ export async function executeSearch(
 
     if (citations.length > 0) {
       const citationPreview = citations.join(', ');
-      display.result(
-        `Found ${citations.length} sources: ${citationPreview}`,
-      );
+      display.result(`Found ${citations.length} sources: ${citationPreview}`);
     } else {
       display.result('Search completed');
     }

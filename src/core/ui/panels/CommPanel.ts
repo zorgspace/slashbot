@@ -116,7 +116,8 @@ export class CommPanel {
     if (this.thinkingBuffer) {
       const fullThinking = this.thinkingBuffer.trim();
       if (fullThinking) {
-        const preview = fullThinking.length > 300 ? fullThinking.slice(0, 300) + '...' : fullThinking;
+        const preview =
+          fullThinking.length > 300 ? fullThinking.slice(0, 300) + '...' : fullThinking;
         this.addEntry(t`${dim(fg(theme.violetLight)('\u{1F4AD} ' + preview))}`);
       }
       this.thinkingBuffer = '';

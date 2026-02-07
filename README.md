@@ -13,6 +13,10 @@ Lightweight CLI assistant powered by Grok API. A fast, extensible alternative to
 - **Heartbeat System** - Periodic AI reflection for proactive monitoring and alerts
 - **Skills** - Extensible capabilities (Docker, Solana, voice transcription, and more)
 
+## Authors
+
+- **Main Developer**: Slashbin
+
 ## Quick Start
 
 ### Prerequisites
@@ -58,54 +62,54 @@ Once running, just type naturally:
 
 ## Payment Modes
 
-| Mode | Description |
-|------|-------------|
-| **API Key** (`/mode apikey`) | Use your own X.AI API key directly. You pay xAI. |
-| **Token** (`/mode token`) | Pay with $SLASHBOT tokens from your Solana wallet. Pricing is 2.5x xAI base rates. |
+| Mode                         | Description                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| **API Key** (`/mode apikey`) | Use your own X.AI API key directly. You pay xAI.                                   |
+| **Token** (`/mode token`)    | Pay with $SLASHBOT tokens from your Solana wallet. Pricing is 2.5x xAI base rates. |
 
 See [TOKEN_UTILITY.md](./docs/TOKEN_UTILITY.md) for full details on the token economy.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show all available commands |
-| `/login` | Configure API key |
-| `/mode` | Switch between apikey and token payment modes |
-| `/wallet` | Manage Solana wallet (create, import, export) |
-| `/balance` | Check wallet balance (SOL + $SLASHBOT) |
-| `/send` | Send tokens to another address |
-| `/redeem` | Redeem $SLASHBOT tokens for API credits |
-| `/pricing` | Show current pricing and exchange rates |
-| `/usage` | View token usage statistics |
-| `/plan` | Create a multi-step plan |
-| `/tasks` | List and manage scheduled tasks |
-| `/skill` | Load or install a skill |
-| `/telegram` | Configure Telegram bot connector |
-| `/discord` | Configure Discord bot connector |
-| `/heartbeat` | Configure periodic AI reflection |
-| `/clear` | Clear conversation context |
-| `/status` | Show system status |
+| Command      | Description                                   |
+| ------------ | --------------------------------------------- |
+| `/help`      | Show all available commands                   |
+| `/login`     | Configure API key                             |
+| `/mode`      | Switch between apikey and token payment modes |
+| `/wallet`    | Manage Solana wallet (create, import, export) |
+| `/balance`   | Check wallet balance (SOL + $SLASHBOT)        |
+| `/send`      | Send tokens to another address                |
+| `/redeem`    | Redeem $SLASHBOT tokens for API credits       |
+| `/pricing`   | Show current pricing and exchange rates       |
+| `/usage`     | View token usage statistics                   |
+| `/plan`      | Create a multi-step plan                      |
+| `/tasks`     | List and manage scheduled tasks               |
+| `/skill`     | Load or install a skill                       |
+| `/telegram`  | Configure Telegram bot connector              |
+| `/discord`   | Configure Discord bot connector               |
+| `/heartbeat` | Configure periodic AI reflection              |
+| `/clear`     | Clear conversation context                    |
+| `/status`    | Show system status                            |
 
 ## Plugins
 
 Slashbot is built on a plugin architecture. Every capability is a plugin:
 
-| Plugin | Category | Description |
-|--------|----------|-------------|
-| `bash` | Core | Shell command execution with safety guards |
-| `filesystem` | Core | File read, write, edit, glob, grep, ls |
-| `code-editor` | Core | Format, typecheck, auto-fix |
-| `web` | Core | Web fetch and search |
-| `say` | Core | Console output and notifications |
-| `explore` | Feature | Codebase exploration and analysis |
-| `tasks` | Feature | Task creation and management |
-| `skills` | Feature | Skill loading and installation |
-| `scheduling` | Feature | Cron-based job scheduling |
-| `heartbeat` | Feature | Periodic AI reflection and alerts |
-| `wallet` | Feature | Solana wallet and $SLASHBOT payments |
-| `telegram` | Connector | Telegram bot integration |
-| `discord` | Connector | Discord bot integration |
+| Plugin        | Category  | Description                                |
+| ------------- | --------- | ------------------------------------------ |
+| `bash`        | Core      | Shell command execution with safety guards |
+| `filesystem`  | Core      | File read, write, edit, glob, grep, ls     |
+| `code-editor` | Core      | Format, typecheck, auto-fix                |
+| `web`         | Core      | Web fetch and search                       |
+| `say`         | Core      | Console output and notifications           |
+| `explore`     | Feature   | Codebase exploration and analysis          |
+| `tasks`       | Feature   | Task creation and management               |
+| `skills`      | Feature   | Skill loading and installation             |
+| `scheduling`  | Feature   | Cron-based job scheduling                  |
+| `heartbeat`   | Feature   | Periodic AI reflection and alerts          |
+| `wallet`      | Feature   | Solana wallet and $SLASHBOT payments       |
+| `telegram`    | Connector | Telegram bot integration                   |
+| `discord`     | Connector | Discord bot integration                    |
 
 Install third-party plugins:
 
@@ -175,13 +179,13 @@ All user configuration is stored in `~/.slashbot/`:
 
 ## $SLASHBOT Token
 
-| Property | Value |
-|----------|-------|
-| **Name** | SLASHBOT |
-| **Chain** | Solana |
-| **Mint** | `AtiFyHm6UMNLXCWJGLqhxSwvr3n3MgFKxppkKWUoBAGS` |
-| **Standard** | SPL Token |
-| **Use** | Pay for Grok API calls through the Slashbot proxy |
+| Property     | Value                                             |
+| ------------ | ------------------------------------------------- |
+| **Name**     | SLASHBOT                                          |
+| **Chain**    | Solana                                            |
+| **Mint**     | `AtiFyHm6UMNLXCWJGLqhxSwvr3n3MgFKxppkKWUoBAGS`    |
+| **Standard** | SPL Token                                         |
+| **Use**      | Pay for Grok API calls through the Slashbot proxy |
 
 ## Security
 
@@ -194,3 +198,7 @@ All user configuration is stored in `~/.slashbot/`:
 ## License
 
 MIT
+
+## Test
+
+This is a test edit to verify the editing functionality.

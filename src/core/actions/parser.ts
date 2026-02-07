@@ -1,4 +1,5 @@
 import type { Action } from './types';
+import { registerActionTags } from '../utils/tagRegistry';
 
 export type ParserUtils = {
   extractAttr: (tag: string, attr: string) => string | undefined;
@@ -19,6 +20,10 @@ let actionParsers: ActionParserConfig[] = [];
 
 export function registerActionParser(config: ActionParserConfig): void {
   actionParsers.push(config);
+  registerActionTags(config.tags);
+  if (config.selfClosingTags) {
+    registerActionTags(config.selfClosingTags);
+  }
 }
 
 export function clearActionParsers(): void {
@@ -35,7 +40,7 @@ export function parseActions(content: string): Action[] {
 }
 
 export function extractAttr(tag: string, attr: string): string | undefined {
-  const regex = new RegExp(`${attr}="([^"]*)"`);  // Simple regex for attr="value"
+  const regex = new RegExp(`${attr}="([^"]*)"`); // Simple regex for attr="value"
   const match = tag.match(regex);
   return match ? match[1] : undefined;
 }

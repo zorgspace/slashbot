@@ -3,7 +3,7 @@
  */
 
 import { CORE_PROMPT } from './core';
-import type { PromptContribution, ContextProvider } from '../../../plugins/types';
+import type { PromptContribution, ContextProvider } from '../../../plugins/plugin-types';
 
 export class PromptAssembler {
   private contributions: PromptContribution[] = [];

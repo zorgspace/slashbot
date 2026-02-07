@@ -5,15 +5,22 @@ export interface ReadAction {
   limit?: number;
 }
 
+export interface DiffLine {
+  type: 'context' | 'add' | 'remove';
+  content: string;
+}
+
+export interface DiffHunk {
+  startLine: number;
+  lineCount: number;
+  diffLines: DiffLine[];
+}
+
 export interface EditAction {
   type: 'edit';
   path: string;
-  search: string;
-  replace: string;
-  replaceAll?: boolean;
+  hunks: DiffHunk[];
 }
-
-
 
 export interface WriteAction {
   type: 'write';

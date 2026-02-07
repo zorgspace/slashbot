@@ -340,7 +340,9 @@ export async function startupUpdateCheck(): Promise<void> {
   checkUpdateAvailable()
     .then(({ available, latestVersion }) => {
       if (available) {
-        display.info(`\nUpdate available: v${latestVersion} - run 'slashbot --update' to install\n`);
+        display.info(
+          `\nUpdate available: v${latestVersion} - run 'slashbot --update' to install\n`,
+        );
       }
     })
     .catch(() => {

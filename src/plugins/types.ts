@@ -49,6 +49,13 @@ export interface EventSubscription {
   handler: (...args: any[]) => void;
 }
 
+export interface SidebarContribution {
+  id: string;
+  label: string;
+  order: number;
+  getStatus: () => boolean;
+}
+
 export interface Plugin {
   readonly metadata: PluginMetadata;
 
@@ -65,6 +72,12 @@ export interface Plugin {
   getContextProviders?(): ContextProvider[];
 
   getEventSubscriptions?(): EventSubscription[];
+
+  getSidebarContributions?(): SidebarContribution[];
+
+  onBeforeGrokInit?(context: PluginContext): Promise<void>;
+
+  onAfterGrokInit?(context: PluginContext): Promise<void>;
 }
 
 export type ConnectorPlugin = Plugin & {

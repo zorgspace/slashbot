@@ -99,16 +99,23 @@ export class WebPlugin implements Plugin {
         type: 'search',
         tagName: 'search',
         handler: {
-          onSearch: async (query: string, options?: { allowedDomains?: string[]; blockedDomains?: string[] }) => {
+          onSearch: async (
+            query: string,
+            options?: { allowedDomains?: string[]; blockedDomains?: string[] },
+          ) => {
             const getClient = context.getGrokClient;
             if (!getClient) throw new Error('Not connected to Grok');
             const grokClient = getClient();
             if (!grokClient) throw new Error('Not connected to Grok');
-            return await webSearch(grokClient as import('../../core/api/client').GrokClient, query, {
-              enableXSearch: true,
-              allowedDomains: options?.allowedDomains,
-              excludedDomains: options?.blockedDomains,
-            });
+            return await webSearch(
+              grokClient as import('../../core/api/client').GrokClient,
+              query,
+              {
+                enableXSearch: true,
+                allowedDomains: options?.allowedDomains,
+                excludedDomains: options?.blockedDomains,
+              },
+            );
           },
         },
         execute: executeSearch,

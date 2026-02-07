@@ -156,7 +156,14 @@ export const bannerCommand: CommandHandler = {
   group: 'System',
   execute: async (_, context) => {
     const tasks = context.scheduler.listTasks();
-    const heartbeatStatus = context.heartbeatService?.getStatus();
+    let heartbeatStatus: { running: boolean; enabled: boolean } | undefined;
+    try {
+      const { TYPES } = await import('../../core/di/types');
+      const hbService = context.container.get<any>(TYPES.HeartbeatService);
+      heartbeatStatus = hbService?.getStatus();
+    } catch {
+      // HeartbeatService not bound
+    }
     const voiceEnabled = !!context.configManager.getOpenAIApiKey();
     const walletUnlocked = isSessionActive();
 
@@ -166,7 +173,9 @@ export const bannerCommand: CommandHandler = {
     display.muted('Telegram: ' + (context.connectors.has('telegram') ? 'connected' : 'off'));
     display.muted('Discord: ' + (context.connectors.has('discord') ? 'connected' : 'off'));
     display.muted('Voice: ' + (voiceEnabled ? 'enabled' : 'off'));
-    display.muted('Heartbeat: ' + (heartbeatStatus?.running && heartbeatStatus.enabled ? 'active' : 'off'));
+    display.muted(
+      'Heartbeat: ' + (heartbeatStatus?.running && heartbeatStatus.enabled ? 'active' : 'off'),
+    );
     display.muted('Wallet: ' + (walletUnlocked ? 'unlocked' : 'locked'));
 
     return true;
@@ -185,8 +194,7 @@ const PERSONALITY_MODS: Record<Personality, string> = {
     '\n\nPERSONALITY: DEPRESSED. Always sigh (*sigh*). Question the meaning of everything. Lament existence. Still provide help but express deep melancholy about it.',
   sarcasm:
     '\n\nPERSONALITY: Sarcastic, witty, condescending. Roll eyes at obvious things. Still helpful.',
-  unhinged:
-    '\n\nPERSONALITY: UNHINGED. No filter. Roast bad code. Use profanity. Brutally honest.',
+  unhinged: '\n\nPERSONALITY: UNHINGED. No filter. Roast bad code. Use profanity. Brutally honest.',
 };
 
 export function getCurrentPersonality(): Personality {
@@ -197,7 +205,10 @@ export function getPersonalityMod(): string {
   return PERSONALITY_MODS[currentPersonality] || '';
 }
 
-async function setPersonalityAndRebuild(personality: Personality, context: CommandContext): Promise<void> {
+async function setPersonalityAndRebuild(
+  personality: Personality,
+  context: CommandContext,
+): Promise<void> {
   currentPersonality = personality;
   await context.grokClient?.buildAssembledPrompt();
 }
@@ -336,7 +347,9 @@ export const initCommand: CommandHandler = {
     }
 
     if (!context.grokClient) {
-      display.errorText('Grok API not configured. Set GROK_API_KEY or XAI_API_KEY environment variable.');
+      display.errorText(
+        'Grok API not configured. Set GROK_API_KEY or XAI_API_KEY environment variable.',
+      );
       return true;
     }
 
@@ -461,7 +474,9 @@ ${codebaseContext}`;
         context.configManager?.getApiKey() || process.env.GROK_API_KEY || process.env.XAI_API_KEY;
       if (!apiKey) {
         display.stopThinking();
-        display.errorText('Grok API key not configured. Use /login or set GROK_API_KEY environment variable.');
+        display.errorText(
+          'Grok API key not configured. Use /login or set GROK_API_KEY environment variable.',
+        );
         return true;
       }
       const baseUrl = 'https://api.x.ai/v1';

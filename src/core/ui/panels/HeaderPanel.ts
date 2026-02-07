@@ -13,7 +13,6 @@ export interface HeaderOptions {
   version: string;
   workingDir: string;
   contextFile?: string | null;
-  model?: string;
 }
 
 const SKULL_LINES = [
@@ -31,7 +30,6 @@ export class HeaderPanel {
 
   // Left info lines
   private titleText: TextRenderable;
-  private modelText: TextRenderable;
   private contextText: TextRenderable;
   private helpText: TextRenderable;
 
@@ -72,12 +70,6 @@ export class HeaderPanel {
       height: 1,
     });
 
-    this.modelText = new TextRenderable(renderer, {
-      id: 'header-model',
-      content: '',
-      height: 1,
-    });
-
     this.contextText = new TextRenderable(renderer, {
       id: 'header-context',
       content: '',
@@ -91,11 +83,9 @@ export class HeaderPanel {
     });
 
     infoBox.add(this.titleText);
-    infoBox.add(this.modelText);
     infoBox.add(this.contextText);
     infoBox.add(this.helpText);
-    
-    
+
     // Status column (right side)
     const statusBox = new BoxRenderable(renderer, {
       id: 'header-status',
@@ -119,8 +109,7 @@ export class HeaderPanel {
   setOptions(options: HeaderOptions): void {
     const shortCwd = options.workingDir.replace(process.env.HOME || '', '~');
 
-    this.titleText.content = t`${bold(fg(theme.white)('SLASHBOT'))} ${fg(theme.violet)('v' + options.version)}`;
-    this.modelText.content = t`${dim(fg(theme.muted)(shortCwd))}`;
+    this.titleText.content = t`${bold(fg(theme.white)('SLASHBOT'))} ${fg(theme.violet)('v' + options.version)} ${dim(fg(theme.muted)(shortCwd))}`;
 
     if (options.contextFile) {
       this.contextText.content = t`${dim(fg(theme.muted)('Context: ' + options.contextFile))}`;
@@ -132,39 +121,10 @@ export class HeaderPanel {
   }
 
   updateStatus(data: SidebarData): void {
-    // Build a compact multi-line status display
-    const lines: string[] = [];
-
-    // Connectors
-    for (const conn of data.connectors) {
-      const dot = conn.active ? '\u25CF' : '\u25CB';
-      lines.push(`${dot} ${conn.name}`);
-    }
-
-    // Heartbeat
-    const hbDot = data.heartbeat.running ? '\u25CF' : '\u25CB';
-    lines.push(`${hbDot} Heartbeat`);
-
-    // Wallet
-    const walletDot = data.wallet.unlocked ? '\u25CF' : '\u25CB';
-    lines.push(`${walletDot} Wallet`);
-
-    // Model + tasks
-    lines.push(`${data.model} \u00B7 ${data.tasks.count} tasks`);
-
-    // Rebuild the status text using a single styled content
-    // Use color per line based on active state
     this.rebuildStatus(data);
   }
 
   private rebuildStatus(data: SidebarData): void {
-    // We need individual TextRenderables per line for proper styling.
-    // But statusText is a single renderable — use parent statusBox instead.
-    // Actually, we'll use a simpler approach: rebuild with a single content
-    // that uses styled segments per line joined by newlines.
-    // Since t`` returns StyledText, we can't join them.
-    // Instead, replace statusText with a column box of lines.
-
     const statusBox = this.container.getChildren()[2]; // header-status
     if (!statusBox) return;
 
@@ -183,24 +143,12 @@ export class HeaderPanel {
       statusBox.add(text);
     };
 
-    // Connectors
-    for (const conn of data.connectors) {
-      const dot = conn.active ? '\u25CF' : '\u25CB';
-      const dotColor = conn.active ? theme.green : theme.red;
-      addLine(`conn-${conn.name}`, t`${fg(dotColor)(dot)} ${fg(theme.white)(conn.name)}`);
+    // Render all dynamic sidebar items
+    for (const item of data.items) {
+      const dot = item.active ? '\u25CF' : '\u25CB';
+      const dotColor = item.active ? theme.green : theme.muted;
+      addLine(item.id, t`${fg(dotColor)(dot)} ${fg(theme.white)(item.label)}`);
     }
-
-    // Heartbeat
-    const hbDot = data.heartbeat.running ? '\u25CF' : '\u25CB';
-    const hbColor = data.heartbeat.running ? theme.green : theme.muted;
-    addLine('hb', t`${fg(hbColor)(hbDot)} ${fg(theme.white)('Heartbeat')}`);
-
-    // Wallet
-    const walletDot = data.wallet.unlocked ? '\u25CF' : '\u25CB';
-    const walletColor = data.wallet.unlocked ? theme.green : theme.muted;
-    addLine('wallet', t`${fg(walletColor)(walletDot)} ${fg(theme.white)('Wallet')}`);
-
-    addLine('tasks', t`${dim(fg(theme.muted)(data.tasks.count + ' tasks'))}`);
   }
 
   getRenderable(): BoxRenderable {

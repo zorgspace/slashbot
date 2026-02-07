@@ -4,8 +4,12 @@
  */
 
 import type { CommandHandler, CommandContext } from '../../core/commands/registry';
+import type { TUIApp } from '../../core/ui/TUIApp';
 import { PROXY_CONFIG } from '../../core/config/constants';
 import { display } from '../../core/ui';
+import { container } from '../../core/di/container';
+import { TYPES } from '../../core/di/types';
+import type { EventBus } from '../../core/events/EventBus';
 import { getPricingService, XAI_MODEL_PRICING } from './services';
 import {
   walletExists,
@@ -35,16 +39,26 @@ import {
 import { setPaymentMode, getPaymentMode, ProxyAuthProvider } from './provider';
 import { PublicKey } from '@solana/web3.js';
 
+// Active TUI reference — set per-command execution via setActiveTUI()
+let activeTUI: TUIApp | undefined;
+
+function setActiveTUI(tui?: TUIApp): void {
+  activeTUI = tui;
+}
+
 /**
  * Prompt for password (hidden input)
- * Follows the same pattern as permissions.ts for stdin handling
+ * Uses TUI promptInput when available, falls back to raw stdin
  */
 async function promptPassword(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
+  if (activeTUI) {
+    return activeTUI.promptInput(prompt, { masked: true });
+  }
+
+  return new Promise(resolve => {
     process.stdout.write(prompt);
     let password = '';
 
-    // Enable raw mode for hidden input
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
@@ -52,28 +66,20 @@ async function promptPassword(prompt: string): Promise<string> {
 
     const onKeyPress = (key: Buffer) => {
       const char = key.toString();
-
-      // Enter - submit
       if (char === '\r' || char === '\n') {
         cleanup();
         process.stdout.write('\n');
         resolve(password);
-      }
-      // Ctrl+C - cancel
-      else if (char === '\x03') {
+      } else if (char === '\x03') {
         cleanup();
         process.stdout.write('\n');
         resolve('');
-      }
-      // Backspace
-      else if (char === '\x7f' || char === '\b') {
+      } else if (char === '\x7f' || char === '\b') {
         if (password.length > 0) {
           password = password.slice(0, -1);
           process.stdout.write('\b \b');
         }
-      }
-      // Regular character
-      else if (char.length === 1 && char >= ' ') {
+      } else if (char.length === 1 && char >= ' ') {
         password += char;
         process.stdout.write('*');
       }
@@ -93,13 +99,17 @@ async function promptPassword(prompt: string): Promise<string> {
 
 /**
  * Prompt for text input (visible)
+ * Uses TUI promptInput when available, falls back to raw stdin
  */
 async function promptText(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
+  if (activeTUI) {
+    return activeTUI.promptInput(prompt);
+  }
+
+  return new Promise(resolve => {
     process.stdout.write(prompt);
     let text = '';
 
-    // Enable raw mode for character-by-character handling
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
@@ -107,28 +117,20 @@ async function promptText(prompt: string): Promise<string> {
 
     const onKeyPress = (key: Buffer) => {
       const char = key.toString();
-
-      // Enter - submit
       if (char === '\r' || char === '\n') {
         cleanup();
         process.stdout.write('\n');
         resolve(text);
-      }
-      // Ctrl+C - cancel
-      else if (char === '\x03') {
+      } else if (char === '\x03') {
         cleanup();
         process.stdout.write('\n');
         resolve('');
-      }
-      // Backspace
-      else if (char === '\x7f' || char === '\b') {
+      } else if (char === '\x7f' || char === '\b') {
         if (text.length > 0) {
           text = text.slice(0, -1);
           process.stdout.write('\b \b');
         }
-      }
-      // Regular character (printable)
-      else if (char.length === 1 && char >= ' ') {
+      } else if (char.length === 1 && char >= ' ') {
         text += char;
         process.stdout.write(char);
       }
@@ -182,7 +184,7 @@ function formatUsd(usd: number): string {
 
 async function fetchUsage(
   type: 'summary' | 'stats' | 'history',
-  options: { period?: string; limit?: number } = {}
+  options: { period?: string; limit?: number } = {},
 ): Promise<any> {
   const publicKey = getPublicKey();
   if (!publicKey) {
@@ -250,6 +252,7 @@ export const walletCommands: CommandHandler[] = [
 /wallet usage history [limit] - Recent API calls
 /wallet usage models - Breakdown by model`,
     execute: async (args, context: CommandContext) => {
+      setActiveTUI(context.tuiApp);
       const subcommand = args[0]?.toLowerCase();
 
       // /wallet create
@@ -289,7 +292,10 @@ export const walletCommands: CommandHandler[] = [
           display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
           return true;
         } catch (error) {
-          display.errorText('\nFailed to create wallet: ' + (error instanceof Error ? error.message : String(error)));
+          display.errorText(
+            '\nFailed to create wallet: ' +
+              (error instanceof Error ? error.message : String(error)),
+          );
           return false;
         }
       }
@@ -424,10 +430,7 @@ export const walletCommands: CommandHandler[] = [
 
         display.append('\nFetching balances...\n');
 
-        const [balances, credits] = await Promise.all([
-          getBalances(),
-          getCreditBalance(),
-        ]);
+        const [balances, credits] = await Promise.all([getBalances(), getCreditBalance()]);
 
         display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         display.append('Wallet Balance');
@@ -503,7 +506,9 @@ export const walletCommands: CommandHandler[] = [
             return false;
           }
 
-          display.append(`Maximum sendable: ${formatNumber(amount, 9)} ${tokenType.toUpperCase()}\n`);
+          display.append(
+            `Maximum sendable: ${formatNumber(amount, 9)} ${tokenType.toUpperCase()}\n`,
+          );
         } else {
           amount = parseFloat(amountArg);
           if (isNaN(amount) || amount <= 0) {
@@ -514,11 +519,14 @@ export const walletCommands: CommandHandler[] = [
 
         const password = await promptPassword('Enter wallet password: ');
 
-        display.append(`\nSending ${formatNumber(amount, 9)} ${tokenType.toUpperCase()} to ${toAddress}...\n`);
+        display.append(
+          `\nSending ${formatNumber(amount, 9)} ${tokenType.toUpperCase()} to ${toAddress}...\n`,
+        );
 
-        const result = tokenType === 'sol'
-          ? await sendSol(password, toAddress, amount)
-          : await sendSlashbot(password, toAddress, amount);
+        const result =
+          tokenType === 'sol'
+            ? await sendSol(password, toAddress, amount)
+            : await sendSlashbot(password, toAddress, amount);
 
         if (result.success) {
           display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -578,7 +586,9 @@ export const walletCommands: CommandHandler[] = [
 
         const password = await promptPassword('Enter wallet password: ');
 
-        display.append(`\nSending ${formatNumber(amount, 4)} SLASHBOT to treasury and claiming credits...\n`);
+        display.append(
+          `\nSending ${formatNumber(amount, 4)} SLASHBOT to treasury and claiming credits...\n`,
+        );
 
         const result = await redeemCredits(password, amount);
 
@@ -659,9 +669,13 @@ export const walletCommands: CommandHandler[] = [
           display.append('SLASHBOT API Pricing');
           display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-          display.append(`Exchange Rates (updated ${new Date(info.exchangeRates.updatedAt).toLocaleTimeString()})`);
+          display.append(
+            `Exchange Rates (updated ${new Date(info.exchangeRates.updatedAt).toLocaleTimeString()})`,
+          );
           display.append(`   SOL/USD:      $${formatNumber(info.exchangeRates.solUsd, 2)}`);
-          display.append(`   SLASHBOT/SOL: ${formatNumber(info.exchangeRates.slashbotSol, 9)} SOL\n`);
+          display.append(
+            `   SLASHBOT/SOL: ${formatNumber(info.exchangeRates.slashbotSol, 9)} SOL\n`,
+          );
 
           display.append(`Model: ${info.model}\n`);
 
@@ -687,7 +701,9 @@ export const walletCommands: CommandHandler[] = [
 
           return true;
         } catch (error) {
-          display.errorText('Failed to fetch pricing: ' + (error instanceof Error ? error.message : String(error)));
+          display.errorText(
+            'Failed to fetch pricing: ' + (error instanceof Error ? error.message : String(error)),
+          );
           return false;
         }
       }
@@ -697,14 +713,17 @@ export const walletCommands: CommandHandler[] = [
         const mode = args[1]?.toLowerCase();
 
         if (!mode) {
-          const currentMode = getPaymentMode() || context.configManager.getConfig().paymentMode || 'apikey';
+          const currentMode =
+            getPaymentMode() || context.configManager.getConfig().paymentMode || 'apikey';
           display.append(`\nCurrent payment mode: ${currentMode}`);
 
           if (currentMode === 'token') {
             const publicKey = getPublicKey();
             const sessionActive = isSessionActive();
             display.append(`  Wallet: ${publicKey || 'Not configured'}`);
-            display.append(`  Session: ${sessionActive ? 'Active (requests signed)' : 'Inactive (run /wallet mode token to unlock)'}`);
+            display.append(
+              `  Session: ${sessionActive ? 'Active (requests signed)' : 'Inactive (run /wallet mode token to unlock)'}`,
+            );
           }
 
           display.append('\nAvailable modes: apikey, token');
@@ -742,6 +761,9 @@ export const walletCommands: CommandHandler[] = [
               display.append('\n❌ Invalid password.\n');
               return false;
             }
+            try {
+              container.get<EventBus>(TYPES.EventBus).emit({ type: 'wallet:unlocked' });
+            } catch {}
           }
 
           await context.configManager.saveConfig({ paymentMode: 'token' });
@@ -825,7 +847,9 @@ export const walletCommands: CommandHandler[] = [
               for (const [model, stats] of Object.entries(data.byModel) as [string, any][]) {
                 display.append(`  ${model}`);
                 display.append(`    Requests: ${formatUsageNumber(stats.requests)}`);
-                display.append(`    Tokens:   ${formatTokens(stats.inputTokens + stats.outputTokens)}`);
+                display.append(
+                  `    Tokens:   ${formatTokens(stats.inputTokens + stats.outputTokens)}`,
+                );
                 display.append(`    Credits:  ${formatUsageNumber(stats.costCredits)}`);
               }
             }
@@ -858,7 +882,9 @@ export const walletCommands: CommandHandler[] = [
                 display.append(`${status} ${time}`);
                 display.append(`  Model:   ${record.model}`);
                 display.append(`  Tokens:  ${tokens} (${formatTokens(record.tokens.total)} total)`);
-                display.append(`  Cost:    ${record.cost.credits} credits (${formatUsd(record.cost.usd)})`);
+                display.append(
+                  `  Cost:    ${record.cost.credits} credits (${formatUsd(record.cost.usd)})`,
+                );
                 display.append(`  Latency: ${record.processingTimeMs}ms`);
                 display.append('');
               }
@@ -883,8 +909,9 @@ export const walletCommands: CommandHandler[] = [
             if (!data.byModel || Object.keys(data.byModel).length === 0) {
               display.append('No model usage data found.\n');
             } else {
-              const models = Object.entries(data.byModel)
-                .sort((a: [string, any], b: [string, any]) => b[1].costCredits - a[1].costCredits);
+              const models = Object.entries(data.byModel).sort(
+                (a: [string, any], b: [string, any]) => b[1].costCredits - a[1].costCredits,
+              );
 
               display.append('Model                          │ Requests │  Tokens  │ Credits');
               display.append('───────────────────────────────┼──────────┼──────────┼────────');
@@ -901,7 +928,9 @@ export const walletCommands: CommandHandler[] = [
               const totalReqs = formatUsageNumber(data.totalRequests).padStart(8);
               const totalTokens = formatTokens(data.totalTokens).padStart(8);
               const totalCredits = formatUsageNumber(data.totalCreditsSpent).padStart(7);
-              display.append(`${'Total'.padEnd(30)} │ ${totalReqs} │ ${totalTokens} │ ${totalCredits}`);
+              display.append(
+                `${'Total'.padEnd(30)} │ ${totalReqs} │ ${totalTokens} │ ${totalCredits}`,
+              );
             }
 
             display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
@@ -942,7 +971,9 @@ export const walletCommands: CommandHandler[] = [
 
           return true;
         } catch (error) {
-          display.errorText(`\nFailed to fetch usage data: ${error instanceof Error ? error.message : error}\n`);
+          display.errorText(
+            `\nFailed to fetch usage data: ${error instanceof Error ? error.message : error}\n`,
+          );
           return false;
         }
       }
@@ -969,6 +1000,9 @@ export const walletCommands: CommandHandler[] = [
           display.append('Session active for 30 minutes (auto-extends on activity)');
           display.append('API requests will be authenticated with your wallet.\n');
           display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          try {
+            container.get<EventBus>(TYPES.EventBus).emit({ type: 'wallet:unlocked' });
+          } catch {}
           return true;
         } else {
           display.append('\nInvalid password.\n');
@@ -980,6 +1014,9 @@ export const walletCommands: CommandHandler[] = [
       if (subcommand === 'lock') {
         clearSession();
         display.append('\nWallet session locked.\n');
+        try {
+          container.get<EventBus>(TYPES.EventBus).emit({ type: 'wallet:locked' });
+        } catch {}
         return true;
       }
 
@@ -996,7 +1033,9 @@ export const walletCommands: CommandHandler[] = [
         display.append(`Wallet:      ${publicKey || 'Not configured'}`);
         display.append(`Proxy URL:   ${PROXY_CONFIG.BASE_URL || 'Not configured'}`);
         display.append(`Session:     ${sessionActive ? 'Active (unlocked)' : 'Inactive (locked)'}`);
-        display.append(`Mode:        ${proxyConfigured ? (sessionActive ? 'Proxy (authenticated)' : 'Proxy (needs unlock)') : 'Direct API'}`);
+        display.append(
+          `Mode:        ${proxyConfigured ? (sessionActive ? 'Proxy (authenticated)' : 'Proxy (needs unlock)') : 'Direct API'}`,
+        );
 
         if (!proxyConfigured && !process.env.GROK_API_KEY && !process.env.XAI_API_KEY) {
           display.append('\nWARNING: No API key or proxy configured!');
@@ -1018,10 +1057,7 @@ export const walletCommands: CommandHandler[] = [
         display.append(`Address: ${publicKey}`);
 
         // Fetch balances
-        const [balances, credits] = await Promise.all([
-          getBalances(),
-          getCreditBalance(),
-        ]);
+        const [balances, credits] = await Promise.all([getBalances(), getCreditBalance()]);
 
         if (balances) {
           display.append(`SOL:     ${formatNumber(balances.sol, 9)} SOL`);

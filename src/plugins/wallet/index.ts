@@ -1,5 +1,9 @@
 /**
  * Feature Wallet Plugin - Solana wallet management
+ *
+ * Handles wallet lifecycle via plugin hooks:
+ * - onBeforeGrokInit: password prompting for token mode
+ * - onAfterGrokInit: wiring ProxyAuthProvider if in token mode
  */
 
 import type {
@@ -8,6 +12,7 @@ import type {
   PluginContext,
   ActionContribution,
   PromptContribution,
+  SidebarContribution,
 } from '../types';
 import type { CommandHandler } from '../../core/commands/registry';
 import { registerActionParser } from '../../core/actions/parser';
@@ -21,6 +26,7 @@ import {
   getSessionAuthHeaders,
   sendSol,
   sendSlashbot,
+  unlockSession,
 } from './services';
 
 export class WalletPlugin implements Plugin {
@@ -40,6 +46,74 @@ export class WalletPlugin implements Plugin {
       registerActionParser(config);
     }
     await this.loadCommands();
+  }
+
+  async onBeforeGrokInit(context: PluginContext): Promise<void> {
+    // If in token mode with a wallet, prompt for password to unlock session at startup
+    const configManager = context.configManager as any;
+    const savedConfig = configManager?.getConfig?.();
+    if (!savedConfig) return;
+
+    if (savedConfig.paymentMode === 'token' && walletExists() && !isSessionActive()) {
+      const { display } = await import('../../core/ui');
+      const { promptPassword } = await import('../../core/utils/input');
+
+      display.muted('\n  Token mode requires wallet authentication.');
+      display.muted('  Enter password to unlock, or type "apikey" to switch mode.\n');
+      let unlocked = false;
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (!unlocked && attempts < maxAttempts) {
+        attempts++;
+        const password = await promptPassword('  Wallet password: ');
+
+        if (!password) {
+          // User cancelled (Ctrl+C)
+          display.warningText('  Cancelled. Switching to API key mode.');
+          await configManager.saveConfig?.({ paymentMode: 'apikey' });
+          break;
+        }
+
+        // Check if user wants to switch to API key mode
+        if (password.toLowerCase() === 'apikey') {
+          display.successText('  Switched to API key mode.\n');
+          await configManager.saveConfig?.({ paymentMode: 'apikey' });
+          break;
+        }
+
+        unlocked = unlockSession(password);
+        if (!unlocked) {
+          const remaining = maxAttempts - attempts;
+          if (remaining > 0) {
+            display.errorText(`  Invalid password. ${remaining} attempt(s) remaining.`);
+          } else {
+            display.errorText('  Too many failed attempts. Switching to API key mode.');
+            await configManager.saveConfig?.({ paymentMode: 'apikey' });
+          }
+        } else {
+          display.successText('  Wallet unlocked.\n');
+        }
+      }
+    }
+  }
+
+  async onAfterGrokInit(context: PluginContext): Promise<void> {
+    // Wire billing auth provider if in token mode
+    const configManager = context.configManager as any;
+    const savedConfig = configManager?.getConfig?.();
+    if (!savedConfig) return;
+
+    if (savedConfig.paymentMode === 'token') {
+      const getClient = context.getGrokClient;
+      if (!getClient) return;
+      const grokClient = getClient() as any;
+      if (!grokClient) return;
+
+      const { ProxyAuthProvider, setPaymentMode } = await import('./provider');
+      setPaymentMode('token');
+      grokClient.setAuthProvider(new ProxyAuthProvider());
+    }
   }
 
   getActionContributions(): ActionContribution[] {
@@ -89,17 +163,6 @@ export class WalletPlugin implements Plugin {
               };
             }
 
-            // Session-based transfers use the cached keypair directly
-            // We need to import the internal transfer functions that accept keypairs
-            const { transferSol, transferSlashbot } =
-              await import('./services/solana');
-            const { unlockWallet, loadWallet } = await import('./services/wallet');
-
-            // The session already has the keypair cached - we can't access it directly
-            // but the wallet module exposes session-aware send functions
-            // Actually, sendSol/sendSlashbot require a password, not a session
-            // We need to use a different approach - the session keypair is internal to wallet.ts
-            // For now, return an error explaining the limitation
             return {
               success: false,
               error:
@@ -121,6 +184,17 @@ export class WalletPlugin implements Plugin {
 
   getCommandContributions(): CommandHandler[] {
     return this.walletCmds || [];
+  }
+
+  getSidebarContributions(): SidebarContribution[] {
+    return [
+      {
+        id: 'wallet',
+        label: 'Wallet',
+        order: 30,
+        getStatus: () => isSessionActive(),
+      },
+    ];
   }
 
   getPromptContributions(): PromptContribution[] {

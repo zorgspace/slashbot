@@ -64,9 +64,11 @@ class DisplayService {
 
   message(text: string): void {
     this.appendStyled(t`${fg(theme.violet)('●')} ${text}`);
+    this.newline();
   }
 
   tool(name: string, args?: string): void {
+    this.newline();
     const argsStr = args ? `(${args})` : '';
     this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)(name)}${argsStr}`);
   }
@@ -181,15 +183,32 @@ class DisplayService {
     this.appendStyled(t`  ${fg(theme.warning)('⎿  ⚠ ' + msg)}`);
   }
 
-  diff(removed: string[], added: string[], _filePath?: string, lineStart = 1): void {
-    removed.forEach((line, i) => {
-      const lineNum = String(lineStart + i).padStart(3, ' ');
-      this.appendStyled(t`      ${fg(theme.muted)(lineNum)} ${fg(theme.error)('-')} ${fg(theme.error)(line)}`);
-    });
-    added.forEach((line, i) => {
-      const lineNum = String(lineStart + i).padStart(3, ' ');
-      this.appendStyled(t`      ${fg(theme.muted)(lineNum)} ${fg(theme.success)('+')} ${fg(theme.success)(line)}`);
-    });
+  diff(removed: string[], added: string[], filePath?: string, lineStart = 1): void {
+    if (this.tui) {
+      // Build unified diff format for DiffRenderable
+      const header = [
+        `--- a/${filePath || 'file'}`,
+        `+++ b/${filePath || 'file'}`,
+        `@@ -${lineStart},${removed.length} +${lineStart},${added.length} @@`,
+      ];
+      const diffLines = [
+        ...header,
+        ...removed.map(line => `-${line}`),
+        ...added.map(line => `+${line}`),
+      ];
+      const ext = filePath?.split('.').pop();
+      this.tui.appendDiffBlock(diffLines.join('\n'), ext);
+    } else {
+      // Console fallback
+      removed.forEach((line, i) => {
+        const lineNum = String(lineStart + i).padStart(3, ' ');
+        console.log(`      ${lineNum} - ${line}`);
+      });
+      added.forEach((line, i) => {
+        const lineNum = String(lineStart + i).padStart(3, ' ');
+        console.log(`      ${lineNum} + ${line}`);
+      });
+    }
     const parts: string[] = [];
     if (added.length > 0) parts.push(`Added ${added.length} line${added.length > 1 ? 's' : ''}`);
     if (removed.length > 0)
@@ -371,6 +390,7 @@ class DisplayService {
   // === Status ===
 
   statusLine(action: string, elapsed?: string, tokens?: number, thinkTime?: string): void {
+    this.newline();
     const parts = [`* ${action}`];
     if (elapsed) parts.push(elapsed);
     if (tokens) parts.push(`↓ ${tokens} tokens`);
@@ -394,9 +414,38 @@ class DisplayService {
   // === Markdown rendering (replaces say/executors.ts renderMarkdown) ===
 
   renderMarkdown(text: string): void {
-    // Simple markdown → styled text rendering for TUI
     const lines = text.split('\n');
+    let inCodeBlock = false;
+    let codeBlockLang = '';
+    let codeBlockLines: string[] = [];
+
     for (const line of lines) {
+      // Code fence open/close
+      if (line.startsWith('```')) {
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          codeBlockLang = line.slice(3).trim();
+          codeBlockLines = [];
+        } else {
+          // Close code block - render with CodeRenderable or fallback
+          const content = codeBlockLines.join('\n');
+          if (this.tui) {
+            this.tui.appendCodeBlock(content, codeBlockLang || undefined);
+          } else {
+            console.log(content);
+          }
+          inCodeBlock = false;
+          codeBlockLang = '';
+          codeBlockLines = [];
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        codeBlockLines.push(line);
+        continue;
+      }
+
       // Headers
       if (line.startsWith('### ')) {
         this.appendStyled(t`${bold(fg(theme.violet)(line))}`);
@@ -413,20 +462,29 @@ class DisplayService {
       else if (/^[-*] /.test(line)) {
         this.appendStyled(t`${fg(theme.violet)('•')} ${line.slice(2)}`);
       }
-      // Code block markers
-      else if (line.startsWith('```')) {
-        this.appendStyled(t`${fg(theme.muted)(line)}`);
-      }
       // Regular text
       else {
         this.append(line);
       }
     }
+
+    // Handle unclosed code block
+    if (inCodeBlock && codeBlockLines.length > 0) {
+      const content = codeBlockLines.join('\n');
+      if (this.tui) {
+        this.tui.appendCodeBlock(content, codeBlockLang || undefined);
+      } else {
+        console.log(content);
+      }
+    }
+
+    this.newline();
   }
 
   // === Say result display (replaces process.stdout.write for say actions) ===
 
   sayResult(msg: string): void {
+    this.newline();
     this.appendStyled(t`${fg(theme.white)('●')} ${msg}`);
   }
 
@@ -455,6 +513,7 @@ class DisplayService {
   // === Private helpers ===
 
   private _stepAction(name: string, param: string, output?: string): void {
+    this.newline();
     this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)(name)}(${param})`);
     if (output !== undefined) {
       output.split('\n').forEach((line, i) => {
@@ -531,8 +590,7 @@ export function banner(options: BannerOptions = {}): string {
 
   // Build status badges
   const badges: string[] = [];
-  if (telegram)
-    badges.push(`${ANSI.green}●${ANSI.reset} ${ANSI.muted}Telegram${ANSI.reset}`);
+  if (telegram) badges.push(`${ANSI.green}●${ANSI.reset} ${ANSI.muted}Telegram${ANSI.reset}`);
   if (discord) badges.push(`${ANSI.green}●${ANSI.reset} ${ANSI.muted}Discord${ANSI.reset}`);
   if (voice) badges.push(`${ANSI.green}●${ANSI.reset} ${ANSI.muted}Voice${ANSI.reset}`);
   // Heartbeat: green if active, red if inactive

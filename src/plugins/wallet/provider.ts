@@ -7,12 +7,7 @@
 
 import type { ApiAuthProvider } from '../../core/api/types';
 import { PROXY_CONFIG } from '../../core/config/constants';
-import {
-  getSessionAuthHeaders,
-  walletExists,
-  getBalances,
-  getPublicKey,
-} from './services';
+import { getSessionAuthHeaders, walletExists, getBalances, getPublicKey } from './services';
 
 /** Billing info returned by proxy */
 export interface BillingInfo {

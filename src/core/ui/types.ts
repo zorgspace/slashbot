@@ -7,6 +7,8 @@ import type { StyledText } from '@opentui/core';
 export interface UIOutput {
   appendChat(content: string): void;
   appendStyledChat(content: StyledText | string): void;
+  appendCodeBlock(content: string, filetype?: string): void;
+  appendDiffBlock(diff: string, filetype?: string): void;
   appendThinking(chunk: string): void;
   clearThinking(): void;
   setThinkingVisible(visible: boolean): void;
@@ -22,17 +24,20 @@ export interface UIOutput {
   logConnectorOut(source: string, response: string): void;
 }
 
+export interface SidebarStatusItem {
+  id: string;
+  label: string;
+  active: boolean;
+  order?: number;
+}
+
 export interface SidebarData {
-  connectors: { name: string; active: boolean }[];
-  heartbeat: { running: boolean };
-  tasks: { count: number };
-  wallet: { unlocked: boolean };
   model: string;
+  items: SidebarStatusItem[];
 }
 
 export interface TUIAppCallbacks {
   onInput: (input: string) => Promise<void>;
   onExit: () => void;
   onAbort: () => void;
-  onModelSelect: (model: string) => void;
 }

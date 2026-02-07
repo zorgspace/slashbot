@@ -13,12 +13,7 @@ import type {
   PromptContribution,
 } from '../types';
 import { registerActionParser } from '../../core/actions/parser';
-import {
-  executeRead,
-  executeEdit,
-  executeWrite,
-  executeCreate,
-} from './executors';
+import { executeRead, executeEdit, executeWrite, executeCreate } from './executors';
 import { getFilesystemParserConfigs } from './parser';
 import { FILESYSTEM_PROMPT } from './prompt';
 
@@ -69,12 +64,10 @@ export class FilesystemPlugin implements Plugin {
       return content;
     };
 
-    const onEdit = async (path: string, search: string, replace: string, replaceAll?: boolean) => {
+    const onEdit = async (path: string, hunks: import('./types').DiffHunk[]) => {
       const codeEditor = getCodeEditor();
-      return await codeEditor.editFile({ path, search, replace, replaceAll });
+      return await codeEditor.applyDiffEdit(path, hunks);
     };
-
-
 
     const onCreate = async (path: string, content: string) => {
       const codeEditor = getCodeEditor();
@@ -100,12 +93,12 @@ export class FilesystemPlugin implements Plugin {
         execute: (action, handlers) => executeEdit(action as any, handlers),
       },
 
-       {
-         type: 'write',
-         tagName: 'write',
-         handler: { onCreate, onWrite: onFile },
-         execute: (action, handlers) => executeWrite(action as any, handlers),
-       },
+      {
+        type: 'write',
+        tagName: 'write',
+        handler: { onCreate, onWrite: onFile },
+        execute: (action, handlers) => executeWrite(action as any, handlers),
+      },
       {
         type: 'create',
         tagName: 'create',

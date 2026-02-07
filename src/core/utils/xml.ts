@@ -1,57 +1,28 @@
 /**
  * Action Tag Utilities - Uses <action> XML syntax
  * Aligned with Claude Code tool schema
+ *
+ * Uses dynamic tag registry instead of hardcoded tag lists.
  */
 
-// Only strip KNOWN action tags - do NOT strip arbitrary XML-like tags
-// This allows LLM to use formatting tags like <list>, <item>, etc. in commentary
-const ACTION_TAG_PATTERNS = [
-  // Thinking/reasoning (should never be shown to user)
-  /<think>[\s\S]*?<\/think>/g,
-  /<thinking>[\s\S]*?<\/thinking>/g,
-  /<reasoning>[\s\S]*?<\/reasoning>/g,
-  /<inner_monologue>[\s\S]*?<\/inner_monologue>/g,
-  // Shell commands
-  /<bash[^>]*>[\s\S]*?<\/bash>/g,
-  /<exec\s*>[\s\S]*?<\/exec>/g,
-  // File operations - full tags with content
-  /<read[^>]*\/>/g,
-  /<read[^>]*>[\s\S]*?<\/read>/g,
-  /<edit[^>]*>[\s\S]*?<\/edit>/g,
-  /<write[^>]*>[\s\S]*?<\/write>/g,
-  /<create[^>]*>[\s\S]*?<\/create>/g,
-  // Search & navigation - self-closing only
-  /<explore[^>]*\/>/g,
-  /<glob[^>]*\/>/g,
-  /<grep[^>]*\/>/g,
-  /<ls[^>]*\/>/g,
-  // Web operations - self-closing only (search action uses query= attribute)
-  /<fetch[^>]*\/>/g,
-  /<search\s+query=[^>]*\/>/g,
-  // Code quality
-  /<format[^>]*\/>/g,
-  // Scheduling & notifications
-  /<schedule[^>]*>[\s\S]*?<\/schedule>/g,
-  /<notify[^>]*\/>/g,
-  /<notify[^>]*>[\s\S]*?<\/notify>/g,
-  // Skills
-  /<skill[^>]*\/>/g,
-  /<skill-install[^>]*\/>/g,
-  // Plan management (silent - should never show)
-  /<plan[^>]*\/>/g,
-  /<plan[^>]*>[\s\S]*?<\/plan>/g,
-  // Task spawning
-  /<task[^>]*>[\s\S]*?<\/task>/g,
-  /<slashbotbot[^>]*>[\s\S]*?<\/slashbotbot>/g,
-  // Process management
-  /<ps[^>]*\/>/g,
-  /<kill[^>]*\/>/g,
-  // Connector config
-  /<telegram-config[^>]*\/>/g,
-  /<discord-config[^>]*\/>/g,
-  // NOTE: <search> and <replace> are NOT stripped here - they're only meaningful inside <edit>
-  // and <edit> is already stripped as a whole
-];
+import { getRegisteredTags } from './tagRegistry';
+
+/**
+ * Build regex patterns for all registered action tags
+ */
+function buildActionTagPatterns(): RegExp[] {
+  const tags = getRegisteredTags();
+  const patterns: RegExp[] = [];
+
+  for (const tag of tags) {
+    // Full tags with content: <tag ...>...</tag>
+    patterns.push(new RegExp(`<${tag}[^>]*>[\\s\\S]*?<\\/${tag}>`, 'g'));
+    // Self-closing tags: <tag .../>
+    patterns.push(new RegExp(`<${tag}[^>]*\\/>`, 'g'));
+  }
+
+  return patterns;
+}
 
 /**
  * Remove all action tags from content
@@ -63,30 +34,25 @@ export function cleanXmlTags(content: string | unknown): string {
   }
   let result = content;
 
-  for (const pattern of ACTION_TAG_PATTERNS) {
+  for (const pattern of buildActionTagPatterns()) {
     result = result.replace(new RegExp(pattern.source, 'g'), '');
   }
+
+  const tags = getRegisteredTags();
+  const tagAlt = tags.join('|');
+
   // Catch remaining action tags that have attributes (path=, query=, pattern=, etc.)
   // These are clearly action invocations, not formatting tags
-  result = result.replace(
-    /<(read|edit|write|create|glob|grep|ls|fetch|explore)\s+[^>]*\/?>/gi,
-    '',
-  );
-  // Catch simple self-closing action tags
-  result = result.replace(
-    /<(bash|exec|format|ps|kill|telegram-config|discord-config)\s*\/?>/gi,
-    '',
-  );
+  result = result.replace(new RegExp(`<(${tagAlt})\\s+[^>]*\\/?>`, 'gi'), '');
   // Catch orphan <say> opening tags (content already extracted above)
   result = result.replace(/<say\s*>/gi, '');
   // Catch closing tags for action types (unambiguous)
+  result = result.replace(new RegExp(`<\\/(${tagAlt}|say)>`, 'gi'), '');
+  // Clean up conflict markers that shouldn't appear in output
   result = result.replace(
-    /<\/(bash|read|edit|write|create|exec|glob|grep|ls|fetch|format|schedule|notify|skill|skill-install|plan|task|slashbotbot|explore|say)>/gi,
+    /<<<<<<< SEARCH(?:@\d+(?:-\d+)?)?\n[\s\S]*?\n=======\n[\s\S]*?\n>>>>>>> REPLACE/g,
     '',
   );
-  // Clean up edit internal tags (search/replace) that shouldn't appear in output
-  result = result.replace(/<\/?search>|<\/?replace>/gi, '');
-  result = result.replace(/<search">|<replace">/gi, ''); // Malformed variants
   // Clean partial/broken tags at start or end
   result = result.replace(/^[a-z]*">\s*/i, ''); // Partial tag at start like `h">`
   result = result.replace(/<\/[a-z-]*$/i, ''); // Incomplete closing tag at end like `</`

@@ -10,6 +10,13 @@ export {
   extractAttr,
   extractBoolAttr,
 } from './parser';
-export type { Action, ActionResult, ActionHandlers, GrepOptions, EditResult, EditStatus } from './types';
+export type {
+  Action,
+  ActionResult,
+  ActionHandlers,
+  GrepOptions,
+  EditResult,
+  EditStatus,
+} from './types';
 export type { ActionParserConfig, ParserUtils } from './parser';
 export { executeActions } from './executor';

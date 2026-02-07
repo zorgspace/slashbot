@@ -11,6 +11,7 @@ import {
 } from '../code/imageBuffer';
 import { parseActions, executeActions, type ActionHandlers } from '../actions';
 import { cleanXmlTags, cleanSelfDialogue } from '../utils/xml';
+import { getRegisteredTags } from '../utils/tagRegistry';
 import { GROK_CONFIG, AGENTIC } from '../config/constants';
 
 import type { Message, GrokConfig, UsageStats, ApiAuthProvider } from './types';
@@ -299,7 +300,14 @@ export class GrokClient {
           actionsSummary.length > 0
             ? `Timeout after ${Math.round(opts.overallTimeout / 1000)}s. Completed: ${actionsSummary.join(', ')}`
             : `Timeout after ${Math.round(opts.overallTimeout / 1000)}s`;
-        return { finalResponse, finalThinking, executedActions, actionsSummary, timedOut: true, earlyReturn: summary };
+        return {
+          finalResponse,
+          finalThinking,
+          executedActions,
+          actionsSummary,
+          timedOut: true,
+          earlyReturn: summary,
+        };
       }
 
       let responseContent: string;
@@ -320,11 +328,18 @@ export class GrokClient {
           responseContent = responseContent.replace(/``/g, '');
         }
       } catch (error: any) {
-        if (opts.tokenLimitStrategy === 'condense' && error.message?.includes('maximum prompt length')) {
-          display.warningText('[Token limit reached] Creating condensed context and coming back fresh...');
+        if (
+          opts.tokenLimitStrategy === 'condense' &&
+          error.message?.includes('maximum prompt length')
+        ) {
+          display.warningText(
+            '[Token limit reached] Creating condensed context and coming back fresh...',
+          );
 
           const condensedSummary = this.sessionManager.condenseHistory();
-          display.muted(`[Context] Condensed ${this.sessionManager.history.length} messages into 1 summary`);
+          display.muted(
+            `[Context] Condensed ${this.sessionManager.history.length} messages into 1 summary`,
+          );
 
           this.sessionManager.history = [
             this.sessionManager.history[0],
@@ -397,7 +412,8 @@ export class GrokClient {
             this.sessionManager.history.push({ role: 'assistant', content: responseContent });
             this.sessionManager.history.push({
               role: 'user',
-              content: 'ERROR: Action tag inside code block. Write action tags directly WITHOUT backticks.',
+              content:
+                'ERROR: Action tag inside code block. Write action tags directly WITHOUT backticks.',
             });
             continue;
           }
@@ -426,25 +442,13 @@ export class GrokClient {
         break;
       }
 
-      // Say action termination
+      // Say action: display message but continue the loop
       const hasSayAction = actionResults.some(r => r.action === 'Says');
       if (hasSayAction) {
         const sayResult = actionResults.find(r => r.action === 'Says');
-        if (opts.displayStream && sayResult?.result) {
+        if (sayResult?.result) {
           display.sayResult(sayResult.result);
         }
-        this.sessionManager.history.push({ role: 'assistant', content: responseContent });
-        if (!opts.displayStream) {
-          const sayMessage = sayResult?.result || 'Done.';
-          display.sayResult(sayMessage);
-          if (this.thinkingActive) {
-            display.stopThinking();
-            this.thinkingActive = false;
-          }
-          display.endThinkingStream();
-          return { finalResponse, finalThinking, executedActions, actionsSummary, timedOut: false, earlyReturn: sayMessage };
-        }
-        break;
       }
 
       // Consecutive error tracking (connector mode)
@@ -461,7 +465,14 @@ export class GrokClient {
               this.thinkingActive = false;
             }
             display.endThinkingStream();
-            return { finalResponse, finalThinking, executedActions, actionsSummary, timedOut: false, earlyReturn: errorMsg };
+            return {
+              finalResponse,
+              finalThinking,
+              executedActions,
+              actionsSummary,
+              timedOut: false,
+              earlyReturn: errorMsg,
+            };
           }
         } else {
           consecutiveErrors = 0;
@@ -485,11 +496,7 @@ export class GrokClient {
               this.sessionManager.fileContextCache.set(filePath, result.result);
             }
           }
-          if (
-            action.startsWith('Edit:') &&
-            success &&
-            this.actionHandlers.onRead
-          ) {
+          if (action.startsWith('Edit:') && success && this.actionHandlers.onRead) {
             const filePath = action.replace(/^Edit: /, '').trim();
             try {
               const newContent = await this.actionHandlers.onRead(filePath);
@@ -556,7 +563,8 @@ export class GrokClient {
           this.sessionManager.history.push({ role: 'assistant', content: '[Thinking...]' });
           this.sessionManager.history.push({
             role: 'user',
-            content: "You were thinking but didn't provide a response. Execute your planned action NOW.",
+            content:
+              "You were thinking but didn't provide a response. Execute your planned action NOW.",
           });
           continue;
         }
@@ -564,12 +572,14 @@ export class GrokClient {
         // Full hallucination detection (CLI mode)
         if (opts.hallucinationDetection === 'full') {
           const hasCloseEdit = /<\/edit/i.test(responseContent);
-          const hasProperEditOpen = /<edit\s+path=["'][^"']+["'][^>]*>\s*<search>/i.test(responseContent);
+          const hasProperEditOpen = /<edit\s+path=["'][^"']+["'][^>]*>[\s\S]*?@@ -\d+,\d+ @@/i.test(
+            responseContent,
+          );
           if (hasCloseEdit && !hasProperEditOpen) {
             this.sessionManager.history.push({ role: 'assistant', content: responseContent });
             this.sessionManager.history.push({
               role: 'user',
-              content: `ERROR: Malformed edit tag. You must use the EXACT format:\n<edit path="file.ts"><search>old code</search><replace>new code</replace></edit>\n\nYou cannot just output code with </edit at the end. Include the full structure.`,
+              content: `ERROR: Malformed edit tag. You must use the EXACT unified diff format:\n<edit path="file.ts">\n@@ -10,3 @@\n-old line\n+new line\n context line\n</edit>\n\nRead the file first with <read> to get line numbers. Use @@ -startLine,count @@ hunk headers with -/+/space-prefixed lines.`,
             });
             continue;
           }
@@ -587,9 +597,10 @@ export class GrokClient {
           this.sessionManager.history.push({ role: 'assistant', content: responseContent });
           this.sessionManager.history.push({
             role: 'user',
-            content: opts.hallucinationDetection === 'full'
-              ? `ERROR: You outputted code directly instead of using actions. NEVER output raw code - always use <read path="..."/> to check actual file content, or <edit path="...">...</edit> to make changes. Do NOT hallucinate file contents from memory.`
-              : `ERROR: You outputted code directly instead of using actions. Use <read path="..."/> to check files, or <edit>...</edit> to make changes. Do NOT hallucinate file contents.`,
+            content:
+              opts.hallucinationDetection === 'full'
+                ? `ERROR: You outputted code directly instead of using actions. NEVER output raw code - always use <read path="..."/> to check actual file content, then <edit path="...">@@ -line,count @@\n-old\n+new\n</edit> to make changes. Do NOT hallucinate file contents from memory.`
+                : `ERROR: You outputted code directly instead of using actions. Use <read path="..."/> to check files, then <edit path="...">...</edit> to make changes. Do NOT hallucinate file contents.`,
           });
           continue;
         }
@@ -607,48 +618,30 @@ export class GrokClient {
       const compressedResults = compressActionResults(actionResults);
       this.sessionManager.history.push({ role: 'assistant', content: responseContent });
 
-      // Build file context from cache (CLI mode)
+      // Build file context: only filenames (contents already in action-output)
       let fileContext = '';
       if (opts.includeFileContext && this.sessionManager.fileContextCache.size > 0) {
         const filenames = Array.from(this.sessionManager.fileContextCache.keys()).filter(
           k => !k.startsWith('grep:'),
         );
-        const filenameList =
-          filenames.length > 0 ? `Files in context: ${filenames.join(', ')}\n\n` : '';
-
-        const fileEntries: string[] = [];
-        for (const [key, content] of this.sessionManager.fileContextCache) {
-          if (key.startsWith('grep:')) {
-            fileEntries.push(`[${key}]\n${content}`);
-          } else {
-            fileEntries.push(`[File: ${key}]\n${content}`);
-          }
+        if (filenames.length > 0) {
+          fileContext = `\nFiles in context: ${filenames.join(', ')}`;
         }
-        fileContext = `\n\n<file-context>\n${filenameList}${fileEntries.join('\n\n---\n\n')}\n</file-context>`;
       }
 
       // Build continuation prompt
       const hasErrors = actionResults.some(r => !r.success);
-      const actionTally = opts.cacheFileContents
-        ? executedActions.map(a => `${a.success ? '✓' : '✗'} ${a.description}`).join('\n')
-        : actionsSummary.join('\n');
 
       const iterationWarning =
         iteration >= 15
-          ? `\n\n<WARNING> You have performed ${iteration} actions. If this task is important to complete, use <continue/> to proceed with more iterations. Otherwise, summarize and use <say> to finish.</WARNING>`
+          ? `\n[WARNING] ${iteration} iterations. Use <continue/> or <say> to finish.`
           : '';
 
-      let continuationPrompt: string;
+      const instruction = hasErrors
+        ? 'ERROR DETECTED — fix it now.'
+        : 'Continue or <say> to finish.';
 
-      if (hasErrors) {
-        continuationPrompt = opts.includeFileContext
-          ? `${compressedResults}${fileContext}\n<session-actions>\n${actionTally}\n</session-actions>${iterationWarning}\n\n<system-instruction>ERROR DETECTED - fix it now. File contents are in <file-context> above.</system-instruction>`
-          : `${compressedResults}\n\n<session-actions>\n${actionTally}\n</session-actions>\n\n<system-instruction>ERROR DETECTED - fix it now.</system-instruction>`;
-      } else {
-        continuationPrompt = opts.includeFileContext
-          ? `${compressedResults}${fileContext}\n<session-actions>\n${actionTally}\n</session-actions>${iterationWarning}\n\n<system-instruction>Continue or finish with <say>. If the task is complete or you need user input, use <say> to present a summary and ask for the next steps. File contents are in <file-context> above. Only claim actions that appear in session-actions.</system-instruction>`
-          : `${compressedResults}\n\n<session-actions>\n${actionTally}\n</session-actions>\n\n<system-instruction>Continue or finish with <say>. If the task is complete or you need user input, use <say> to present a summary. Only claim actions that appear in session-actions.</system-instruction>`;
-      }
+      const continuationPrompt = `${compressedResults}${fileContext}${iterationWarning}\n${instruction}`;
 
       this.sessionManager.history.push({ role: 'user', content: continuationPrompt });
     }
@@ -839,7 +832,7 @@ export class GrokClient {
     let thinkingContent = '';
     let displayedContent = '';
     let buffer = '';
-    this.thinkingActive = showThinking;
+    this.thinkingActive = true;
     let firstChunk = true;
     let thinkingStreamStarted = false;
 
@@ -850,12 +843,35 @@ export class GrokClient {
       fetchTimeout = setTimeout(() => this.abortController?.abort(), timeout);
     }
 
+    // Always show spinner while waiting for API response
+    display.startThinking(thinkingLabel);
     if (showThinking) {
-      display.startThinking(thinkingLabel);
       display.startThinkingStream();
     }
 
-    this.usage.requests++;
+    const callNum = ++this.usage.requests;
+    const startPromptTokens = this.usage.promptTokens;
+    const startCompletionTokens = this.usage.completionTokens;
+    const estPromptTokens = this.estimateTokens();
+
+    display.streamThinkingChunk(
+      `\n🛫 Grok API #${callNum} → ${this.getModel()} (~${estPromptTokens} prompt tokens)\n`,
+    );
+
+    // Log the prompt to CommPanel
+    const lastMsg = this.sessionManager.history[this.sessionManager.history.length - 1];
+    if (lastMsg) {
+      let promptText = '';
+      if (typeof lastMsg.content === 'string') {
+        promptText = lastMsg.content;
+      } else if (Array.isArray(lastMsg.content)) {
+        const textPart = lastMsg.content.find((p: any) => p.type === 'text');
+        promptText = textPart?.text || '';
+      }
+      if (promptText) {
+        display.logPrompt(promptText);
+      }
+    }
 
     try {
       const requestBodyJson = JSON.stringify(requestBody);
@@ -915,9 +931,7 @@ export class GrokClient {
             }
 
             if (delta?.reasoning_content) {
-              if (showThinking && !thinkingStreamStarted && this.thinkingActive) {
-                display.stopThinking();
-                this.thinkingActive = false;
+              if (!thinkingStreamStarted) {
                 thinkingStreamStarted = true;
               }
               thinkingContent += delta.reasoning_content;
@@ -932,15 +946,12 @@ export class GrokClient {
               this.rawOutputCallback?.(content);
 
               if (displayStream) {
+                const tagAlt = getRegisteredTags().join('|');
                 const openTags = (
-                  responseContent.match(
-                    /<(bash|read|edit|write|create|exec|glob|grep|ls|git|fetch|search|format|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|think|thinking|reasoning)\b[^>]*>/gi,
-                  ) || []
+                  responseContent.match(new RegExp(`<(${tagAlt})\\b[^>]*>`, 'gi')) || []
                 ).length;
                 const closeTags = (
-                  responseContent.match(
-                    /<\/(bash|read|edit|write|create|exec|glob|grep|ls|git|fetch|search|format|schedule|notify|skill|skill-install|plan|task|explore|ps|kill|telegram-config|discord-config|think|thinking|reasoning)>|\/>/gi,
-                  ) || []
+                  responseContent.match(new RegExp(`</(${tagAlt})>|/>`, 'gi')) || []
                 ).length;
                 const hasUnclosedTag = openTags > closeTags;
                 const partialTagMatch = responseContent.match(/<[a-z-]*$/i);
@@ -952,7 +963,9 @@ export class GrokClient {
                   const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
                   const newContent = normalized.slice(this.sessionManager.displayedContent.length);
                   if (newContent && newContent.trim()) {
-                    const isDuplicate = this.sessionManager.displayedContent.includes(newContent.trim());
+                    const isDuplicate = this.sessionManager.displayedContent.includes(
+                      newContent.trim(),
+                    );
                     if (!isDuplicate) {
                       if (firstChunk) {
                         if (this.thinkingActive) {
@@ -970,10 +983,9 @@ export class GrokClient {
                   }
                 }
               } else {
-                if (!thinkingStreamStarted && showThinking) {
+                if (this.thinkingActive) {
                   display.stopThinking();
                   this.thinkingActive = false;
-                  thinkingStreamStarted = true;
                 }
               }
             }
@@ -982,6 +994,13 @@ export class GrokClient {
           }
         }
       }
+
+      const deltaPrompt = this.usage.promptTokens - startPromptTokens;
+      const deltaCompletion = this.usage.completionTokens - startCompletionTokens;
+
+      display.streamThinkingChunk(
+        `🛬 #${callNum} ← ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
+      );
     } finally {
       if (fetchTimeout) {
         clearTimeout(fetchTimeout);
@@ -1022,7 +1041,11 @@ export class GrokClient {
     };
   }
 
-  trackUsage(usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number }): void {
+  trackUsage(usage: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  }): void {
     this.usage.promptTokens += usage.promptTokens || 0;
     this.usage.completionTokens += usage.completionTokens || 0;
     this.usage.totalTokens += usage.totalTokens || 0;
@@ -1030,16 +1053,11 @@ export class GrokClient {
   }
 }
 
-export function createGrokClient(
-  apiKey?: string,
-  config?: { model?: string },
-): GrokClient {
+export function createGrokClient(apiKey?: string, config?: { model?: string }): GrokClient {
   const key = apiKey || process.env.GROK_API_KEY || process.env.XAI_API_KEY;
 
   if (!key) {
-    throw new Error(
-      'Missing API key. Set GROK_API_KEY or XAI_API_KEY environment variable.',
-    );
+    throw new Error('Missing API key. Set GROK_API_KEY or XAI_API_KEY environment variable.');
   }
 
   return new GrokClient({

@@ -103,21 +103,41 @@ export const modelCommand: CommandHandler = {
     const modelArg = args.join(' ').trim();
 
     if (!modelArg) {
-      const currentModel = context.grokClient.getCurrentModel();
-      display.append('');
-      display.violet('Model Configuration');
-      display.append('');
-      display.append('  Current: ' + currentModel);
-      display.append('');
-      display.muted('  Available models:');
-      for (const model of AVAILABLE_MODELS) {
-        const marker = model === currentModel ? '[*]' : '[ ]';
-        display.append('    ' + marker + ' ' + model);
+      if (context.tuiApp) {
+        const currentModel = context.grokClient?.getCurrentModel() || 'grok-4-1-fast-reasoning';
+        context.tuiApp.setModelSelectModels(currentModel, AVAILABLE_MODELS);
+        context.tuiApp.showModelSelectModal(
+          async (model: string) => {
+            if (!context.grokClient) {
+              display.errorText('Not connected. Use /login first.');
+              return;
+            }
+            context.grokClient.setModel(model);
+            await context.configManager.saveConfig({ model });
+            display.successText('Model changed to ' + model);
+          },
+          () => {
+            // cancel
+          },
+        );
+        return true;
+      } else {
+        const currentModel = context.grokClient?.getCurrentModel() || 'grok-4-1-fast-reasoning';
+        display.append('');
+        display.violet('Model Configuration');
+        display.append('');
+        display.append('  Current: ' + currentModel);
+        display.append('');
+        display.muted('  Available models:');
+        for (const model of AVAILABLE_MODELS) {
+          const marker = model === currentModel ? '[*]' : '[ ]';
+          display.append('    ' + marker + ' ' + model);
+        }
+        display.append('');
+        display.muted('  Usage: /model <model_name>');
+        display.append('');
+        return true;
       }
-      display.append('');
-      display.muted('  Usage: /model <model_name>');
-      display.append('');
-      return true;
     }
 
     const isValidModel = AVAILABLE_MODELS.includes(modelArg as any);

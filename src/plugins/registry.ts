@@ -10,6 +10,7 @@ import type {
   PromptContribution,
   ContextProvider,
   EventSubscription,
+  SidebarContribution,
 } from './types';
 import type { CommandHandler } from '../core/commands/registry';
 
@@ -196,6 +197,32 @@ export class PluginRegistry {
       subscriptions.push(...events);
     }
     return subscriptions;
+  }
+
+  /**
+   * Collect all sidebar contributions from initialized plugins, sorted by order
+   */
+  getSidebarContributions(): SidebarContribution[] {
+    const contributions: SidebarContribution[] = [];
+    for (const [id, plugin] of this.plugins) {
+      if (!this.initialized.has(id)) continue;
+      const sidebar = plugin.getSidebarContributions?.() || [];
+      contributions.push(...sidebar);
+    }
+    return contributions.sort((a, b) => a.order - b.order);
+  }
+
+  /**
+   * Call a lifecycle hook on all initialized plugins
+   */
+  async callLifecycleHook(
+    hook: 'onBeforeGrokInit' | 'onAfterGrokInit',
+    context: PluginContext,
+  ): Promise<void> {
+    for (const [id, plugin] of this.plugins) {
+      if (!this.initialized.has(id)) continue;
+      await plugin[hook]?.(context);
+    }
   }
 
   /**

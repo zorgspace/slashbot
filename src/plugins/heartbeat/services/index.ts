@@ -1,9 +1,6 @@
 /**
- * Heartbeat Service - Periodic AI Reflection System
- *
- * Exports for the heartbeat module.
+ * Heartbeat service exports (plugin-local)
  */
-
 export { HeartbeatService, createHeartbeatService } from './HeartbeatService';
 export type { HeartbeatLLMHandler } from './HeartbeatService';
 

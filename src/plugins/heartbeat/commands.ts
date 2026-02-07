@@ -4,7 +4,9 @@
 
 import { display } from '../../core/ui';
 import type { CommandHandler, CommandContext } from '../../core/commands/registry';
+import { TYPES } from '../../core/di/types';
 import { parseDuration, formatDuration } from './services';
+import type { HeartbeatService } from './services';
 
 export const heartbeatHandler: CommandHandler = {
   name: 'heartbeat',
@@ -14,9 +16,10 @@ export const heartbeatHandler: CommandHandler = {
   group: 'Heartbeat',
 
   async execute(args: string[], context: CommandContext): Promise<boolean> {
-    const { heartbeatService } = context;
-
-    if (!heartbeatService) {
+    let heartbeatService: HeartbeatService;
+    try {
+      heartbeatService = context.container.get<HeartbeatService>(TYPES.HeartbeatService);
+    } catch {
       display.errorText('Heartbeat service not available');
       return true;
     }
@@ -65,7 +68,9 @@ export const heartbeatHandler: CommandHandler = {
       display.muted('  ackMaxChars: ' + (config.ackMaxChars || 300));
 
       if (config.activeHours) {
-        display.muted('  activeHours: ' + config.activeHours.start + ' - ' + config.activeHours.end);
+        display.muted(
+          '  activeHours: ' + config.activeHours.start + ' - ' + config.activeHours.end,
+        );
       }
 
       if (config.visibility) {

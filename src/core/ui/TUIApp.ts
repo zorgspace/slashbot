@@ -5,7 +5,13 @@
  * chat, communication log panel, and input area.
  */
 
-import { createCliRenderer,  BoxRenderable, type CliRenderer, type StyledText } from '@opentui/core';
+import {
+  createCliRenderer,
+  BoxRenderable,
+  ConsolePosition,
+  type CliRenderer,
+  type StyledText,
+} from '@opentui/core';
 import { theme } from './theme';
 import { display } from './display';
 import type { UIOutput, SidebarData, TUIAppCallbacks } from './types';
@@ -15,8 +21,13 @@ import { ChatPanel } from './panels/ChatPanel';
 import { CommPanel } from './panels/CommPanel';
 import { CommandPalettePanel } from './panels/CommandPalettePanel';
 import { InputPanel } from './panels/InputPanel';
-import { OutputInterceptor } from './adapters/OutputInterceptor';
-import { enableBracketedPaste, disableBracketedPaste } from './pasteHandler';
+import { ModelSelectModal } from './panels/ModelSelectModal';
+import {
+  enableBracketedPaste,
+  disableBracketedPaste,
+  readImageFromClipboard,
+} from './pasteHandler';
+import { addImage, imageBuffer } from '../code/imageBuffer';
 
 export class TUIApp implements UIOutput {
   private renderer!: CliRenderer;
@@ -25,7 +36,7 @@ export class TUIApp implements UIOutput {
   private commPanel!: CommPanel;
   private commandPalette!: CommandPalettePanel;
   private inputPanel!: InputPanel;
-  private interceptor!: OutputInterceptor;
+  private modelSelectModal!: ModelSelectModal;
   private callbacks: TUIAppCallbacks;
   private completer?: (line: string) => [string[], string];
   private history: string[];
@@ -102,23 +113,34 @@ export class TUIApp implements UIOutput {
     });
     root.add(this.inputPanel.getRenderable());
 
+    this.modelSelectModal = new ModelSelectModal(this.renderer);
+    root.add(this.modelSelectModal.getRenderable());
+
     this.renderer.root.add(root);
 
-    // Auto-copy text to clipboard + primary selection when selection finishes
+    // Track selected text for middle-click paste (copy handled by terminal's native right-click menu)
     this.renderer.on('selection', () => {
       const sel = this.renderer.getSelection();
       if (sel) {
         const text = sel.getSelectedText();
         if (text) {
           this.lastSelectedText = text;
-          this.renderer.copyToClipboardOSC52(text);
-          this.renderer.copyToClipboardOSC52(text, 1); // Primary selection
         }
       }
     });
 
-    // Click anywhere: middle-click pastes last selection, any click focuses input
-    root.onMouseDown = (event) => {
+    // Click anywhere: middle-click pastes last selection, right-click copies selection, any click focuses input
+    root.onMouseDown = event => {
+      // Right-click: copy selected text to clipboard
+      if (event.button === 2) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (this.lastSelectedText) {
+          this.renderer.copyToClipboardOSC52(this.lastSelectedText);
+          this.renderer.copyToClipboardOSC52(this.lastSelectedText, 1);
+        }
+        return;
+      }
       if (event.button === 1 && this.lastSelectedText) {
         this.inputPanel.insertText(this.lastSelectedText);
       }
@@ -127,12 +149,6 @@ export class TUIApp implements UIOutput {
 
     // Auto-focus input on startup
     this.inputPanel.focus();
-
-    // Set up output interceptor to route console output to chat
-    this.interceptor = new OutputInterceptor({
-      append: (text: string) => this.chatPanel.append(text),
-    });
-    this.interceptor.start();
 
     // Set up keyboard handlers via keyInput EventEmitter
     const keyHandler = this.renderer.keyInput;
@@ -173,8 +189,32 @@ export class TUIApp implements UIOutput {
         return;
       }
 
+      // Ctrl+V - paste image from clipboard (when input focused)
+      if (key.ctrl && key.name === 'v' && this.inputPanel.isFocused()) {
+        key.stopPropagation();
+        key.preventDefault();
+        readImageFromClipboard()
+          .then(dataUrl => {
+            if (dataUrl) {
+              addImage(dataUrl);
+              display.successText(`🖼️  Image added to context #${imageBuffer.length}`);
+            } else {
+              display.warningText('No image in clipboard. Copy an image first, then Ctrl+V.');
+            }
+          })
+          .catch(() => {
+            display.warningText('Could not read image from clipboard.');
+          });
+        return;
+      }
+
       // The following keys only apply when input is focused
       if (this.inputPanel.isFocused()) {
+        // When a prompt (password/text) is active, let InputPanel handle everything
+        if (this.inputPanel.isPromptActive()) {
+          return;
+        }
+
         // Enter - submit input
         if (key.name === 'return') {
           key.stopPropagation();
@@ -219,6 +259,15 @@ export class TUIApp implements UIOutput {
           this.commandPalette.hide();
         }
 
+        // Handle model select modal keys
+        if (this.modelSelectModal.isVisible()) {
+          if (this.modelSelectModal.handleKey(key)) {
+            key.stopPropagation();
+            key.preventDefault();
+            return;
+          }
+        }
+
         // Up arrow - history navigation
         if (key.name === 'up') {
           key.stopPropagation();
@@ -253,6 +302,14 @@ export class TUIApp implements UIOutput {
 
   appendStyledChat(content: StyledText | string): void {
     this.chatPanel.appendStyled(content);
+  }
+
+  appendCodeBlock(content: string, filetype?: string): void {
+    this.chatPanel.addCodeBlock(content, filetype);
+  }
+
+  appendDiffBlock(diff: string, filetype?: string): void {
+    this.chatPanel.addDiffBlock(diff, filetype);
   }
 
   appendThinking(chunk: string): void {
@@ -319,11 +376,27 @@ export class TUIApp implements UIOutput {
     return this.inputPanel.promptInput(label, options);
   }
 
+  setModelSelectModels(current: string, available: string[] | readonly string[]): void {
+    this.modelSelectModal.setModels(current, available);
+  }
+
+  showModelSelectModal(onSelect: (model: string) => void, onCancel?: () => void): void {
+    this.modelSelectModal.show(
+      (model: string) => {
+        onSelect(model);
+        this.inputPanel.focus();
+      },
+      () => {
+        onCancel?.();
+        this.inputPanel.focus();
+      },
+    );
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     display.unbindTUI();
-    this.interceptor?.stop();
     this.renderer?.destroy();
     // Restore terminal state
     disableBracketedPaste();

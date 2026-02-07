@@ -2,7 +2,13 @@
  * Feature Explore Plugin - Parallel multi-worker code search
  */
 
-import type { Plugin, PluginMetadata, PluginContext, ActionContribution, PromptContribution } from '../types';
+import type {
+  Plugin,
+  PluginMetadata,
+  PluginContext,
+  ActionContribution,
+  PromptContribution,
+} from '../types';
 import { registerActionParser } from '../../core/actions/parser';
 import { executeExplore } from './executors';
 import { getExploreParserConfigs } from './parser';

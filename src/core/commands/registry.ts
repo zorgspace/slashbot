@@ -4,6 +4,7 @@
 
 import 'reflect-metadata';
 import { injectable } from 'inversify';
+import type { Container } from 'inversify';
 
 export interface CommandHandler {
   name: string;
@@ -22,11 +23,10 @@ export interface ConnectorHandle {
 
 import type { GrokClient } from '../api';
 import type { TaskScheduler } from '../scheduler/scheduler';
-import type { SecureFileSystem } from '../../plugins/filesystem/services/filesystem';
+import type { SecureFileSystem } from '../services/filesystem';
 import type { ConfigManager } from '../config/config';
 import type { CodeEditor } from '../code/editor';
-import type { SkillManager } from '../../plugins/skills/services/SkillManager';
-import type { HeartbeatService } from '../../plugins/heartbeat/services';
+import type { TUIApp } from '../ui/TUIApp';
 import type { Interface as ReadlineInterface } from 'readline';
 
 export interface CommandContext {
@@ -35,11 +35,11 @@ export interface CommandContext {
   fileSystem: SecureFileSystem;
   configManager: ConfigManager;
   codeEditor: CodeEditor;
-  skillManager: SkillManager;
-  heartbeatService?: HeartbeatService;
+  container: Container;
   connectors: Map<string, ConnectorHandle>;
   reinitializeGrok: () => Promise<void>;
   rl?: ReadlineInterface;
+  tuiApp?: TUIApp;
 }
 
 @injectable()

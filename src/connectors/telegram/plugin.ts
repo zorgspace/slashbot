@@ -20,7 +20,10 @@ async function executeTelegramConfig(
 ): Promise<ActionResult | null> {
   if (!handlers.onTelegramConfig) return null;
 
-  display.tool('TelegramConfig', action.chatId ? `chat_id: ${action.chatId}` : 'auto-detect chat_id');
+  display.tool(
+    'TelegramConfig',
+    action.chatId ? `chat_id: ${action.chatId}` : 'auto-detect chat_id',
+  );
 
   try {
     const result = await handlers.onTelegramConfig(action.botToken, action.chatId);

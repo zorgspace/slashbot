@@ -528,7 +528,6 @@ export class TaskScheduler {
       // Also emit prompt:redraw for UI update
       this.eventBus.emit({ type: 'prompt:redraw' });
     }
-
   }
 
   /**

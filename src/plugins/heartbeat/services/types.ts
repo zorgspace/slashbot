@@ -5,8 +5,6 @@
  * that allows the AI to surface alerts and take proactive actions.
  */
 
-import type { ConnectorSource } from '../../../connectors/base';
-
 /**
  * Active hours configuration - restrict heartbeats to certain times
  */

@@ -1,5 +1,6 @@
 /**
  * Feature Skills Plugin - Skill loading and installation
+ * Self-registers SkillManager in DI container and provides ContextProvider for system prompt.
  */
 
 import path from 'path';
@@ -9,6 +10,7 @@ import type {
   PluginContext,
   ActionContribution,
   PromptContribution,
+  ContextProvider,
 } from '../types';
 import type { CommandHandler } from '../../core/commands/registry';
 import { registerActionParser } from '../../core/actions/parser';
@@ -16,6 +18,7 @@ import { executeSkill, executeSkillInstall } from './executors';
 import { getSkillsParserConfigs } from './parser';
 import { skillsCommands } from './commands';
 import { SKILLS_PROMPT } from './prompt';
+import type { SkillManager } from './services/SkillManager';
 
 export class SkillsPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -27,20 +30,35 @@ export class SkillsPlugin implements Plugin {
   };
 
   private context!: PluginContext;
+  private skillManager!: SkillManager;
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
     for (const config of getSkillsParserConfigs()) {
       registerActionParser(config);
     }
+
+    // Self-register SkillManager in DI container
+    const { createSkillManager } = await import('./services/SkillManager');
+    const { TYPES } = await import('../../core/di/types');
+    if (!context.container.isBound(TYPES.SkillManager)) {
+      context.container
+        .bind(TYPES.SkillManager)
+        .toDynamicValue(() => createSkillManager(context.workDir))
+        .inSingletonScope();
+    }
+
+    // Init skill manager
+    this.skillManager = context.container.get<SkillManager>(TYPES.SkillManager);
+    await this.skillManager.init();
   }
 
   getActionContributions(): ActionContribution[] {
     const context = this.context;
 
-    const getSkillManager = () => {
+    const getSkillManager = (): SkillManager => {
       const { TYPES } = require('../../core/di/types');
-      return context.container.get<any>(TYPES.SkillManager);
+      return context.container.get<SkillManager>(TYPES.SkillManager);
     };
 
     return [
@@ -116,6 +134,21 @@ export class SkillsPlugin implements Plugin {
         title: 'Skills - Load specialized capabilities',
         priority: 120,
         content: SKILLS_PROMPT,
+      },
+    ];
+  }
+
+  getContextProviders(): ContextProvider[] {
+    const skillManager = this.skillManager;
+    return [
+      {
+        id: 'skills.installed',
+        label: 'Installed Skills',
+        priority: 50,
+        getContext: async () => {
+          const prompt = await skillManager.getSkillsForSystemPrompt();
+          return prompt || null;
+        },
       },
     ];
   }

@@ -21,7 +21,9 @@ export async function executeGlob(
     if (files.length === 0) {
       display.result('No files found');
     } else {
-      display.result(`Found ${files.length} file${files.length > 1 ? 's' : ''}\n${files.join('\n')}`);
+      display.result(
+        `Found ${files.length} file${files.length > 1 ? 's' : ''}\n${files.join('\n')}`,
+      );
     }
 
     return {
@@ -103,7 +105,9 @@ export async function executeLS(
     if (entries.length === 0) {
       display.result('Empty directory');
     } else {
-      display.result(`${entries.length} entries\n${entries.join('\n')}`);
+      const preview = entries.slice(0, 3);
+      const more = entries.length > 3 ? `\n  ... and ${entries.length - 3} more` : '';
+      display.result(`${entries.length} entries\n${preview.join('\n')}${more}`);
     }
 
     return {

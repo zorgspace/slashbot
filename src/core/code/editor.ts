@@ -8,9 +8,8 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
-import type { EditResult, EditStatus, GrepOptions } from '../actions/types';
+import type { EditResult, GrepOptions } from '../actions/types';
 import { EXCLUDED_DIRS, EXCLUDED_FILES } from '../config/constants';
-import { smartMatcher, applySmartReplace } from './smartEdit';
 
 export interface SearchResult {
   file: string;
@@ -19,11 +18,15 @@ export interface SearchResult {
   match: string;
 }
 
-export interface FileEdit {
-  path: string;
-  search: string;
-  replace: string;
-  replaceAll?: boolean;
+interface DiffLine {
+  type: 'context' | 'add' | 'remove';
+  content: string;
+}
+
+interface DiffHunk {
+  startLine: number;
+  lineCount: number;
+  diffLines: DiffLine[];
 }
 
 export class CodeEditor {
@@ -75,9 +78,7 @@ export class CodeEditor {
       let searchPath = this.workDir;
       const pathOpt = options?.path;
       if (pathOpt && typeof pathOpt === 'string') {
-        searchPath = pathOpt.startsWith('/')
-          ? pathOpt
-          : `${this.workDir}/${pathOpt}`;
+        searchPath = pathOpt.startsWith('/') ? pathOpt : `${this.workDir}/${pathOpt}`;
       }
 
       // Use -r only for directories, not files
@@ -85,7 +86,8 @@ export class CodeEditor {
       const isFile = fs.existsSync(searchPath) && fs.statSync(searchPath).isFile();
       const recursiveArg = isFile ? '' : '-r';
 
-      const cmd = `grep ${recursiveArg} -n ${caseArg} ${contextArg} ${isFile ? '' : excludes} ${fileArg} "${pattern}" "${searchPath}" 2>/dev/null | head -100`;
+      const limit = (options as any)?.headLimit || 10;
+      const cmd = `grep ${recursiveArg} -n ${caseArg} ${contextArg} ${isFile ? '' : excludes} ${fileArg} "${pattern}" "${searchPath}" 2>/dev/null | head -${limit}`;
 
       const { stdout } = await execAsync(cmd);
 
@@ -148,352 +150,84 @@ export class CodeEditor {
     return path.join(this.workDir, filePath);
   }
 
-  async editFile(edit: FileEdit): Promise<EditResult> {
+  /**
+   * Apply a diff edit using line-based hunks
+   * Hunks specify exact line numbers and unified diff content
+   */
+  async applyDiffEdit(filePath: string, hunks: DiffHunk[]): Promise<EditResult> {
     try {
-      const fullPath = this.resolvePath(edit.path);
+      const fullPath = this.resolvePath(filePath);
 
       if (!fs.existsSync(fullPath)) {
-        display.errorText(`File not found: ${edit.path}`);
-        return { success: false, status: 'not_found', path: edit.path, message: `File not found: ${edit.path}` };
+        display.errorText(`File not found: ${filePath}`);
+        return {
+          success: false,
+          status: 'not_found',
+          path: filePath,
+          message: `File not found: ${filePath}`,
+        };
       }
 
       const content = await fsPromises.readFile(fullPath, 'utf8');
+      const lines = content.split('\n');
 
-      // Use smart matcher for intelligent pattern finding
-      const matchResult = smartMatcher.findMatch(content, edit.search);
+      // Sort hunks bottom-to-top so earlier line numbers stay valid
+      const sortedHunks = [...hunks].sort((a, b) => b.startLine - a.startLine);
 
-      if (matchResult.found) {
-        // Log match type for transparency
-        if (matchResult.matchType !== 'exact') {
-          const confidenceStr = matchResult.confidence
-            ? ` (${Math.round(matchResult.confidence * 100)}% confidence)`
-            : '';
-          display.muted(`Smart match: ${matchResult.matchType}${confidenceStr}`);
-          if (matchResult.startLine) {
-            display.muted(`  Lines ${matchResult.startLine}-${matchResult.endLine}`);
+      for (const hunk of sortedHunks) {
+        const startIdx = Math.min(hunk.startLine - 1, lines.length);
+
+        // Count original lines from context + remove entries
+        const originalCount = hunk.diffLines.filter(
+          l => l.type === 'context' || l.type === 'remove',
+        ).length;
+
+        // Soft verification: check removed/context lines match file
+        let lineIdx = startIdx;
+        for (const dl of hunk.diffLines) {
+          if (dl.type === 'context' || dl.type === 'remove') {
+            if (lineIdx < lines.length && lines[lineIdx].trim() !== dl.content.trim()) {
+              display.warningText(
+                `Line ${lineIdx + 1} mismatch: expected "${dl.content.trim().slice(0, 60)}", got "${lines[lineIdx].trim().slice(0, 60)}"`,
+              );
+            }
+            lineIdx++;
           }
         }
 
-        return this.applyEdit(fullPath, content, {
-          ...edit,
-          search: matchResult.matchedText,
-        });
+        // Build replacement: context + add lines in order
+        const newLines = hunk.diffLines
+          .filter(l => l.type === 'context' || l.type === 'add')
+          .map(l => l.content);
+
+        lines.splice(startIdx, originalCount, ...newLines);
       }
 
-      // Pattern not found - provide helpful suggestions
-      display.warningText(`Pattern not found in ${edit.path}`);
-      const suggestions = smartMatcher.findSuggestions(content, edit.search);
+      const newContent = lines.join('\n');
 
-      if (suggestions.length > 0) {
-        display.muted(`Did you mean one of these?`);
-        suggestions.forEach((s, i) => {
-          const lines = s.split('\n');
-          const preview =
-            lines.length > 3
-              ? lines.slice(0, 3).join('\n') + `\n... (+${lines.length - 3} lines)`
-              : s;
-          display.muted(`\n  ${i + 1}. ─────────────────`);
-          display.muted(
-            preview
-              .split('\n')
-              .map(l => `     ${l}`)
-              .join('\n'),
-          );
-        });
+      // Idempotency check
+      if (newContent === content) {
+        display.muted(`Edit already applied: ${filePath}`);
+        return {
+          success: true,
+          status: 'already_applied',
+          path: filePath,
+          message: 'Edit already applied',
+        };
       }
 
-      return {
-        success: false,
-        status: 'not_found',
-        path: edit.path,
-        message: `Pattern not found in ${edit.path}. ${suggestions.length > 0 ? 'Similar patterns shown above - check whitespace/indentation.' : 'Use <read> to see actual content.'}`,
-      };
+      await fsPromises.writeFile(fullPath, newContent, 'utf8');
+      display.successText(`Modified: ${filePath}`);
+      return { success: true, status: 'applied', path: filePath, message: `Modified: ${filePath}` };
     } catch (error) {
       display.errorText(`Edit error: ${error}`);
-      return { success: false, status: 'error', path: edit.path, message: `Edit error: ${error}` };
-    }
-  }
-
-  private async applyEdit(fullPath: string, content: string, edit: FileEdit): Promise<EditResult> {
-    const occurrences = content.split(edit.search).length - 1;
-
-    // Apply replacement
-    let newContent: string;
-    if (edit.replaceAll && occurrences > 1) {
-      newContent = content.split(edit.search).join(edit.replace);
-      display.muted(`Replacing all ${occurrences} occurrences`);
-    } else {
-      if (occurrences > 1 && !edit.replaceAll) {
-        display.warningText(
-          `Pattern found ${occurrences} times, replacing first only. Use replaceAll="true" for all.`,
-        );
-      }
-      newContent = content.replace(edit.search, edit.replace);
-    }
-
-    // Idempotency check
-    if (newContent === content) {
-      display.muted(`Edit already applied: ${edit.path}`);
       return {
-        success: true,
-        status: 'already_applied',
-        path: edit.path,
-        message: 'Edit already applied (no change needed)',
+        success: false,
+        status: 'error',
+        path: filePath,
+        message: `Edit error: ${error}`,
       };
     }
-
-    await fsPromises.writeFile(fullPath, newContent, 'utf8');
-
-    display.successText(`Modified: ${edit.path}${edit.replaceAll && occurrences > 1 ? `` : ''}`);
-    return { success: true, status: 'applied', path: edit.path, message: `Modified: ${edit.path}` };
-  }
-
-  /**
-   * Try to find the search pattern with normalized whitespace
-   * Uses multiple strategies to find a match
-   */
-  private findNormalizedMatch(content: string, search: string): string | null {
-    // Strategy 1: Normalize only line endings and trailing whitespace (preserve leading indentation)
-    const normalizeLight = (s: string) =>
-      s
-        .replace(/\r\n/g, '\n') // Normalize line endings
-        .replace(/[ \t]+$/gm, ''); // Trim trailing whitespace per line only
-
-    const lightSearch = normalizeLight(search);
-    const lightContent = normalizeLight(content);
-
-    if (lightContent.includes(lightSearch)) {
-      const idx = lightContent.indexOf(lightSearch);
-      return content.substring(idx, idx + lightSearch.length);
-    }
-
-    // Strategy 2: Line-by-line matching with flexible indentation
-    const searchLines = search.split('\n');
-    const contentLines = content.split('\n');
-
-    // Find first non-empty search line
-    const firstNonEmptyIdx = searchLines.findIndex(l => l.trim().length > 0);
-    if (firstNonEmptyIdx === -1) return null;
-
-    const firstSearchLine = searchLines[firstNonEmptyIdx].trim();
-
-    for (let i = 0; i < contentLines.length; i++) {
-      if (contentLines[i].trim() === firstSearchLine) {
-        // Try to match all search lines from this position
-        let searchIdx = firstNonEmptyIdx;
-        let contentIdx = i;
-        let allMatch = true;
-        const matchedLines: number[] = [];
-
-        while (searchIdx < searchLines.length && contentIdx < contentLines.length) {
-          const searchTrimmed = searchLines[searchIdx].trim();
-          const contentTrimmed = contentLines[contentIdx].trim();
-
-          // Handle empty lines
-          if (searchTrimmed === '' && contentTrimmed === '') {
-            matchedLines.push(contentIdx);
-            searchIdx++;
-            contentIdx++;
-            continue;
-          }
-          if (searchTrimmed === '') {
-            searchIdx++;
-            continue;
-          }
-          if (contentTrimmed === '') {
-            contentIdx++;
-            continue;
-          }
-
-          // Compare trimmed content
-          if (contentTrimmed === searchTrimmed) {
-            matchedLines.push(contentIdx);
-            searchIdx++;
-            contentIdx++;
-          } else {
-            allMatch = false;
-            break;
-          }
-        }
-
-        // Check if we matched all search lines
-        if (allMatch && searchIdx >= searchLines.length) {
-          const startLine = matchedLines[0];
-          const endLine = matchedLines[matchedLines.length - 1];
-          return contentLines.slice(startLine, endLine + 1).join('\n');
-        }
-      }
-    }
-
-    // Strategy 3: Strict line-by-line matching - require exact trimmed match for ALL lines
-    // This is safer than fuzzy matching which can corrupt files
-    const searchTrimmedLines = searchLines.map(l => l.trim()).filter(l => l.length > 0);
-
-    if (searchTrimmedLines.length === 0) return null;
-
-    // Find first line that matches exactly (trimmed)
-    const firstTrimmedLine = searchTrimmedLines[0];
-
-    for (let i = 0; i < contentLines.length; i++) {
-      if (contentLines[i].trim() !== firstTrimmedLine) continue;
-
-      // Found potential start, verify ALL remaining lines match exactly
-      let allMatch = true;
-      let searchIdx = 1;
-      let contentIdx = i + 1;
-      const matchStart = i;
-
-      while (searchIdx < searchTrimmedLines.length && contentIdx < contentLines.length) {
-        const searchLine = searchTrimmedLines[searchIdx];
-        const contentLine = contentLines[contentIdx].trim();
-
-        // Skip empty lines in content
-        if (contentLine === '') {
-          contentIdx++;
-          continue;
-        }
-
-        if (contentLine !== searchLine) {
-          allMatch = false;
-          break;
-        }
-
-        searchIdx++;
-        contentIdx++;
-      }
-
-      // All search lines must be matched
-      if (allMatch && searchIdx === searchTrimmedLines.length) {
-        const result = contentLines.slice(matchStart, contentIdx).join('\n');
-        display.muted(`Matched by line-by-line comparison (lines ${matchStart + 1}-${contentIdx})`);
-        return result;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Extract the original text from content given a match in normalized content
-   */
-  private extractOriginalMatch(
-    original: string,
-    normalized: string,
-    normalizedIdx: number,
-    normalizedLen: number,
-  ): string | null {
-    // This is approximate - find the region in original that corresponds
-    // to the normalized match by tracking character counts
-    const origLines = original.split('\n');
-    const normLines = normalized.split('\n');
-
-    let normCharCount = 0;
-    let startLine = 0;
-
-    // Find start line
-    for (let i = 0; i < normLines.length; i++) {
-      if (normCharCount + normLines[i].length >= normalizedIdx) {
-        startLine = i;
-        break;
-      }
-      normCharCount += normLines[i].length + 1; // +1 for newline
-    }
-
-    // Find end line
-    const endCharIdx = normalizedIdx + normalizedLen;
-    let endLine = startLine;
-    for (let i = startLine; i < normLines.length; i++) {
-      normCharCount += normLines[i].length + 1;
-      endLine = i;
-      if (normCharCount >= endCharIdx) break;
-    }
-
-    // Extract from original
-    return origLines.slice(startLine, endLine + 1).join('\n');
-  }
-
-  /**
-   * Try to match search lines starting from a given content line
-   */
-  private tryMatchFromLine(
-    contentLines: string[],
-    startIdx: number,
-    searchLines: string[],
-  ): string | null {
-    let contentIdx = startIdx;
-    let searchIdx = 0;
-    const matchedContentLines: number[] = [];
-
-    while (searchIdx < searchLines.length && contentIdx < contentLines.length) {
-      const searchTrimmed = searchLines[searchIdx];
-      const contentTrimmed = contentLines[contentIdx].trim();
-
-      // Skip empty lines in both
-      if (!contentTrimmed && !searchTrimmed) {
-        contentIdx++;
-        searchIdx++;
-        continue;
-      }
-      if (!contentTrimmed) {
-        contentIdx++;
-        continue;
-      }
-      if (!searchTrimmed) {
-        searchIdx++;
-        continue;
-      }
-
-      // Check for match (exact or contained)
-      if (contentTrimmed === searchTrimmed || contentTrimmed.includes(searchTrimmed)) {
-        matchedContentLines.push(contentIdx);
-        searchIdx++;
-      }
-      contentIdx++;
-
-      // Don't look too far ahead
-      if (contentIdx - startIdx > searchLines.length * 2) break;
-    }
-
-    if (searchIdx === searchLines.length && matchedContentLines.length > 0) {
-      const firstMatch = matchedContentLines[0];
-      const lastMatch = matchedContentLines[matchedContentLines.length - 1];
-      return contentLines.slice(firstMatch, lastMatch + 1).join('\n');
-    }
-
-    return null;
-  }
-
-  /**
-   * Find similar patterns to help debug failed matches
-   */
-  private findSimilarPatterns(content: string, search: string): string[] {
-    const suggestions: string[] = [];
-    const lines = content.split('\n');
-    const searchLines = search.split('\n');
-    const firstSearchLine = searchLines[0].trim();
-
-    if (!firstSearchLine || firstSearchLine.length < 5) return suggestions;
-
-    // Find lines that contain significant parts of the first search line
-    const keywords = firstSearchLine.split(/\s+/).filter(w => w.length > 3);
-
-    for (let i = 0; i < lines.length && suggestions.length < 3; i++) {
-      const line = lines[i];
-      const matchedKeywords = keywords.filter(kw => line.includes(kw));
-
-      if (matchedKeywords.length >= Math.ceil(keywords.length * 0.5)) {
-        // Found a similar line - get context
-        const contextStart = i;
-        const contextEnd = Math.min(i + searchLines.length, lines.length);
-        const context = lines.slice(contextStart, contextEnd).join('\n');
-
-        if (!suggestions.includes(context)) {
-          suggestions.push(context);
-        }
-      }
-    }
-
-    return suggestions;
   }
 
   async createFile(filePath: string, content: string): Promise<boolean> {
@@ -503,8 +237,15 @@ export class CodeEditor {
       // Prevent creating files in .slashbot directories to avoid corrupting configuration
       const localSlashbotDir = path.join(this.workDir, '.slashbot');
       const homeSlashbotDir = path.join(os.homedir(), '.slashbot');
-      if (fullPath.startsWith(localSlashbotDir + path.sep) || fullPath.startsWith(homeSlashbotDir + path.sep) || fullPath === localSlashbotDir || fullPath === homeSlashbotDir) {
-        display.errorText(`Cannot create files in .slashbot directories to prevent configuration corruption`);
+      if (
+        fullPath.startsWith(localSlashbotDir + path.sep) ||
+        fullPath.startsWith(homeSlashbotDir + path.sep) ||
+        fullPath === localSlashbotDir ||
+        fullPath === homeSlashbotDir
+      ) {
+        display.errorText(
+          `Cannot create files in .slashbot directories to prevent configuration corruption`,
+        );
         return false;
       }
 
@@ -516,7 +257,9 @@ export class CodeEditor {
 
       // Display preview of created file
       const previewContent = content.split('\n').slice(0, 10).join('\n');
-      display.muted(`${filePath} (lines 1-${Math.min(10, content.split('\n').length)}):\n${previewContent}`);
+      display.muted(
+        `${filePath} (lines 1-${Math.min(10, content.split('\n').length)}):\n${previewContent}`,
+      );
       display.successText(`Created: ${filePath}`);
       return true;
     } catch (error) {

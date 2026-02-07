@@ -29,7 +29,9 @@ export async function executeRead(
     const lineCount = lines.length;
     display.readResult(lineCount);
     // Send full content to LLM with line numbers
-    const numberedContent = lines.map((line, i) => `${String(i + 1).padStart(4, ' ')}: ${line}`).join('\n');
+    const numberedContent = lines
+      .map((line, i) => `${String(i + 1).padStart(4, ' ')}: ${line}`)
+      .join('\n');
     return { action: `Read: ${action.path}`, success: true, result: numberedContent };
   } else {
     display.error('File not found');
@@ -50,19 +52,18 @@ export async function executeEdit(
 
   display.update(action.path);
 
-  const result = await handlers.onEdit(
-    action.path,
-    action.search,
-    action.replace,
-    action.replaceAll,
-  );
-
-  const searchLines = action.search.split('\n');
-  const replaceLines = action.replace.split('\n');
+  const result = await handlers.onEdit(action.path, action.hunks);
 
   if (result.status === 'applied') {
-    display.updateResult(true, searchLines.length, replaceLines.length);
-    display.diff(searchLines, replaceLines);
+    // Show diff for each hunk
+    for (const hunk of action.hunks) {
+      const removed = hunk.diffLines.filter(l => l.type === 'remove').map(l => l.content);
+      const added = hunk.diffLines.filter(l => l.type === 'add').map(l => l.content);
+      display.updateResult(true, removed.length, added.length);
+      if (removed.length > 0 || added.length > 0) {
+        display.diff(removed, added, action.path, hunk.startLine);
+      }
+    }
   } else if (result.status === 'already_applied') {
     display.success('Already applied (skipped)');
   } else if (result.status === 'not_found') {
@@ -72,9 +73,7 @@ export async function executeEdit(
         `File not found: ${action.path}. Use <read> to check if file exists, or <write> to make a new file.`,
       );
     } else {
-      display.error(
-        `Pattern not found. Use <read path="${action.path}"/> first to see the actual content.`,
-      );
+      display.error(`${result.message}`);
     }
   } else {
     display.updateResult(false, 0, 0);
@@ -99,7 +98,6 @@ export async function executeEdit(
     error: result.success ? undefined : errorMsg,
   };
 }
-
 
 export async function executeWrite(
   action: WriteAction,
