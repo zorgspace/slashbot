@@ -76,6 +76,7 @@ interface AgenticLoopResult {
   actionsSummary: string[];
   timedOut: boolean;
   earlyReturn?: string;
+  endMessage?: string;
 }
 
 export class GrokClient {
@@ -278,6 +279,7 @@ export class GrokClient {
     const actionsSummary: string[] = [];
     let finalResponse = '';
     let finalThinking = '';
+    let endMessage: string | undefined;
     let emptyResponseRetries = 0;
     const MAX_EMPTY_RETRIES = 2;
     let forcedRetryAttempted = false;
@@ -562,6 +564,7 @@ export class GrokClient {
         }
         if (endResult.result) {
           display.sayResult(endResult.result);
+          endMessage = endResult.result;
         }
         this.sessionManager.history.push({ role: 'assistant', content: responseContent });
         break;
@@ -784,7 +787,7 @@ export class GrokClient {
       this.sessionManager.history.push({ role: 'user', content: continuationPrompt });
     }
 
-    return { finalResponse, finalThinking, executedActions, actionsSummary, timedOut: false };
+    return { finalResponse, finalThinking, executedActions, actionsSummary, timedOut: false, endMessage };
   }
 
   // ===== Public chat methods =====
@@ -868,8 +871,12 @@ export class GrokClient {
     const effectiveSessionId = sessionId || source || 'cli';
     this.sessionManager.setSession(effectiveSessionId);
 
+    // Parse chatId from sessionId (e.g., "telegram:12345" → "12345")
+    const chatIdFromSession = sessionId?.includes(':') ? sessionId.split(':')[1] : undefined;
+    const chatHint = chatIdFromSession ? ` CHAT:${chatIdFromSession}` : '';
+
     const platformHint = source
-      ? `\n[PLATFORM: ${source.toUpperCase()} - Execute actions, then respond with a 1-2 sentence SUMMARY in plain language. NEVER include code, file contents, or technical details. Describe what was done simply (e.g., "Fixed the login bug" not code snippets).]`
+      ? `\n[PLATFORM: ${source.toUpperCase()}${chatHint} - Execute actions, then respond with a 1-2 sentence SUMMARY in plain language. NEVER include code, file contents, or technical details. Describe what was done simply (e.g., "Fixed the login bug" not code snippets).]`
       : '';
 
     const recentImages = getRecentImages();
@@ -919,6 +926,11 @@ export class GrokClient {
     display.endThinkingStream();
 
     this.responseEndCallback?.();
+
+    // Use the end message if the LLM provided one via <end>
+    if (result.endMessage) {
+      return result.endMessage;
+    }
 
     const cleanResponse = cleanSelfDialogue(cleanXmlTags(result.finalResponse)).trim();
 

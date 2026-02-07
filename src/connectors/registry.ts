@@ -9,6 +9,7 @@ export interface ConnectorEntry {
   connector: any;
   isRunning: () => boolean;
   sendMessage: (msg: string) => Promise<void>;
+  sendMessageTo?: (chatId: string, msg: string) => Promise<void>;
   stop?: () => void;
 }
 
@@ -67,7 +68,11 @@ export class ConnectorRegistry {
   /**
    * Send notification to connectors
    */
-  async notify(message: string, target?: string): Promise<{ sent: string[]; failed: string[] }> {
+  async notify(
+    message: string,
+    target?: string,
+    chatId?: string,
+  ): Promise<{ sent: string[]; failed: string[] }> {
     const sent: string[] = [];
     const failed: string[] = [];
 
@@ -83,7 +88,11 @@ export class ConnectorRegistry {
       if (!conn.isRunning()) continue;
 
       try {
-        await conn.sendMessage(message);
+        if (chatId && conn.sendMessageTo) {
+          await conn.sendMessageTo(chatId, message);
+        } else {
+          await conn.sendMessage(message);
+        }
         sent.push(name);
       } catch {
         failed.push(name);

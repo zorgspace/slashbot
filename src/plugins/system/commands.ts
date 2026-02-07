@@ -574,6 +574,7 @@ export const updateCommand: CommandHandler = {
   usage: '/update [check|install]',
   aliases: ['upgrade'],
   group: 'System',
+  subcommands: ['check', 'install'],
   execute: async args => {
     const subcommand = args[0] || 'check';
 

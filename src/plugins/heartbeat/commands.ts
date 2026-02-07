@@ -14,6 +14,7 @@ export const heartbeatHandler: CommandHandler = {
   description: 'Manage heartbeat system - periodic AI reflection',
   usage: '/heartbeat [status|config|every|target|enable|disable|hours|now]',
   group: 'Heartbeat',
+  subcommands: ['now', 'status', 'config', 'every', 'target', 'enable', 'disable', 'hours', 'md'],
 
   async execute(args: string[], context: CommandContext): Promise<boolean> {
     let heartbeatService: HeartbeatService;

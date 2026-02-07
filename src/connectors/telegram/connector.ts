@@ -2,7 +2,7 @@
  * Telegram Connector for Slashbot
  *
  * RULES:
- * - Messages are only accepted from the authorized chatId
+ * - Messages are only accepted from authorized chatIds
  * - Responses are ALWAYS sent back to the same chatId that sent the message
  * - Voice messages are transcribed and processed as text
  * - Max message length: 4000 chars (auto-split if longer)
@@ -20,6 +20,7 @@ import type { EventBus } from '../../core/events/EventBus';
 export interface TelegramConfig {
   botToken: string;
   chatId: string;
+  chatIds?: string[];
 }
 
 export class TelegramConnector implements Connector {
@@ -27,7 +28,7 @@ export class TelegramConnector implements Connector {
   readonly config = PLATFORM_CONFIGS.telegram;
 
   private bot: Telegraf;
-  private chatId: string;
+  private authorizedChatIds: Set<string>;
   private replyTargetChatId: string; // Track where to send replies
   private messageHandler: MessageHandler | null = null;
   private eventBus: EventBus | null = null;
@@ -35,16 +36,22 @@ export class TelegramConnector implements Connector {
 
   constructor(config: TelegramConfig) {
     this.bot = new Telegraf(config.botToken);
-    this.chatId = config.chatId;
-    this.replyTargetChatId = config.chatId; // Default to configured chatId
+    this.authorizedChatIds = new Set<string>();
+    this.authorizedChatIds.add(config.chatId);
+    if (config.chatIds) {
+      for (const id of config.chatIds) {
+        this.authorizedChatIds.add(id);
+      }
+    }
+    this.replyTargetChatId = config.chatId; // Default to primary chatId
     this.setupHandlers();
   }
 
   private setupHandlers(): void {
-    // Only accept messages from the authorized chat
+    // Only accept messages from authorized chats
     this.bot.use(async (ctx, next) => {
       const chatId = ctx.chat?.id?.toString();
-      if (chatId !== this.chatId) {
+      if (!chatId || !this.authorizedChatIds.has(chatId)) {
         // Silently ignore messages from unauthorized chats
         return;
       }
@@ -60,30 +67,31 @@ export class TelegramConnector implements Connector {
         return;
       }
 
+      const chatId = ctx.chat.id.toString();
       // Track the chat to reply to (same chat that sent the message)
-      this.replyTargetChatId = ctx.chat.id.toString();
+      this.replyTargetChatId = chatId;
 
       try {
         // Start continuous typing indicator (Telegram typing expires after ~5s)
-        const chatId = ctx.chat.id;
-        await this.bot.telegram.sendChatAction(chatId, 'typing');
+        await this.bot.telegram.sendChatAction(ctx.chat.id, 'typing');
         const typingInterval = setInterval(() => {
-          this.bot.telegram.sendChatAction(chatId, 'typing').catch(() => {});
+          this.bot.telegram.sendChatAction(ctx.chat.id, 'typing').catch(() => {});
         }, 4000);
 
         // Process message through slashbot with chat-specific session
         let response: string | void;
         try {
           response = await this.messageHandler(message, 'telegram', {
-            sessionId: `telegram:${ctx.chat.id}`,
+            sessionId: `telegram:${chatId}`,
+            chatId,
           });
         } finally {
           clearInterval(typingInterval);
         }
 
-        // Send response if any (using sendMessage which handles splitting)
+        // Send response if any (using sendMessageTo which handles splitting)
         if (response) {
-          await this.sendMessage(response);
+          await this.sendMessageTo(chatId, response);
         } else {
           await ctx.reply('No response generated');
         }
@@ -103,8 +111,9 @@ export class TelegramConnector implements Connector {
         return;
       }
 
+      const chatId = ctx.chat.id.toString();
       // Track the chat to reply to (same chat that sent the message)
-      this.replyTargetChatId = ctx.chat.id.toString();
+      this.replyTargetChatId = chatId;
 
       const transcriptionService = getTranscriptionService();
       if (!transcriptionService) {
@@ -114,10 +123,9 @@ export class TelegramConnector implements Connector {
 
       try {
         // Start continuous typing indicator
-        const chatId = ctx.chat.id;
-        await this.bot.telegram.sendChatAction(chatId, 'typing');
+        await this.bot.telegram.sendChatAction(ctx.chat.id, 'typing');
         const typingInterval = setInterval(() => {
-          this.bot.telegram.sendChatAction(chatId, 'typing').catch(() => {});
+          this.bot.telegram.sendChatAction(ctx.chat.id, 'typing').catch(() => {});
         }, 4000);
 
         try {
@@ -143,11 +151,12 @@ export class TelegramConnector implements Connector {
           // Process transcribed text (already displayed via display.connectorResult)
           const response = await this.messageHandler(result.text, 'telegram', {
             alreadyDisplayed: true,
-            sessionId: `telegram:${ctx.chat.id}`,
+            sessionId: `telegram:${chatId}`,
+            chatId,
           });
           process.stdout.write('\x1b[?25h'); // Show cursor again
           if (response) {
-            await this.sendMessage(response);
+            await this.sendMessageTo(chatId, response);
           }
         } finally {
           clearInterval(typingInterval);
@@ -165,15 +174,15 @@ export class TelegramConnector implements Connector {
         return;
       }
 
+      const chatId = ctx.chat.id.toString();
       // Track the chat to reply to
-      this.replyTargetChatId = ctx.chat.id.toString();
+      this.replyTargetChatId = chatId;
 
       try {
         // Start continuous typing indicator
-        const chatId = ctx.chat.id;
-        await this.bot.telegram.sendChatAction(chatId, 'typing');
+        await this.bot.telegram.sendChatAction(ctx.chat.id, 'typing');
         const typingInterval = setInterval(() => {
-          this.bot.telegram.sendChatAction(chatId, 'typing').catch(() => {});
+          this.bot.telegram.sendChatAction(ctx.chat.id, 'typing').catch(() => {});
         }, 4000);
 
         try {
@@ -199,10 +208,11 @@ export class TelegramConnector implements Connector {
 
           // Process with the image in context
           const response = await this.messageHandler(message, 'telegram', {
-            sessionId: `telegram:${ctx.chat.id}`,
+            sessionId: `telegram:${chatId}`,
+            chatId,
           });
           if (response) {
-            await this.sendMessage(response);
+            await this.sendMessageTo(chatId, response);
           }
         } finally {
           clearInterval(typingInterval);
@@ -321,25 +331,31 @@ export class TelegramConnector implements Connector {
   }
 
   /**
-   * Send a message to the current reply target (same chat that sent the last message)
+   * Send a message to a specific chat
    */
-  async sendMessage(text: string): Promise<void> {
+  async sendMessageTo(chatId: string, text: string): Promise<void> {
     if (!this.running) {
       throw new Error('Telegram bot not running');
     }
 
-    const targetChat = this.replyTargetChatId;
     const chunks = splitMessage(text, this.config.maxMessageLength);
     for (const chunk of chunks) {
       await this.bot.telegram
-        .sendMessage(targetChat, chunk, {
+        .sendMessage(chatId, chunk, {
           parse_mode: 'Markdown',
         })
         .catch(async () => {
           // Fallback to plain text if markdown fails
-          await this.bot.telegram.sendMessage(targetChat, chunk);
+          await this.bot.telegram.sendMessage(chatId, chunk);
         });
     }
+  }
+
+  /**
+   * Send a message to the current reply target (same chat that sent the last message)
+   */
+  async sendMessage(text: string): Promise<void> {
+    return this.sendMessageTo(this.replyTargetChatId, text);
   }
 
   isRunning(): boolean {

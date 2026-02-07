@@ -132,16 +132,16 @@ export class TelegramPlugin implements ConnectorPlugin {
         id: 'connector.telegram.docs',
         title: 'Platform [TELEGRAM]',
         priority: 200,
-        content: `- Execute actions, end with 1-2 sentence summary in plain language
-- NEVER include code snippets, file contents, or technical details in the final summary
+        content: `- Execute actions, end with 1-2 sentence summary.
 
-## Telegram Configuration
+Telegram Configuration
 \`\`\`
 <telegram-config bot_token="123:ABC..." chat_id="987654321"/>
 <telegram-config bot_token="123:ABC..."/>  <!-- auto-detect chat_id -->
 \`\`\`
 - Get bot token from @BotFather
-- After config, restart slashbot to connect`,
+- After config, restart slashbot to connect
+- Multi-chat: use /telegram add <chat_id> and /telegram remove <chat_id> to manage authorized chats`,
         enabled: () => {
           try {
             return !!(this.context.configManager as any)?.getTelegramConfig?.();

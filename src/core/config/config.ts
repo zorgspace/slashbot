@@ -10,6 +10,7 @@ import { HOME_SLASHBOT_DIR, HOME_CONFIG_FILE } from './constants';
 export interface TelegramConfig {
   botToken: string;
   chatId: string;
+  chatIds?: string[];
 }
 
 export interface DiscordConfig {
@@ -118,11 +119,14 @@ export class ConfigManager {
     this.config.apiKey = undefined;
   }
 
-  async saveTelegramConfig(botToken: string, chatId: string): Promise<void> {
+  async saveTelegramConfig(botToken: string, chatId: string, chatIds?: string[]): Promise<void> {
     const { mkdir } = await import('fs/promises');
     await mkdir(CONFIG_DIR, { recursive: true });
 
     this.telegram = { botToken, chatId };
+    if (chatIds && chatIds.length > 0) {
+      this.telegram.chatIds = chatIds;
+    }
 
     // Preserve API key when saving telegram config
     const creds: any = { telegram: this.telegram };
@@ -184,6 +188,44 @@ export class ConfigManager {
 
   getTelegramConfig(): TelegramConfig | null {
     return this.telegram;
+  }
+
+  async addTelegramChat(chatId: string): Promise<void> {
+    if (!this.telegram) {
+      throw new Error('Telegram not configured');
+    }
+
+    if (!this.telegram.chatIds) {
+      this.telegram.chatIds = [];
+    }
+
+    if (!this.telegram.chatIds.includes(chatId) && chatId !== this.telegram.chatId) {
+      this.telegram.chatIds.push(chatId);
+      await this.saveTelegramConfig(
+        this.telegram.botToken,
+        this.telegram.chatId,
+        this.telegram.chatIds,
+      );
+    }
+  }
+
+  async removeTelegramChat(chatId: string): Promise<void> {
+    if (!this.telegram) {
+      throw new Error('Telegram not configured');
+    }
+
+    if (chatId === this.telegram.chatId) {
+      throw new Error('Cannot remove the primary chat ID');
+    }
+
+    if (this.telegram.chatIds) {
+      this.telegram.chatIds = this.telegram.chatIds.filter(id => id !== chatId);
+      await this.saveTelegramConfig(
+        this.telegram.botToken,
+        this.telegram.chatId,
+        this.telegram.chatIds,
+      );
+    }
   }
 
   async saveDiscordConfig(

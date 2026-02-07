@@ -11,6 +11,7 @@ export const taskCommand: CommandHandler = {
   usage: '/task [list|run|remove|toggle|cron|clear] [id]',
   aliases: ['tasks'],
   group: 'Tasks',
+  subcommands: ['list', 'run', 'remove', 'toggle', 'cron', 'clear', 'status'],
   execute: async (args, context) => {
     const subcommand = args[0] || 'list';
     const tasks = context.scheduler?.listTasks() || [];

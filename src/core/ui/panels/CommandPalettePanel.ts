@@ -7,7 +7,7 @@
 
 import { BoxRenderable, TextRenderable, t, fg, bold, type CliRenderer } from '@opentui/core';
 import { theme } from '../theme';
-import { getGroupedCommands } from '../../commands/parser';
+import { getGroupedCommands, getSubcommands } from '../../commands/parser';
 
 export class CommandPalettePanel {
   private container: BoxRenderable;
@@ -35,11 +35,25 @@ export class CommandPalettePanel {
    * @param filter - current input value (e.g. "/he")
    */
   show(filter: string): void {
-    const groups = getGroupedCommands();
-    const prefix = filter.startsWith('/') ? filter.slice(1).toLowerCase() : '';
-
     // Clear previous content
     this.clearContent();
+
+    // Check if we're in subcommand context (e.g. "/wallet " or "/wallet s")
+    const trimmed = filter.trim();
+    const parts = trimmed.split(/\s+/);
+    if (parts.length >= 1 && parts[0].startsWith('/')) {
+      const baseCmd = parts[0];
+      const subs = getSubcommands(baseCmd);
+      if (subs.length > 0) {
+        const subPrefix = parts.length >= 2 ? parts.slice(1).join(' ').toLowerCase() : '';
+        this.showSubcommands(baseCmd, subs, subPrefix);
+        return;
+      }
+    }
+
+    // Regular command palette
+    const groups = getGroupedCommands();
+    const prefix = filter.startsWith('/') ? filter.slice(1).toLowerCase() : '';
 
     // Build one line per group
     for (const group of groups) {
@@ -51,9 +65,6 @@ export class CommandPalettePanel {
         })
         .join(' ');
 
-      // Format: "GroupTitle: cmd1 cmd2 cmd3"
-      // Using plain string since t`` with dynamic styled segments is complex
-      // Title in bold violet, commands in appropriate color
       const hasMatch = !prefix || group.cmds.some(cmd => cmd.name.startsWith(prefix));
       const titleColor = hasMatch ? theme.violet : theme.muted;
       const content = t`${bold(fg(titleColor)(group.title + ':'))} ${fg(theme.muted)(cmdStr)}`;
@@ -84,7 +95,50 @@ export class CommandPalettePanel {
     }
 
     const lineCount = this.lineCounter;
-    // Size: lines + 2 for border
+    this.container.height = lineCount + 2;
+    this.container.visible = true;
+    this._visible = true;
+  }
+
+  /**
+   * Show subcommand suggestions for a command
+   */
+  private showSubcommands(baseCmd: string, subs: string[], subPrefix: string): void {
+    this.lineCounter++;
+    const cmdName = baseCmd.startsWith('/') ? baseCmd.slice(1) : baseCmd;
+
+    const subStr = subs
+      .map(sub => {
+        const matches = !subPrefix || sub.startsWith(subPrefix);
+        return subPrefix && matches ? sub.toUpperCase() : sub;
+      })
+      .join('  ');
+
+    const content = t`${bold(fg(theme.violet)(cmdName + ':'))} ${fg(theme.muted)(subStr)}`;
+
+    const text = new TextRenderable(this.renderer, {
+      id: `palette-line-${this.lineCounter}`,
+      content,
+      height: 1,
+    });
+    this.container.add(text);
+
+    // Show filtered matches if prefix is provided
+    if (subPrefix) {
+      const matching = subs.filter(s => s.startsWith(subPrefix));
+      if (matching.length > 0 && matching.length < subs.length) {
+        this.lineCounter++;
+        const matchStr = matching.map(s => `${baseCmd} ${s}`).join('  ');
+        const matchLine = new TextRenderable(this.renderer, {
+          id: `palette-line-${this.lineCounter}`,
+          content: t`${fg(theme.violetLight)('Matches:')} ${bold(fg(theme.white)(matchStr))}`,
+          height: 1,
+        });
+        this.container.add(matchLine);
+      }
+    }
+
+    const lineCount = this.lineCounter;
     this.container.height = lineCount + 2;
     this.container.visible = true;
     this._visible = true;

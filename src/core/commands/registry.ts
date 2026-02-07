@@ -12,6 +12,7 @@ export interface CommandHandler {
   usage: string;
   aliases?: string[];
   group?: string;
+  subcommands?: string[];
   execute: (args: string[], context: CommandContext) => Promise<boolean>;
 }
 

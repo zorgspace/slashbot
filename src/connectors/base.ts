@@ -12,6 +12,8 @@ export interface MessageMetadata {
   alreadyDisplayed?: boolean;
   /** Session/channel ID for multi-channel support */
   sessionId?: string;
+  /** Chat ID for targeted replies */
+  chatId?: string;
 }
 
 export type MessageHandler = (

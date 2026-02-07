@@ -230,6 +230,7 @@ export const walletCommands: CommandHandler[] = [
     name: 'wallet',
     description: 'Manage Solana wallet, billing, and payments',
     group: 'Wallet',
+    subcommands: ['create', 'import', 'export', 'balance', 'send', 'redeem', 'deposit', 'unlock', 'lock', 'status', 'pricing', 'mode', 'usage'],
     usage: `/wallet - Show wallet overview
 /wallet create - Create new wallet
 /wallet import <privatekey> - Import from private key

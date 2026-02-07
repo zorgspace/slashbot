@@ -10,6 +10,7 @@ export const telegramCommand: CommandHandler = {
   description: 'Configure Telegram bot connection',
   usage: '/telegram <bot_token> [chat_id]',
   group: 'Connectors',
+  subcommands: ['add', 'remove', 'clear'],
   execute: async (args, context) => {
     const botToken = args[0];
     const chatId = args[1];
@@ -27,7 +28,10 @@ export const telegramCommand: CommandHandler = {
           '  Status:  ' + (connector?.isRunning() ? 'Connected' : 'Configured but not running'),
         );
         display.muted('  Bot:     ' + telegramConfig.botToken.slice(0, 10) + '...');
-        display.muted('  Chat ID: ' + telegramConfig.chatId);
+        display.muted('  Chat ID: ' + telegramConfig.chatId + ' (primary)');
+        if (telegramConfig.chatIds && telegramConfig.chatIds.length > 0) {
+          display.muted('  Additional: ' + telegramConfig.chatIds.join(', '));
+        }
       } else {
         display.append('  Status:  Not configured');
       }
@@ -36,10 +40,42 @@ export const telegramCommand: CommandHandler = {
       display.muted('Usage:');
       display.append('  /telegram <bot_token> <chat_id> - Configure bot');
       display.append('  /telegram <bot_token>           - Auto-detect chat_id');
+      display.append('  /telegram add <chat_id>         - Add authorized chat');
+      display.append('  /telegram remove <chat_id>      - Remove authorized chat');
       display.append('  /telegram clear                 - Remove configuration');
       display.append('');
       display.muted('Get bot token from @BotFather on Telegram');
       display.append('');
+      return true;
+    }
+
+    if (botToken === 'add') {
+      if (!chatId) {
+        display.errorText('Usage: /telegram add <chat_id>');
+        return true;
+      }
+      try {
+        await context.configManager.addTelegramChat(chatId);
+        display.successText('Added chat ' + chatId + ' to authorized list');
+        display.warningText('Restart slashbot to apply changes');
+      } catch (error) {
+        display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
+      }
+      return true;
+    }
+
+    if (botToken === 'remove') {
+      if (!chatId) {
+        display.errorText('Usage: /telegram remove <chat_id>');
+        return true;
+      }
+      try {
+        await context.configManager.removeTelegramChat(chatId);
+        display.successText('Removed chat ' + chatId + ' from authorized list');
+        display.warningText('Restart slashbot to apply changes');
+      } catch (error) {
+        display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
+      }
       return true;
     }
 

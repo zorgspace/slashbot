@@ -178,16 +178,6 @@ export function completer(line: string): [string[], string] {
     if (parts.length === 2 && parts[1] === '') {
       // Line ends with space, like "/wallet "
       const baseCommand = parts[0];
-      try {
-        const registry = getService<CommandRegistry>(TYPES.CommandRegistry);
-        const handler = registry.get(baseCommand);
-        if (handler && handler.usage) {
-          console.log('\n' + handler.usage);
-          return [[], line];
-        }
-      } catch {
-        // Fall back to subcommands
-      }
       const subcommands = getSubcommands(baseCommand);
       if (subcommands.length > 0) {
         return [subcommands.map(sub => `${baseCommand} ${sub}`), line];
@@ -223,28 +213,17 @@ export function completer(line: string): [string[], string] {
 }
 
 /**
- * Get subcommands for a given command
+ * Get subcommands for a given command (dynamically from registry)
  */
-function getSubcommands(command: string): string[] {
-  const subcommandsMap: Record<string, string[]> = {
-    '/wallet': [
-      'create',
-      'import',
-      'export',
-      'balance',
-      'send',
-      'redeem',
-      'unlock',
-      'lock',
-      'status',
-      'pricing',
-      'mode',
-      'usage',
-    ],
-    // Add other commands with subcommands if needed
-  };
-
-  return subcommandsMap[command] || [];
+export function getSubcommands(command: string): string[] {
+  try {
+    const registry = getService<CommandRegistry>(TYPES.CommandRegistry);
+    const name = command.startsWith('/') ? command.slice(1) : command;
+    const handler = registry.get(name);
+    return handler?.subcommands || [];
+  } catch {
+    return [];
+  }
 }
 
 /**

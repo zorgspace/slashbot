@@ -54,7 +54,7 @@ export class SystemPlugin implements Plugin {
         id: 'core.system.personality',
         label: 'Personality',
         priority: 90,
-        getContext: () => {
+        getContext: async () => {
           return this.getPersonalityMod?.() ?? '';
         },
         isActive: () => {

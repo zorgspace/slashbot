@@ -10,6 +10,7 @@ export const discordCommand: CommandHandler = {
   description: 'Configure Discord bot connection',
   usage: '/discord <bot_token> <channel_id>',
   group: 'Connectors',
+  subcommands: ['clear'],
   execute: async (args, context) => {
     const botToken = args[0];
     const channelId = args[1];

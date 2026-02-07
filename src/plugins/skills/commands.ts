@@ -14,6 +14,7 @@ export const skillCommand: CommandHandler = {
   usage: '/skill [list|install|remove|info] [url/name]',
   aliases: ['skills'],
   group: 'Skills',
+  subcommands: ['list', 'install', 'remove', 'info', 'dir'],
   execute: async (args, context) => {
     let skillManager: SkillManager;
     try {
