@@ -68,6 +68,7 @@ export class ChatPanel {
     this.container = new BoxRenderable(renderer, {
       id: 'chat-container',
       flexGrow: 1,
+      flexShrink: 0,
       flexDirection: 'column',
     });
     this.container.add(this.scrollBox);

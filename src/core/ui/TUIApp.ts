@@ -25,8 +25,8 @@ import { ModelSelectModal } from './panels/ModelSelectModal';
 import {
   enableBracketedPaste,
   disableBracketedPaste,
-  readImageFromClipboard,
   storePaste,
+  readImageFromClipboard,
 } from './pasteHandler';
 import { addImage, imageBuffer } from '../code/imageBuffer';
 import { spawn } from 'child_process';
@@ -69,6 +69,7 @@ export class TUIApp implements UIOutput {
   private destroyed = false;
   private lastCtrlC = 0;
   private lastSelectedText = '';
+  private ignoreNextPaste = false;
 
   constructor(
     callbacks: TUIAppCallbacks,
@@ -216,17 +217,20 @@ export class TUIApp implements UIOutput {
         return;
       }
 
-      // Ctrl+V - paste image from clipboard (when input focused)
-      if (key.ctrl && key.name === 'v' && this.inputPanel.isFocused()) {
+      // Ctrl+V (without Shift) - image paste from clipboard
+      if (key.ctrl && key.name === 'v' && !key.shift) {
         key.stopPropagation();
         key.preventDefault();
+        // Ignore any bracketed paste event that may follow from the terminal
+        this.ignoreNextPaste = true;
+        setTimeout(() => { this.ignoreNextPaste = false; }, 200);
         readImageFromClipboard()
           .then(dataUrl => {
             if (dataUrl) {
               addImage(dataUrl);
-              display.successText(`🖼️  Image added to context #${imageBuffer.length}`);
+              display.successText(`Image added to context #${imageBuffer.length}`);
             } else {
-              display.warningText('No image in clipboard. Copy an image first, then Ctrl+V.');
+              display.warningText('No image in clipboard. Use Ctrl+Shift+V to paste text.');
             }
           })
           .catch(() => {
@@ -333,22 +337,18 @@ export class TUIApp implements UIOutput {
 
   appendChat(content: string): void {
     this.chatPanel.append(content);
-    this.growHeight();
   }
 
   appendStyledChat(content: StyledText | string): void {
     this.chatPanel.appendStyled(content);
-    this.growHeight();
   }
 
   appendCodeBlock(content: string, filetype?: string): void {
     this.chatPanel.addCodeBlock(content, filetype);
-    this.growHeight();
   }
 
   appendDiffBlock(diff: string, filetype?: string): void {
     this.chatPanel.addDiffBlock(diff, filetype);
-    this.growHeight();
   }
 
   appendThinking(chunk: string): void {
@@ -369,16 +369,6 @@ export class TUIApp implements UIOutput {
 
   focusInput(): void {
     this.inputPanel.focus();
-  }
-
-  private growHeight(): void {
-    const termRows = process.stdout.rows || 40;
-    // Leave at least 2 terminal lines visible (don't clear the screen)
-    const maxHeight = termRows - 2;
-    const current = this.renderer.experimental_splitHeight;
-    if (current < maxHeight) {
-      this.renderer.experimental_splitHeight = Math.min(current + 1, maxHeight);
-    }
   }
 
   showSpinner(label: string = 'Thinking...'): void {

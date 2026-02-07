@@ -5,7 +5,7 @@
 /* eslint-disable no-template-curly-in-string */
 export const FILESYSTEM_PROMPT = [
   '## Read — `<read path="file.ts"/>` `<read path="file.ts" offset="100" limit="50"/>`',
-  'Always read before editing. Output format:',
+  'Always read before editing. Output format (for example, don\'t use it as is):',
   '```',
   '[typescript] src/app.ts',
   '1│import { foo } from "./foo";',
@@ -28,7 +28,7 @@ export const FILESYSTEM_PROMPT = [
   '- `+` — line to add.',
   '',
   'You may include multiple hunks in a single `<edit>` block. They are applied top-down.',
-  '',
+  '(for example, don\'t use it as is):',
   '```',
   '<edit path="src/app.ts">',
   '@@ -5,1 @@',
