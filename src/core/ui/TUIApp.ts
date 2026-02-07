@@ -90,8 +90,6 @@ export class TUIApp implements UIOutput {
     this.renderer = await createCliRenderer({
       exitOnCtrlC: false,
       exitSignals: [],
-      useAlternateScreen: false,
-      experimental_splitHeight: 24,
     });
 
     // Create root layout: vertical stack
