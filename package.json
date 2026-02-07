@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build --compile --minify src/index.ts --outfile dist/slashbot",
+    "build": "bun build --compile --minify src/index.ts --external '@opentui/core-*' --outfile dist/slashbot",
     "install-global": "bun run build && sudo cp dist/slashbot /usr/local/bin/slashbot",
     "start": "./dist/slashbot",
     "tsc": "tsc",

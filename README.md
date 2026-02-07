@@ -199,6 +199,6 @@ All user configuration is stored in `~/.slashbot/`:
 
 MIT
 
-## Test
+## Roadmap
 
-This is a test edit to verify the editing functionality.
+See [ROADMAP.md](./docs/ROADMAP.md) for the full project roadmap and vision.

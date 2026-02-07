@@ -25,10 +25,14 @@ export class SystemPlugin implements Plugin {
   };
 
   private commands: CommandHandler[] | null = null;
+  private getPersonalityMod: (() => string) | null = null;
+  private getCurrentPersonality: (() => string) | null = null;
 
   async init(_context: PluginContext): Promise<void> {
-    const { systemPluginCommands } = await import('./commands');
+    const { systemPluginCommands, getPersonalityMod, getCurrentPersonality } = await import('./commands');
     this.commands = systemPluginCommands;
+    this.getPersonalityMod = getPersonalityMod;
+    this.getCurrentPersonality = getCurrentPersonality;
   }
 
   getActionContributions(): ActionContribution[] {
@@ -50,12 +54,10 @@ export class SystemPlugin implements Plugin {
         label: 'Personality',
         priority: 90,
         getContext: () => {
-          const { getPersonalityMod } = require('./commands');
-          return getPersonalityMod();
+          return this.getPersonalityMod?.() ?? '';
         },
         isActive: () => {
-          const { getCurrentPersonality } = require('./commands');
-          return getCurrentPersonality() !== 'normal';
+          return this.getCurrentPersonality?.() !== 'normal';
         },
       },
     ];
