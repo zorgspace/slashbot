@@ -5,13 +5,35 @@ Lightweight CLI assistant powered by Grok API. A fast, extensible alternative to
 ## Features
 
 - **AI-Powered CLI** - Conversational coding assistant with streaming responses, context persistence, and automatic tool use
-- **Plugin Architecture** - 13 built-in plugins (filesystem, bash, web, code-editor, wallet, heartbeat, scheduling, etc.) with support for third-party plugins installed from GitHub
-- **$SLASHBOT Token Payments** - Pay for API usage with the $SLASHBOT SPL token on Solana instead of managing API keys directly
-- **Multi-Platform** - Works as a CLI tool, Telegram bot, or Discord bot simultaneously
-- **Code Tools** - Read, write, edit, glob, grep, format, typecheck - all via natural language
+- **Plugin Architecture** - 13 built-in core plugins + third-party GitHub/URL support:
+  - **Bash**: Shell execution with timeouts, background jobs.
+  - **Code-Editor**: Read/edit/write files, search/replace blocks, formatting.
+  - **Explore**: Codebase discovery (quick/medium/deep/comprehensive).
+  - **Filesystem**: ls, glob for file/dir navigation.
+  - **Heartbeat**: Periodic self-reflection and monitoring.
+  - **Planning**: Step-by-step autonomous task planning.
+  - **Say**: Mid-task progress updates to user.
+  - **Scheduling**: Cron jobs, notifications (e.g., Telegram).
+  - **Session**: Persistent conversation context.
+  - **Skills**: Load specialized capabilities (Docker, Solana, TUI, etc.).
+  - **System**: Environment queries, status checks.
+  - **Wallet**: Solana wallet (balance, send, status, tokens).
+  - **Web**: URL fetch, web search, content extraction.
+- **$SLASHBOT Token Payments** - Pay for API usage with $SLASHBOT SPL token on Solana (no direct API keys needed).
+- **Multi-Platform Connectors**:
+  - **CLI**: Rich OpenTUI REPL with streaming responses.
+  - **Telegram**: Bot interface via Telegraf.
+  - **Discord**: Server/channel bot via discord.js.
+- **Advanced Code Tools** - Natural language control over: read/edit/write, glob/grep/explore, format (Prettier), typecheck (TypeScript), git ops (user-requested only).
 - **Task Scheduling** - Cron-based job scheduling with persistent task management
 - **Heartbeat System** - Periodic AI reflection for proactive monitoring and alerts
-- **Skills** - Extensible capabilities (Docker, Solana, voice transcription, and more)
+- **Skills** - Extensible capabilities (Docker, Solana, OpenTUI, Bags, Moltbook, and more)
+
+## Documentation
+
+- [Architecture](./docs/ARCHITECTURE.md) - Deep technical overview
+- [Roadmap](./docs/ROADMAP.md) - Future features
+- [Token Utility](./docs/TOKEN_UTILITY.md) - $SLASHBOT economics
 
 ## Authors
 

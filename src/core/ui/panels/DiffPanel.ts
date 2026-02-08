@@ -101,7 +101,6 @@ export class DiffPanel {
         addedSignColor: theme.success,
         removedSignColor: theme.error,
         lineNumberFg: theme.muted,
-        lineNumberBg: theme.bgPanel,
         wrapMode: 'word',
       });
       this.scrollBox.add(diff);
