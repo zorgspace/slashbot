@@ -22,7 +22,6 @@ import { theme } from '../theme';
 
 const MAX_LINES = 500;
 const PRUNE_TO = 400;
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 export class ChatPanel {
   private container: BoxRenderable;
@@ -30,9 +29,6 @@ export class ChatPanel {
   private renderer: CliRenderer;
   private lineCounter = 0;
   private syntaxStyle: SyntaxStyle | null = null;
-  private spinnerText: TextRenderable;
-  private spinnerInterval: ReturnType<typeof setInterval> | null = null;
-  private spinnerFrame = 0;
 
   constructor(renderer: CliRenderer) {
     this.renderer = renderer;
@@ -57,13 +53,6 @@ export class ChatPanel {
       stickyScroll: true,
       stickyStart: 'bottom',
     });
-
-    this.spinnerText = new TextRenderable(renderer, {
-      id: 'chat-spinner',
-      content: '',
-    });
-    this.spinnerText.visible = false;
-    this.scrollBox.add(this.spinnerText);
 
     this.container = new BoxRenderable(renderer, {
       id: 'chat-container',
@@ -98,7 +87,7 @@ export class ChatPanel {
           syntaxStyle: this.syntaxStyle,
           fg: theme.white,
         });
-        this.scrollBox.insertBefore(code, this.spinnerText);
+        this.scrollBox.add(code);
         // scroll managed by display service
         this.pruneLines();
       } catch {
@@ -130,7 +119,7 @@ export class ChatPanel {
           wrapMode: 'word',
         });
 
-        this.scrollBox.insertBefore(diff, this.spinnerText);
+        this.scrollBox.add(diff);
         // scroll managed by display service
         this.pruneLines();
       } catch {
@@ -164,40 +153,12 @@ export class ChatPanel {
   }
 
   clear(): void {
-    const children = this.scrollBox.getChildren();
-    for (const child of children) {
-      if (child.id !== 'chat-spinner') {
-        this.scrollBox.remove(child.id);
-      }
+    // Snapshot IDs first — removing during iteration mutates the array and crashes Bun/native
+    const ids = this.scrollBox.getChildren().map(c => c.id);
+    for (const id of ids) {
+      this.scrollBox.remove(id);
     }
     this.lineCounter = 0;
-  }
-
-  showSpinner(label: string = 'Thinking...'): void {
-    if (this.spinnerInterval) return;
-
-    this.spinnerFrame = 0;
-    this.spinnerText.visible = true;
-    this.updateSpinnerFrame(label);
-
-    this.spinnerInterval = setInterval(() => {
-      this.spinnerFrame = (this.spinnerFrame + 1) % SPINNER_FRAMES.length;
-      this.updateSpinnerFrame(label);
-    }, 150);
-  }
-
-  hideSpinner(): void {
-    if (this.spinnerInterval) {
-      clearInterval(this.spinnerInterval);
-      this.spinnerInterval = null;
-    }
-    this.spinnerText.visible = false;
-    this.spinnerText.content = '';
-  }
-
-  private updateSpinnerFrame(label: string): void {
-    const frame = SPINNER_FRAMES[this.spinnerFrame];
-    this.spinnerText.content = t`${fg(theme.violetLight)(frame + ' ' + label)}`;
   }
 
   private addLine(content: StyledText | string): void {
@@ -207,7 +168,7 @@ export class ChatPanel {
       id,
       content: typeof content === 'string' ? content : content,
     });
-    this.scrollBox.insertBefore(line, this.spinnerText);
+    this.scrollBox.add(line);
     this.pruneLines();
   }
 
@@ -220,11 +181,10 @@ export class ChatPanel {
 
   private pruneLines(): void {
     const children = this.scrollBox.getChildren();
-    const lineChildren = children.filter((c: { id: string }) => c.id !== 'chat-spinner');
-    if (lineChildren.length > MAX_LINES) {
-      const toRemove = lineChildren.slice(0, lineChildren.length - PRUNE_TO);
-      for (const child of toRemove) {
-        this.scrollBox.remove(child.id);
+    if (children.length > MAX_LINES) {
+      const idsToRemove = children.slice(0, children.length - PRUNE_TO).map(c => c.id);
+      for (const id of idsToRemove) {
+        this.scrollBox.remove(id);
       }
     }
   }

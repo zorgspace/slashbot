@@ -13,6 +13,7 @@ export class DiscordPlugin implements ConnectorPlugin {
     version: '1.0.0',
     category: 'connector',
     description: 'Provides Discord bot integration for messaging',
+    contextInject: false,
   };
 
   private context!: PluginContext;

@@ -11,6 +11,8 @@ export interface PluginMetadata {
   category: string;
   description: string;
   dependencies?: string[];
+  /** When false, prompt contributions and interactions are excluded from conversation context. Defaults to true. */
+  contextInject?: boolean;
 }
 
 export interface PluginContext {

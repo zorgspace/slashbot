@@ -22,6 +22,7 @@ import { CommPanel } from './panels/CommPanel';
 import { DiffPanel } from './panels/DiffPanel';
 import { CommandPalettePanel } from './panels/CommandPalettePanel';
 import { InputPanel } from './panels/InputPanel';
+import { ThinkingPanel } from './panels/ThinkingPanel';
 import { ModelSelectModal } from './panels/ModelSelectModal';
 import {
   enableBracketedPaste,
@@ -66,6 +67,7 @@ export class TUIApp implements UIOutput {
   private diffPanel!: DiffPanel;
   private commandPalette!: CommandPalettePanel;
   private inputPanel!: InputPanel;
+  private thinkingPanel!: ThinkingPanel;
   private modelSelectModal!: ModelSelectModal;
   private callbacks: TUIAppCallbacks;
   private completer?: (line: string) => [string[], string];
@@ -145,6 +147,10 @@ export class TUIApp implements UIOutput {
     this.commandPalette = new CommandPalettePanel(this.renderer);
     root.add(this.commandPalette.getRenderable());
 
+    // Thinking panel (above input, hidden by default)
+    this.thinkingPanel = new ThinkingPanel(this.renderer);
+    root.add(this.thinkingPanel.getRenderable());
+
     // Input panel
     this.inputPanel = new InputPanel(this.renderer, {
       onSubmit: async value => {
@@ -199,7 +205,7 @@ export class TUIApp implements UIOutput {
     const keyHandler = this.renderer.keyInput;
 
     keyHandler.on('keypress', key => {
-      // Ctrl+C - clear input (if focused) or abort; double Ctrl+C exits
+      // Ctrl+C - first press aborts current operation, second press exits
       if (key.ctrl && key.name === 'c' && !key.shift) {
         key.stopPropagation();
         key.preventDefault();
@@ -209,12 +215,9 @@ export class TUIApp implements UIOutput {
           return;
         }
         this.lastCtrlC = now;
-        if (this.inputPanel.isFocused()) {
-          this.inputPanel.clear();
-        } else {
-          this.callbacks.onAbort();
-          this.chatPanel.append('Press Ctrl+C again to exit');
-        }
+        this.callbacks.onAbort();
+        this.inputPanel.clear();
+        this.chatPanel.append('Press Ctrl+C again to exit');
         return;
       }
 
@@ -387,12 +390,12 @@ export class TUIApp implements UIOutput {
     this.chatPanel.addDiffBlock(diff, filetype);
   }
 
-  appendThinking(chunk: string): void {
-    this.commPanel.logThinking(chunk);
+  appendThinking(_chunk: string): void {
+    // Thinking chunks not displayed — spinner-only panel
   }
 
   clearThinking(): void {
-    // No-op: comm panel accumulates, doesn't clear per-request
+    this.thinkingPanel.clear();
   }
 
   setThinkingVisible(visible: boolean): void {
@@ -416,11 +419,11 @@ export class TUIApp implements UIOutput {
   }
 
   showSpinner(label: string = 'Thinking...'): void {
-    this.chatPanel.showSpinner(label);
+    this.thinkingPanel.startThinking(label);
   }
 
   hideSpinner(): void {
-    this.chatPanel.hideSpinner();
+    this.thinkingPanel.stopThinking();
   }
 
   setInputHistory(history: string[]): void {

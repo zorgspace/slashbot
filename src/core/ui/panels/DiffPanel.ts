@@ -38,8 +38,7 @@ export class DiffPanel {
       id: 'diff-container',
       width: 0,
       flexDirection: 'column',
-      borderColor: theme.violetDark,
-      border: ['left'],
+      backgroundColor: '#1f1f1f',
       visible: false,
       flexShrink: 0,
     });
@@ -49,6 +48,7 @@ export class DiffPanel {
       height: 1,
       paddingLeft: 1,
       flexDirection: 'row',
+      backgroundColor: '#1f1f1f',
     });
 
     const title = new TextRenderable(renderer, {
@@ -104,7 +104,7 @@ export class DiffPanel {
         removedSignColor: theme.error,
         lineNumberFg: theme.muted,
         lineNumberBg: theme.bgPanel,
-        contextBg: theme.bgPanel,
+        contextBg: theme.transparent,
         wrapMode: 'word',
       });
       this.scrollBox.add(diff);
@@ -114,9 +114,12 @@ export class DiffPanel {
     }
 
     // Prune old entries
-    const children = this.scrollBox.getChildren();
-    while (children.length > MAX_ENTRIES * 2) {
-      this.scrollBox.remove(children[0].id);
+    let children = this.scrollBox.getChildren();
+    if (children.length > MAX_ENTRIES * 2) {
+      const idsToRemove = children.slice(0, children.length - MAX_ENTRIES * 2).map(c => c.id);
+      for (const id of idsToRemove) {
+        this.scrollBox.remove(id);
+      }
     }
 
     // Auto-show on first diff
@@ -134,7 +137,7 @@ export class DiffPanel {
     const regions = diffLines(beforeLines, afterLines);
 
     // Check if there are actual changes
-    const hasChanges = regions.some((r) => r.type !== 'equal');
+    const hasChanges = regions.some(r => r.type !== 'equal');
     if (!hasChanges) return null;
 
     const hunks = this.buildHunks(regions, beforeLines, afterLines);
@@ -158,7 +161,12 @@ export class DiffPanel {
     _afterLines: string[],
   ): string[] {
     // Flatten regions into raw diff lines with original line numbers
-    const rawLines: { text: string; type: 'ctx' | 'add' | 'del'; oldLineNo: number; newLineNo: number }[] = [];
+    const rawLines: {
+      text: string;
+      type: 'ctx' | 'add' | 'del';
+      oldLineNo: number;
+      newLineNo: number;
+    }[] = [];
     let oldLine = 1;
     let newLine = 1;
 
@@ -196,7 +204,11 @@ export class DiffPanel {
     const keep = new Array(rawLines.length).fill(false);
     for (let i = 0; i < rawLines.length; i++) {
       if (rawLines[i].type === 'add' || rawLines[i].type === 'del') {
-        for (let j = Math.max(0, i - contextRadius); j <= Math.min(rawLines.length - 1, i + contextRadius); j++) {
+        for (
+          let j = Math.max(0, i - contextRadius);
+          j <= Math.min(rawLines.length - 1, i + contextRadius);
+          j++
+        ) {
           keep[j] = true;
         }
       }
@@ -303,8 +315,10 @@ export class DiffPanel {
   }
 
   clear(): void {
-    for (const child of this.scrollBox.getChildren()) {
-      this.scrollBox.remove(child.id);
+    // Snapshot IDs first — removing during iteration mutates the array and crashes Bun/native
+    const ids = this.scrollBox.getChildren().map(c => c.id);
+    for (const id of ids) {
+      this.scrollBox.remove(id);
     }
     this.entryCount = 0;
     this.hide();

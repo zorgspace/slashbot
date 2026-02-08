@@ -167,6 +167,7 @@ export class PluginRegistry {
     const contributions: PromptContribution[] = [];
     for (const [id, plugin] of this.plugins) {
       if (!this.initialized.has(id)) continue;
+      if (plugin.metadata.contextInject === false) continue;
       const prompts = plugin.getPromptContributions?.() || [];
       contributions.push(...prompts);
     }
@@ -180,6 +181,7 @@ export class PluginRegistry {
     const providers: ContextProvider[] = [];
     for (const [id, plugin] of this.plugins) {
       if (!this.initialized.has(id)) continue;
+      if (plugin.metadata.contextInject === false) continue;
       const ctxProviders = plugin.getContextProviders?.() || [];
       providers.push(...ctxProviders);
     }

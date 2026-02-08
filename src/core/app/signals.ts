@@ -13,52 +13,43 @@ interface SignalContext {
   getTUI?: () => { destroy: () => void } | null;
 }
 
-let lastCtrlC = 0;
-
 /**
  * Setup signal handlers with bot context
  * @returns Cleanup function to remove all signal handlers
  */
 export function setupSignalHandlers(context: SignalContext): () => void {
+  let lastCtrlC = 0;
+
   // Handler for SIGINT (Ctrl+C)
+  // First press: abort current operation (thinking/action)
+  // Second press within 2s: graceful shutdown
   const sigintHandler = () => {
     const now = Date.now();
     const bot = context.getBot();
 
-    // Check if currently thinking/processing
-    const wasThinking = bot?.isThinking() ?? false;
-
-    if (wasThinking) {
-      // Abort current operation - the normal flow will handle showing the prompt
-      bot?.abortCurrentOperation();
-      // Just clear the current line (animation), let normal error handling show prompt
+    if (bot?.isThinking()) {
+      bot.abortCurrentOperation();
       process.stdout.write('\r\x1b[K');
-      lastCtrlC = 0; // Reset so next Ctrl+C shows warning instead of exiting
+      lastCtrlC = 0;
       return;
     }
 
-    // Not thinking - handle double Ctrl+C to exit
     if (now - lastCtrlC < 2000) {
-      // Destroy TUI first to restore terminal state
-      context.getTUI?.()?.destroy();
+      context.getTUI?.()?.destroy?.();
       display.violet('\n\nSee you soon!');
-      // Await full async shutdown before exiting to avoid
-      // in-flight async ops during Bun teardown (causes segfault)
       (async () => {
-        await bot?.stop();
+        await bot?.stop?.();
         process.exit(0);
       })();
       return;
     }
 
-    // First Ctrl+C - show warning and redraw prompt
     display.warningText('\nPress Ctrl+C again to exit');
     lastCtrlC = now;
   };
 
   // Handler for SIGTERM
   const sigtermHandler = () => {
-    // In non-interactive mode (spawned as child), exit cleanly on SIGTERM
     if (process.env.SLASHBOT_NON_INTERACTIVE || !process.stdin.isTTY) {
       (async () => {
         await context.getBot()?.stop();
@@ -66,7 +57,7 @@ export function setupSignalHandlers(context: SignalContext): () => void {
       })();
       return;
     }
-    display.warningText('\nReceived SIGTERM - use /exit or Ctrl+C twice to quit');
+    display.warningText('\nReceived SIGTERM - use Ctrl+C twice to quit');
   };
 
   // Handler for exit - only synchronous cleanup (restoring terminal state)

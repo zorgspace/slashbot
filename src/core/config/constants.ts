@@ -40,9 +40,9 @@ export const GROK_CONFIG = {
   /** X.AI API base URL */
   API_BASE_URL: 'https://api.x.ai/v1',
   /** Maximum tokens for response generation (high value for unlimited feel) */
-  MAX_TOKENS: 131072,
+  MAX_TOKENS: 256000,
   /** Temperature for response randomness (0-1) */
-  TEMPERATURE: 0.7,
+  TEMPERATURE: 0.4,
   /** API request timeout in milliseconds */
   TIMEOUT_MS: 120000,
   /** Threshold for duplicate read detection */

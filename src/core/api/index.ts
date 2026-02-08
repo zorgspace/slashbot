@@ -4,7 +4,20 @@
  */
 
 // Types
-export type { Message, GrokConfig, UsageStats, ApiAuthProvider } from './types';
+export type {
+  Message,
+  GrokConfig,
+  UsageStats,
+  ApiAuthProvider,
+  StreamOptions,
+  StreamResult,
+  AgenticLoopOptions,
+  AgenticLoopResult,
+  ClientContext,
+} from './types';
+
+// Auth
+export { DirectAuthProvider, DEFAULT_CONFIG } from './auth';
 
 // Utilities
 export { compressActionResults, getEnvironmentInfo } from './utils';

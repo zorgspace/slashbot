@@ -27,6 +27,7 @@ export class HeartbeatPlugin implements Plugin {
     version: '1.0.0',
     category: 'feature',
     description: 'Periodic AI reflection and proactive actions',
+    contextInject: false,
   };
 
   private context!: PluginContext;
@@ -70,8 +71,8 @@ export class HeartbeatPlugin implements Plugin {
       }
       const safePrompt = `[HEARTBEAT - REFLECTION MODE]\n${prompt}`;
       const result = await (
-        grokClient as { chat: (p: string) => Promise<{ response?: string; thinking?: string }> }
-      ).chat(safePrompt);
+        grokClient as { chat: (p: string, opts?: { saveToHistory?: boolean }) => Promise<{ response?: string; thinking?: string }> }
+      ).chat(safePrompt, { saveToHistory: false });
       return { response: result.response || '', thinking: result.thinking };
     });
 

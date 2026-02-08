@@ -59,6 +59,7 @@ export class TelegramPlugin implements ConnectorPlugin {
     version: '1.0.0',
     category: 'connector',
     description: 'Telegram bot connector',
+    contextInject: false,
   };
 
   private context!: PluginContext;
