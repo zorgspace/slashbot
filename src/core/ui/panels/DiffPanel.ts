@@ -38,7 +38,6 @@ export class DiffPanel {
       id: 'diff-container',
       width: 0,
       flexDirection: 'column',
-      backgroundColor: '#1f1f1f',
       visible: false,
       flexShrink: 0,
     });
@@ -48,7 +47,6 @@ export class DiffPanel {
       height: 1,
       paddingLeft: 1,
       flexDirection: 'row',
-      backgroundColor: '#1f1f1f',
     });
 
     const title = new TextRenderable(renderer, {
@@ -104,7 +102,6 @@ export class DiffPanel {
         removedSignColor: theme.error,
         lineNumberFg: theme.muted,
         lineNumberBg: theme.bgPanel,
-        contextBg: theme.transparent,
         wrapMode: 'word',
       });
       this.scrollBox.add(diff);
