@@ -1,0 +1,43 @@
+/**
+ * Filesystem Plugin - Prompt contribution
+ */
+
+/* eslint-disable no-template-curly-in-string */
+export const FILESYSTEM_PROMPT = [
+  '## Read — `<read path="file.ts"/>` `<read path="file.ts" offset="100" limit="50"/>`',
+  'ALWAYS read a file before editing it. The `<read>` output shows line numbers for reference.',
+  '',
+  '## Edit — Two modes. You MUST `<read>` the file first.',
+  '',
+  '### Mode 1 — Full file rewrite (default):',
+  '```',
+  '<edit path="src/app.ts">',
+  'complete file content with your changes applied',
+  '</edit>',
+  '```',
+  'Output the ENTIRE file with changes incorporated. Do NOT omit unchanged sections.',
+  'Use this mode for most edits, especially when changes touch many parts of the file.',
+  '',
+  '### Mode 2 — Search/Replace blocks (for targeted changes):',
+  '```',
+  '<edit path="src/app.ts">',
+  '<<<<<<< SEARCH',
+  'exact lines to find in the file',
+  '=======',
+  'replacement lines',
+  '>>>>>>> REPLACE',
+  '</edit>',
+  '```',
+  'Multiple search/replace blocks can appear in one `<edit>` tag.',
+  'The SEARCH block must match the file content EXACTLY (copy from `<read>` output).',
+  'Use this mode for small, targeted changes in large files to avoid outputting the entire file.',
+  '',
+  '### Rules:',
+  '- Copy content from `<read>` output verbatim for search blocks. Preserve exact indentation.',
+  '- Include enough context in search blocks to uniquely identify the location (3-5 lines).',
+  '- After editing, run a formatting tool to verify syntax. Fix ALL errors before `<end>`.',
+  '- NEVER generate code with syntax errors: unmatched braces, missing semicolons, broken imports, or incomplete statements.',
+  '',
+  '## Write — `<write path="src/file.ts">full file content</write>`',
+  'Use for new files or when editing would require replacing most of the file. Prefer `<edit>` for existing files.',
+] as const;
