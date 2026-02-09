@@ -46,7 +46,7 @@ export class HeartbeatService {
   private lastTick: Date = new Date();
   private llmHandler: HeartbeatLLMHandler | null = null;
   private grokClient: GrokClient | null = null;
-  private workDir: string = process.cwd();
+  private workDir: string = HOME_SLASHBOT_DIR
 
   constructor(
     @inject(TYPES.EventBus) private eventBus: EventBus,
@@ -187,9 +187,6 @@ export class HeartbeatService {
     this.eventBus.emit({
       type: 'heartbeat:started',
     });
-
-    display.newline();
-    display.heartbeat('reflection');
 
     let result: HeartbeatResult;
 
