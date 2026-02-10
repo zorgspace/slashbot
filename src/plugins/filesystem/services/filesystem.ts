@@ -1,9 +1,9 @@
 /**
- * Re-export filesystem service from core (core owns this dependency).
+ * Re-export filesystem service from local module.
  */
 export {
   SecureFileSystem,
   createFileSystem,
   type FileOperation,
   type FileSystemConfig,
-} from '../../../core/services/filesystem';
+} from './SecureFileSystem';

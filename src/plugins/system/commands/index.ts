@@ -27,6 +27,8 @@ export { updateCommand } from './update';
 // Process
 export { psCommand, killCommand } from './process';
 
+export { todoWriteCommand } from './todo';
+
 // Plugin
 export { pluginCommand } from './plugin';
 
@@ -36,6 +38,7 @@ import { depressedCommand, sarcasmCommand, normalCommand, unhingedCommand } from
 import { pasteImageCommand, initCommand } from './code';
 import { updateCommand } from './update';
 import { psCommand, killCommand } from './process';
+import { todoWriteCommand } from './todo';
 import { pluginCommand } from './plugin';
 
 export const systemPluginCommands: CommandHandler[] = [
@@ -59,6 +62,8 @@ export const systemPluginCommands: CommandHandler[] = [
   // Process
   psCommand,
   killCommand,
+  // Todo
+  todoWriteCommand,
   // Plugins
   pluginCommand,
 ];

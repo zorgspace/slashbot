@@ -22,6 +22,9 @@ export interface UIOutput {
   logAction(action: string): void;
   logConnectorIn(source: string, message: string): void;
   logConnectorOut(source: string, response: string): void;
+  promptInput(prompt: string): Promise<string>;
+  showNotification(text: string): void;
+  updateNotificationList(items: { id: string; content: string; status: string }[]): void;
 }
 
 export interface SidebarStatusItem {
@@ -33,7 +36,12 @@ export interface SidebarStatusItem {
 
 export interface SidebarData {
   model: string;
+  provider: string;
   items: SidebarStatusItem[];
+}
+
+export interface TUIApp {
+  destroy(): void;
 }
 
 export interface TUIAppCallbacks {

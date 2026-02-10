@@ -13,8 +13,8 @@ export const pasteImageCommand: CommandHandler = {
   aliases: ['pi'],
   group: 'Code',
   execute: async () => {
-    const { readImageFromClipboard } = await import('../../../core/ui/pasteHandler');
-    const { addImage } = await import('../../../core/code/imageBuffer');
+    const { readImageFromClipboard } = await import('../../tui/pasteHandler');
+    const { addImage } = await import('../../filesystem/services/ImageBuffer');
 
     const dataUrl = await readImageFromClipboard();
 
@@ -60,7 +60,7 @@ export const initCommand: CommandHandler = {
     const contextFile = path.join(workDir, 'GROK.md');
 
     display.muted('Gathering codebase context...');
-    const { gatherCodebaseContext } = await import('../../../core/commands/utils/codebaseContext');
+    const { gatherCodebaseContext } = await import('../../explore/codebaseContext');
     const codebaseContext = await gatherCodebaseContext();
 
     const generatePrompt = `You are analyzing a codebase to generate comprehensive documentation.

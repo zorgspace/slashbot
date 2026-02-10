@@ -1,25 +1,29 @@
 /**
- * Grok API Client - Thin orchestrator delegating to streaming and agentic loop modules
+ * LLM Client - Thin orchestrator delegating to streaming and agentic loop modules
+ * Provider-agnostic via Vercel AI SDK.
  */
 
 import { display } from '../ui';
-import { getRecentImages, hasImages as hasImagesInBuffer } from '../code/imageBuffer';
+import { getRecentImages, hasImages as hasImagesInBuffer } from '../../plugins/filesystem/services/ImageBuffer';
 import type { ActionHandlers } from '../actions';
 import { cleanXmlTags, cleanSelfDialogue } from '../utils/xml';
 import { GROK_CONFIG, AGENTIC } from '../config/constants';
 
-import type { Message, GrokConfig, UsageStats, ApiAuthProvider, ClientContext } from './types';
+import type { Message, LLMConfig, GrokConfig, UsageStats, ApiAuthProvider, ClientContext } from './types';
 import { getEnvironmentInfo } from './utils';
 import type { PromptAssembler } from './prompts/assembler';
+import type { ToolRegistry } from './toolRegistry';
 import { SessionManager } from './sessions';
-import { DirectAuthProvider, DEFAULT_CONFIG } from './auth';
+import { DirectAuthProvider, DEFAULT_CONFIG } from '../../plugins/providers/auth';
 import { streamResponse } from './streaming';
 import { runAgenticLoop } from './agenticLoop';
+import { ProviderRegistry } from '../../plugins/providers/registry';
+import { PROVIDERS, inferProvider } from '../../plugins/providers/models';
 
 export type { ActionHandlers } from '../actions';
 
-export class GrokClient implements ClientContext {
-  config: GrokConfig;
+export class LLMClient implements ClientContext {
+  config: LLMConfig;
   sessionManager: SessionManager;
   actionHandlers: ActionHandlers = {};
   usage: UsageStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, requests: 0 };
@@ -27,6 +31,8 @@ export class GrokClient implements ClientContext {
   abortController: AbortController | null = null;
   authProvider: ApiAuthProvider;
   rawOutputCallback: ((text: string) => void) | null = null;
+  providerRegistry: ProviderRegistry;
+  toolRegistry: ToolRegistry | null = null;
 
   private workDir: string = '';
   private projectContext: string = '';
@@ -34,13 +40,26 @@ export class GrokClient implements ClientContext {
   private assembledPromptCache: string | null = null;
   private responseEndCallback: (() => void) | null = null;
 
-  constructor(config: GrokConfig) {
+  constructor(config: LLMConfig, registry?: ProviderRegistry) {
     this.config = { ...DEFAULT_CONFIG, ...config };
 
     if (!this.config.apiKey) {
-      throw new Error('GROK_API_KEY is required');
+      throw new Error('API key is required');
     }
 
+    // Set up provider registry
+    this.providerRegistry = registry || new ProviderRegistry();
+
+    // Auto-configure the provider from the config (skip if already configured by external registry)
+    const providerId = this.config.provider || 'xai';
+    if (!this.providerRegistry.isConfigured(providerId)) {
+      this.providerRegistry.configure(providerId, {
+        apiKey: this.config.apiKey,
+        baseUrl: this.config.baseUrl,
+      });
+    }
+
+    // Direct auth provider for backwards compat (used by wallet proxy)
     this.authProvider = new DirectAuthProvider(
       this.config.apiKey,
       this.config.baseUrl || GROK_CONFIG.API_BASE_URL,
@@ -53,6 +72,32 @@ export class GrokClient implements ClientContext {
 
   setAuthProvider(provider: ApiAuthProvider): void {
     this.authProvider = provider;
+  }
+
+  // ===== Provider management =====
+
+  getProvider(): string {
+    return this.config.provider || 'xai';
+  }
+
+  setProvider(providerId: string, apiKey?: string): void {
+    this.config.provider = providerId;
+    if (apiKey) {
+      const providerInfo = PROVIDERS[providerId];
+      this.providerRegistry.configure(providerId, {
+        apiKey,
+        baseUrl: providerInfo?.baseUrl,
+      });
+    }
+    // Set default model for the new provider
+    const providerInfo = PROVIDERS[providerId];
+    if (providerInfo) {
+      this.config.model = providerInfo.defaultModel;
+    }
+  }
+
+  getProviderRegistry(): ProviderRegistry {
+    return this.providerRegistry;
   }
 
   // ===== Session delegates =====
@@ -115,8 +160,13 @@ export class GrokClient implements ClientContext {
     this.promptAssembler = assembler;
   }
 
+  setToolRegistry(registry: ToolRegistry): void {
+    this.toolRegistry = registry;
+  }
+
   async buildAssembledPrompt(): Promise<void> {
     if (this.promptAssembler) {
+      this.promptAssembler.setProvider(this.getProvider());
       this.assembledPromptCache = await this.promptAssembler.assemble();
       this.rebuildSystemPrompt();
     }
@@ -170,10 +220,17 @@ export class GrokClient implements ClientContext {
 
   setModel(model: string): void {
     this.config.model = model;
+    // Auto-detect and switch provider if needed
+    const detectedProvider = inferProvider(model);
+    if (detectedProvider && detectedProvider !== this.config.provider) {
+      this.config.provider = detectedProvider;
+    }
   }
 
   getCurrentModel(): string {
-    return this.config.model || GROK_CONFIG.MODEL;
+    if (this.config.model) return this.config.model;
+    const providerInfo = PROVIDERS[this.getProvider()];
+    return providerInfo?.defaultModel || GROK_CONFIG.MODEL;
   }
 
   abort(): void {
@@ -201,9 +258,20 @@ export class GrokClient implements ClientContext {
       return false;
     });
 
-    return hasImagesInBuffer() || hasImagesInHistory
-      ? this.config.modelImage || 'grok-4-1-fast-reasoning'
-      : this.config.model || 'grok-4-1-fast-reasoning';
+    if (hasImagesInBuffer() || hasImagesInHistory) {
+      if (this.config.modelImage) {
+        return this.config.modelImage;
+      }
+      // Use provider's default image model
+      const providerInfo = PROVIDERS[this.getProvider()];
+      if (providerInfo?.defaultImageModel) {
+        return providerInfo.defaultImageModel;
+      }
+    }
+
+    if (this.config.model) return this.config.model;
+    const defaultProviderInfo = PROVIDERS[this.getProvider()];
+    return defaultProviderInfo?.defaultModel || GROK_CONFIG.MODEL;
   }
 
   // ===== Public chat methods =====
@@ -247,7 +315,7 @@ export class GrokClient implements ClientContext {
     // Inject executed actions into context
     if (result.executedActions.length > 0) {
       const actionSummary = result.executedActions
-        .map(a => `- ${a.success ? '✓' : '✗'} ${a.description}`)
+        .map(a => `- ${a.success ? '\u2713' : '\u2717'} ${a.description}`)
         .join('\n');
 
       this.sessionManager.history.push({
@@ -264,6 +332,13 @@ export class GrokClient implements ClientContext {
       this.thinkingActive = false;
     }
     display.endThinkingStream();
+
+    // Safety net: if nothing was displayed during streaming and no endMessage was shown,
+    // display the cleaned response now. This handles cases where the LLM wraps everything
+    // in action tags (as instructed) and the streaming display strips them.
+    if (!this.sessionManager.displayedContent && !result.endMessage && cleanResponse.trim()) {
+      display.sayResult(cleanResponse);
+    }
 
     this.responseEndCallback?.();
 
@@ -387,15 +462,29 @@ export class GrokClient implements ClientContext {
   }
 }
 
-export function createGrokClient(apiKey?: string, config?: { model?: string }): GrokClient {
+/** Backwards compatibility alias */
+export const GrokClient = LLMClient;
+export type GrokClient = LLMClient;
+
+export function createGrokClient(apiKey?: string, config?: { model?: string }): LLMClient {
   const key = apiKey || process.env.GROK_API_KEY || process.env.XAI_API_KEY;
 
   if (!key) {
     throw new Error('Missing API key. Set GROK_API_KEY or XAI_API_KEY environment variable.');
   }
 
-  return new GrokClient({
+  return new LLMClient({
+    provider: 'xai',
     apiKey: key,
     model: config?.model,
+  });
+}
+
+/** Create a client for any provider */
+export function createLLMClient(provider: string, apiKey: string, model?: string): LLMClient {
+  return new LLMClient({
+    provider,
+    apiKey,
+    model,
   });
 }

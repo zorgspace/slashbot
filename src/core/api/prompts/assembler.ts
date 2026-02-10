@@ -1,13 +1,15 @@
 /**
- * Prompt Assembler - Builds the complete system prompt from core + plugin contributions
+ * Prompt Assembler - Builds the complete system prompt from plugin contributions
+ *
+ * Core prompt and provider hints are now contributed by the core-prompt plugin.
  */
 
-import { CORE_PROMPT } from './core';
 import type { PromptContribution, ContextProvider } from '../../../plugins/plugin-types';
 
 export class PromptAssembler {
   private contributions: PromptContribution[] = [];
   private contextProviders: ContextProvider[] = [];
+  private provider: string = 'xai';
 
   /**
    * Set prompt contributions from plugins (should be pre-sorted by priority)
@@ -24,12 +26,19 @@ export class PromptAssembler {
   }
 
   /**
+   * Set the current provider for provider-specific hints
+   */
+  setProvider(provider: string): void {
+    this.provider = provider;
+  }
+
+  /**
    * Assemble the complete system prompt
    */
   async assemble(): Promise<string> {
-    let prompt = CORE_PROMPT;
+    let prompt = '';
 
-    // Add plugin-contributed sections
+    // Add plugin-contributed sections (core prompt comes first at priority 0)
     for (const contribution of this.contributions) {
       // Check if contribution is enabled
       if (contribution.enabled !== undefined) {
@@ -47,7 +56,12 @@ export class PromptAssembler {
           : contribution.content;
 
       if (content) {
-        prompt += `\n\n# ${contribution.title}\n${content}`;
+        if (prompt.length === 0) {
+          // First contribution (core prompt) - no header prefix
+          prompt = typeof content === 'string' ? content : (content as readonly string[]).join('\n');
+        } else {
+          prompt += `\n\n# ${contribution.title}\n${content}`;
+        }
       }
     }
 

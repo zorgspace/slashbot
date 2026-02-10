@@ -37,7 +37,7 @@ export function setupSignalHandlers(context: SignalContext): () => void {
     if (now - lastCtrlC < 2000) {
       context.getTUI?.()?.destroy?.();
       display.violet('\n\nSee you soon!');
-      (async () => {
+      void (async () => {
         await bot?.stop?.();
         process.exit(0);
       })();
@@ -51,7 +51,7 @@ export function setupSignalHandlers(context: SignalContext): () => void {
   // Handler for SIGTERM
   const sigtermHandler = () => {
     if (process.env.SLASHBOT_NON_INTERACTIVE || !process.stdin.isTTY) {
-      (async () => {
+      void (async () => {
         await context.getBot()?.stop();
         process.exit(0);
       })();

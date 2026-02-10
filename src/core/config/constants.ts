@@ -59,6 +59,12 @@ export const MODELS = {
   SEARCH: 'grok-4-1-fast-non-reasoning',
 } as const;
 
+/** Default provider */
+export const DEFAULT_PROVIDER = 'xai' as const;
+
+/** Alias for backwards compatibility */
+export const DEFAULT_PROVIDER_CONFIG = GROK_CONFIG;
+
 // ============================================================================
 // PROXY CONFIGURATION (slashbot-web)
 // ============================================================================
@@ -125,6 +131,15 @@ export const CONTEXT = {
   MAX_HISTORY: 500,
   COMPRESS_THRESHOLD: 0.8,
   MAX_TOKENS: 256000,
+} as const;
+
+export const COMPACTION = {
+  /** Compact when token usage exceeds this ratio of model limit */
+  TOKEN_THRESHOLD_RATIO: 0.8,
+  /** Keep last N tool outputs intact during pruning */
+  PRUNE_PROTECT_RECENT: 10,
+  /** Max tokens for the summary message */
+  SUMMARY_MAX_TOKENS: 4000,
 } as const;
 
 // ============================================================================

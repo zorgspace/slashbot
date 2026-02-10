@@ -30,11 +30,18 @@ export function setDynamicExecutorMap(
  * @param actions - List of actions to execute
  * @param handlers - Action handlers
  */
+import { container } from '../di/container';
+import { TYPES } from '../di/types';
+import type { HooksManager } from '../utils/hooks';
+
 export async function executeActions(
   actions: Action[],
   handlers: ActionHandlers,
 ): Promise<ActionResult[]> {
+  const hooks = container.get<HooksManager>(TYPES.HooksManager);
+  await hooks.trigger('actionsStart', { count: actions.length });
   if (actions.length === 0) {
+    await hooks.trigger('actionsEnd', { count: 0 });
     return [];
   }
 
@@ -86,7 +93,9 @@ async function executeAction(
   if (dynamicExecutorMap) {
     const executor = dynamicExecutorMap.get(action.type);
     if (executor) {
-      return executor(action, handlers);
+      const t0 = Date.now();
+      const result = await executor(action, handlers);
+      return result;
     }
   }
 

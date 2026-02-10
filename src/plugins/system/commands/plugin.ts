@@ -12,8 +12,8 @@ export const pluginCommand: CommandHandler = {
   aliases: ['plugins'],
   group: 'System',
   execute: async () => {
-    const { TYPES } = require('../../../core/di/types');
-    const { container } = require('../../../core/di/container');
+    const { TYPES } = await import('../../../core/di/types');
+    const { container } = await import('../../../core/di/container');
     const registry = container.get(TYPES.PluginRegistry) as any;
     const allPlugins = registry.getAll();
 

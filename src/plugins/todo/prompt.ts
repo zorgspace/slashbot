@@ -1,0 +1,18 @@
+export const TODO_PROMPT = [
+  'Use `<todo-write>` to track multi-step tasks. Create a todo list at the start of complex work.',
+  '',
+  'Format:',
+  '<todo-write>',
+  '  <todo id="1" status="pending">Description of step 1</todo>',
+  '  <todo id="2" status="in_progress">Description of step 2</todo>',
+  '  <todo id="3" status="completed">Description of step 3</todo>',
+  '</todo-write>',
+  '',
+  'Status values: `pending`, `in_progress`, `completed`.',
+  'Update the todo list whenever you start or finish a step.',
+  'Use `<todo-read/>` to read the current todo list.',
+  '',
+  '**Notifications:** Add `notify="telegram"` or `notify="discord"` to a todo item to push a notification when it completes:',
+  '  `<todo id="1" status="completed" notify="telegram">Deploy to prod</todo>`',
+  'Only use notify when the user explicitly asked to be notified.',
+].join('\n');

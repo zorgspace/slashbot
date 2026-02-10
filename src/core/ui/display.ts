@@ -9,7 +9,7 @@
 
 import { t, fg, bold, dim, type StyledText } from '@opentui/core';
 import { theme } from './theme';
-import type { TUIApp } from './TUIApp';
+import type { UIOutput } from './types';
 
 export interface TUISpinnerCallbacks {
   showSpinner: (label: string) => void;
@@ -23,12 +23,28 @@ export function setTUISpinnerCallbacks(callbacks: TUISpinnerCallbacks | null): v
   tuiSpinnerCallbacks = callbacks;
 }
 
+// Tool-specific icons for visual clarity
+const TOOL_ICONS: Record<string, string> = {
+  Exec: '$',
+  Read: '\u2192',
+  Create: '\u2190',
+  Edit: '\u2190',
+  Grep: '\u2731',
+  Explore: '\u25C7',
+  Schedule: '\u23F0',
+  Skill: '\u26A1',
+  Heartbeat: '\u2665',
+  HeartbeatUpdate: '\u2665',
+  Image: '\u25A3',
+  Say: '\u25CB',
+};
+
 class DisplayService {
-  private tui: TUIApp | null = null;
+  private tui: UIOutput | null = null;
   private thinkingStartTime = 0;
   private thinkingCallback: ((chunk: string) => void) | null = null;
 
-  bindTUI(tui: TUIApp): void {
+  bindTUI(tui: UIOutput): void {
     this.tui = tui;
   }
 
@@ -70,15 +86,16 @@ class DisplayService {
   }
 
   message(text: string): void {
-    this.appendStyled(t`${fg(theme.violet)('●')} ${text}`);
+    this.appendStyled(t`${fg(theme.primary)('\u25CF')} ${text}`);
     this.newline();
   }
 
   tool(name: string, args?: string): void {
     this.newline();
     this.scrollToBottom();
+    const icon = TOOL_ICONS[name] || '\u25CF';
     const argsStr = args ? `(${args})` : '';
-    this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)(name)}${argsStr}`);
+    this.appendStyled(t`${fg(theme.primary)(icon)} ${fg(theme.accent)(name)}${argsStr}`);
   }
 
   result(text: string, isError = false): void {
@@ -89,8 +106,8 @@ class DisplayService {
       text.includes('Updated');
     const lines = text.split('\n');
     lines.forEach((line, i) => {
-      const checkmark = i === 0 && isSuccess && !isError ? '✓ ' : '';
-      const prefix = i === 0 ? '⎿  ' : '   ';
+      const checkmark = i === 0 && isSuccess && !isError ? '\u2713 ' : '';
+      const prefix = i === 0 ? '\u23BF  ' : '   ';
       if (isError) {
         this.appendStyled(t`  ${fg(theme.error)(prefix + checkmark + line)}`);
       } else if (isSuccess) {
@@ -106,7 +123,7 @@ class DisplayService {
   }
 
   readResult(lineCount: number): void {
-    this.appendStyled(t`  ${fg(theme.white)('⎿  Read ' + lineCount + ' lines')}`);
+    this.appendStyled(t`  ${fg(theme.white)('\u23BF  Read ' + lineCount + ' lines')}`);
   }
 
   grep(pattern: string, filePattern?: string, output?: string): void {
@@ -116,10 +133,10 @@ class DisplayService {
 
   grepResult(matches: number, preview?: string): void {
     if (matches === 0) {
-      this.appendStyled(t`  ${fg(theme.white)('⎿  No matches found')}`);
+      this.appendStyled(t`  ${fg(theme.white)('\u23BF  No matches found')}`);
     } else {
       this.appendStyled(
-        t`  ${fg(theme.white)('⎿  Found ' + matches + ' match' + (matches > 1 ? 'es' : ''))}`,
+        t`  ${fg(theme.white)('\u23BF  Found ' + matches + ' match' + (matches > 1 ? 'es' : ''))}`,
       );
       if (preview) {
         preview.split('\n').forEach(line => {
@@ -132,7 +149,7 @@ class DisplayService {
   bash(command: string, _output?: string): void {
     this.newline();
     this.scrollToBottom();
-    this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)('Exec')}(${command})`);
+    this.appendStyled(t`${fg(theme.primary)('$')} ${fg(theme.accent)('Exec')}(${command})`);
   }
 
   bashResult(_command: string, output: string, exitCode = 0): void {
@@ -151,9 +168,9 @@ class DisplayService {
     }
     // Status in chat panel
     if (isError) {
-      this.appendStyled(t`  ${fg(theme.error)('⎿  ✗ Failed (exit ' + exitCode + ')')}`);
+      this.appendStyled(t`  ${fg(theme.error)('\u23BF  \u2717 Failed (exit ' + exitCode + ')')}`);
     } else {
-      this.appendStyled(t`  ${fg(theme.success)('⎿  ✓ Done')}`);
+      this.appendStyled(t`  ${fg(theme.success)('\u23BF  \u2713 Done')}`);
     }
   }
 
@@ -163,9 +180,9 @@ class DisplayService {
 
   updateResult(success: boolean, _removed: number, _added: number): void {
     if (success) {
-      this.appendStyled(t`  ${fg(theme.success)('⎿  Updated')}`);
+      this.appendStyled(t`  ${fg(theme.success)('\u23BF  Updated')}`);
     } else {
-      this.appendStyled(t`  ${fg(theme.error)('⎿  Failed - pattern not found')}`);
+      this.appendStyled(t`  ${fg(theme.error)('\u23BF  Failed - pattern not found')}`);
     }
   }
 
@@ -176,9 +193,9 @@ class DisplayService {
   writeResult(success: boolean, lineCount?: number): void {
     if (success) {
       const info = lineCount ? ` (${lineCount} lines)` : '';
-      this.appendStyled(t`  ${fg(theme.success)('⎿  Created' + info)}`);
+      this.appendStyled(t`  ${fg(theme.success)('\u23BF  Created' + info)}`);
     } else {
-      this.appendStyled(t`  ${fg(theme.error)('⎿  Failed to create file')}`);
+      this.appendStyled(t`  ${fg(theme.error)('\u23BF  Failed to create file')}`);
     }
   }
 
@@ -191,15 +208,15 @@ class DisplayService {
   }
 
   success(msg: string): void {
-    this.appendStyled(t`  ${fg(theme.success)('⎿  ✓ ' + msg)}`);
+    this.appendStyled(t`  ${fg(theme.success)('\u23BF  \u2713 ' + msg)}`);
   }
 
   error(msg: string): void {
-    this.appendStyled(t`  ${fg(theme.error)('⎿  Error: ' + msg)}`);
+    this.appendStyled(t`  ${fg(theme.error)('\u23BF  Error: ' + msg)}`);
   }
 
   warning(msg: string): void {
-    this.appendStyled(t`  ${fg(theme.warning)('⎿  ⚠ ' + msg)}`);
+    this.appendStyled(t`  ${fg(theme.warning)('\u23BF  \u26A0 ' + msg)}`);
   }
 
   diff(removed: string[], added: string[], filePath?: string, lineStart = 1): void {
@@ -238,7 +255,7 @@ class DisplayService {
   }
 
   thinking(text: string): void {
-    this.appendStyled(t`${fg(theme.white)('●')} ${fg(theme.muted)(text)}`);
+    this.appendStyled(t`${fg(theme.white)('\u25CF')} ${fg(theme.muted)(text)}`);
   }
 
   image(source: string, sizeKB: number, output?: string): void {
@@ -246,7 +263,7 @@ class DisplayService {
   }
 
   imageResult(): void {
-    this.appendStyled(t`  ${fg(theme.success)('⎿  Ready')}`);
+    this.appendStyled(t`  ${fg(theme.success)('\u23BF  Ready')}`);
   }
 
   connector(source: string, action: string, output?: string): void {
@@ -255,13 +272,13 @@ class DisplayService {
   }
 
   connectorResult(msg: string): void {
-    this.appendStyled(t`  ${fg(theme.white)('⎿  ' + msg)}`);
+    this.appendStyled(t`  ${fg(theme.white)('\u23BF  ' + msg)}`);
   }
 
   say(msg: string): void {
-    this.appendStyled(t`${fg(theme.white)('○')} ${fg(theme.white)('Say')}()`);
+    this.appendStyled(t`${fg(theme.white)('\u25CB')} ${fg(theme.white)('Say')}()`);
     msg.split('\n').forEach((line, i) => {
-      const prefix = i === 0 ? '⎿  ' : '   ';
+      const prefix = i === 0 ? '\u23BF  ' : '   ';
       this.appendStyled(t`  ${fg(theme.white)(prefix + line)}`);
     });
   }
@@ -280,9 +297,9 @@ class DisplayService {
 
   heartbeatUpdateResult(success: boolean): void {
     if (success) {
-      this.appendStyled(t`  ${fg(theme.success)('⎿  Updated HEARTBEAT.md')}`);
+      this.appendStyled(t`  ${fg(theme.success)('\u23BF  Updated HEARTBEAT.md')}`);
     } else {
-      this.appendStyled(t`  ${fg(theme.error)('⎿  Failed to update HEARTBEAT.md')}`);
+      this.appendStyled(t`  ${fg(theme.error)('\u23BF  Failed to update HEARTBEAT.md')}`);
     }
   }
 
@@ -294,9 +311,9 @@ class DisplayService {
 
   violet(text: string, opts?: { bold?: boolean }): void {
     if (opts?.bold) {
-      this.appendStyled(t`${bold(fg(theme.violet)(text))}`);
+      this.appendStyled(t`${bold(fg(theme.accent)(text))}`);
     } else {
-      this.appendStyled(t`${fg(theme.violet)(text)}`);
+      this.appendStyled(t`${fg(theme.accent)(text)}`);
     }
   }
 
@@ -305,7 +322,7 @@ class DisplayService {
   }
 
   info(text: string): void {
-    this.appendStyled(t`${fg(theme.violet)(text)}`);
+    this.appendStyled(t`${fg(theme.info)(text)}`);
   }
 
   errorText(text: string): void {
@@ -411,18 +428,18 @@ class DisplayService {
   statusLine(action: string, elapsed?: string, tokens?: number, thinkTime?: string): void {
     this.newline();
     this.scrollToBottom();
-    const parts = [`* ${action}`];
+    const parts = [`\u25A3 ${action}`];
     if (elapsed) parts.push(elapsed);
-    if (tokens) parts.push(`↓ ${tokens} tokens`);
+    if (tokens) parts.push(`\u2193 ${tokens} tokens`);
     if (thinkTime) parts.push(`thought for ${thinkTime}`);
-    this.muted(parts.join(' · '));
+    this.muted(parts.join(' \u00B7 '));
   }
 
   buildStatus(success: boolean, errors?: string[]): void {
     if (success) {
-      this.appendStyled(t`${fg(theme.success)('✓ Build OK')}`);
+      this.appendStyled(t`${fg(theme.success)('\u2713 Build OK')}`);
     } else {
-      this.appendStyled(t`${fg(theme.error)('✗ Build failed')}`);
+      this.appendStyled(t`${fg(theme.error)('\u2717 Build failed')}`);
       if (errors) {
         errors.forEach(e => {
           this.muted(`  ${e}`);
@@ -468,19 +485,19 @@ class DisplayService {
 
       // Headers
       if (line.startsWith('### ')) {
-        this.appendStyled(t`${bold(fg(theme.violet)(line))}`);
+        this.appendStyled(t`${bold(fg(theme.accent)(line))}`);
       } else if (line.startsWith('## ')) {
-        this.appendStyled(t`${bold(fg(theme.warning)(line))}`);
+        this.appendStyled(t`${bold(fg(theme.primary)(line))}`);
       } else if (line.startsWith('# ')) {
-        this.appendStyled(t`${bold(fg(theme.violet)(line))}`);
+        this.appendStyled(t`${bold(fg(theme.accent)(line))}`);
       }
       // Blockquotes
       else if (line.startsWith('> ')) {
-        this.appendStyled(t`${fg(theme.muted)('│ ' + line.slice(2))}`);
+        this.appendStyled(t`${fg(theme.muted)('\u2502 ' + line.slice(2))}`);
       }
       // List items
       else if (/^[-*] /.test(line)) {
-        this.appendStyled(t`${fg(theme.violet)('•')} ${line.slice(2)}`);
+        this.appendStyled(t`${fg(theme.primary)('\u2022')} ${line.slice(2)}`);
       }
       // Regular text
       else {
@@ -536,10 +553,11 @@ class DisplayService {
   private _stepAction(name: string, param: string, output?: string): void {
     this.newline();
     this.scrollToBottom();
-    this.appendStyled(t`${fg(theme.violet)('●')} ${fg(theme.violet)(name)}(${param})`);
+    const icon = TOOL_ICONS[name] || '\u25CF';
+    this.appendStyled(t`${fg(theme.primary)(icon)} ${fg(theme.accent)(name)}(${param})`);
     if (output !== undefined) {
       output.split('\n').forEach((line, i) => {
-        const prefix = i === 0 ? '⎿  ' : '   ';
+        const prefix = i === 0 ? '\u23BF  ' : '   ';
         this.appendStyled(t`  ${fg(theme.white)(prefix + line)}`);
       });
     }
@@ -562,6 +580,18 @@ class DisplayService {
   private stripAnsi(str: string): string {
     return str.replace(/\x1b\[[0-9;]*m/g, '');
   }
+
+  showNotification(text: string): void {
+    if (this.tui) {
+      this.tui.showNotification(text);
+    }
+  }
+
+  updateNotificationList(items: { id: string; content: string; status: string }[]): void {
+    if (this.tui) {
+      this.tui.updateNotificationList(items);
+    }
+  }
 }
 
 export const display = new DisplayService();
@@ -572,11 +602,13 @@ export const display = new DisplayService();
 const ESC = '\x1b[';
 const RESET = `${ESC}0m`;
 const ANSI = {
-  violet: `${ESC}38;5;135m`,
-  green: `${ESC}38;5;34m`,
-  red: `${ESC}38;5;124m`,
-  muted: `${ESC}38;5;244m`,
-  white: `${ESC}38;5;255m`,
+  primary: `${ESC}38;2;250;178;131m`,   // #fab283 warm amber
+  accent: `${ESC}38;2;157;124;216m`,     // #9d7cd8 violet
+  secondary: `${ESC}38;2;92;156;245m`,   // #5c9cf5 blue
+  green: `${ESC}38;2;127;216;143m`,      // #7fd88f
+  red: `${ESC}38;2;224;108;117m`,        // #e06c75
+  muted: `${ESC}38;2;110;110;110m`,      // #6e6e6e
+  white: `${ESC}38;2;212;212;212m`,      // #d4d4d4
   bold: `${ESC}1m`,
   reset: RESET,
 };
@@ -612,34 +644,34 @@ export function banner(options: BannerOptions = {}): string {
 
   // Build status badges
   const badges: string[] = [];
-  if (telegram) badges.push(`${ANSI.green}●${ANSI.reset} ${ANSI.muted}Telegram${ANSI.reset}`);
-  if (discord) badges.push(`${ANSI.green}●${ANSI.reset} ${ANSI.muted}Discord${ANSI.reset}`);
-  if (voice) badges.push(`${ANSI.green}●${ANSI.reset} ${ANSI.muted}Voice${ANSI.reset}`);
+  if (telegram) badges.push(`${ANSI.green}\u25CF${ANSI.reset} ${ANSI.muted}Telegram${ANSI.reset}`);
+  if (discord) badges.push(`${ANSI.green}\u25CF${ANSI.reset} ${ANSI.muted}Discord${ANSI.reset}`);
+  if (voice) badges.push(`${ANSI.green}\u25CF${ANSI.reset} ${ANSI.muted}Voice${ANSI.reset}`);
   // Heartbeat: green if active, red if inactive
   const hbColor = heartbeat ? ANSI.green : ANSI.red;
-  badges.push(`${hbColor}●${ANSI.reset} ${ANSI.muted}Heartbeat${ANSI.reset}`);
+  badges.push(`${hbColor}\u25CF${ANSI.reset} ${ANSI.muted}Heartbeat${ANSI.reset}`);
   // Wallet: green if unlocked, grey if locked
   const walletColor = wallet ? ANSI.green : ANSI.muted;
-  badges.push(`${walletColor}●${ANSI.reset} ${ANSI.muted}Wallet${ANSI.reset}`);
+  badges.push(`${walletColor}\u25CF${ANSI.reset} ${ANSI.muted}Wallet${ANSI.reset}`);
   const statusLine = badges.length > 0 ? badges.join('  ') : '';
 
   // Skull logo
   const logoLines = [
-    `${ANSI.violet} ▄▄▄▄▄▄▄ ${ANSI.reset}`,
-    `${ANSI.violet}▐░░░░░░░▌${ANSI.reset}`,
-    `${ANSI.violet}▐░▀░░░▀░▌${ANSI.reset}`,
-    `${ANSI.violet}▐░░░▄░░░▌${ANSI.reset}`,
-    `${ANSI.violet}▐░░▀▀▀░░▌${ANSI.reset}`,
-    `${ANSI.violet} ▀▀▀▀▀▀▀ ${ANSI.reset}`,
-  ];
+    `${ANSI.accent} \u2584\u2584\u2584\u2584\u2584\u2584\u2584 ${ANSI.reset}`,
+    `${ANSI.accent}\u2590\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u258C${ANSI.reset}`,
+    `${ANSI.accent}\u2590\u2591\u2580\u2591\u2591\u2591\u2580\u2591\u258C${ANSI.reset}`,
+    `${ANSI.accent}\u2590\u2591\u2591\u2591\u2584\u2591\u2591\u2591\u258C${ANSI.reset}`,
+    `${ANSI.accent}\u2590\u2591\u2591\u2580\u2580\u2580\u2591\u2591\u258C${ANSI.reset}`,
+    `${ANSI.accent} \u2580\u2580\u2580\u2580\u2580\u2580\u2580 ${ANSI.reset}`,
+  ].slice(0, 5);
 
   const infoLines = [
-    `${ANSI.white}${ANSI.bold}Slashbot${ANSI.reset} ${ANSI.violet}${version}${ANSI.reset}`,
-    `${ANSI.muted}Grok 4.1 · X.AI · ${shortCwd}${ANSI.reset}`,
+    `${ANSI.white}${ANSI.bold}Slashbot${ANSI.reset} ${ANSI.accent}${version}${ANSI.reset}`,
+    `${ANSI.muted}${shortCwd}${ANSI.reset}`,
     contextFile ? `${ANSI.muted}Context: ${contextFile}${ANSI.reset}` : '',
     statusLine,
     tasksCount > 0 ? `${ANSI.muted}${tasksCount} scheduled task(s)${ANSI.reset}` : '',
-    `${ANSI.muted}? help · Tab complete${ANSI.reset}`,
+    `${ANSI.muted}? help \u00B7 Tab complete${ANSI.reset}`,
   ].filter(line => line !== '');
 
   let result = '\n';
@@ -651,7 +683,7 @@ export function banner(options: BannerOptions = {}): string {
 
   // Add border
   const width = Math.min(process.stdout.columns || 80, 60);
-  result += `${ANSI.muted}${'─'.repeat(width)}${ANSI.reset}\n`;
+  result += `${ANSI.muted}${'\u2500'.repeat(width)}${ANSI.reset}\n`;
 
   // Add cook time if provided
   if (cookTime !== undefined) {

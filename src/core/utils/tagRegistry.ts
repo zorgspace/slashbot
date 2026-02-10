@@ -19,6 +19,17 @@ export function registerActionTags(tags: string[]): void {
 }
 
 /**
+ * Unregister action tags (never removes builtins)
+ */
+export function unregisterActionTags(tags: string[]): void {
+  for (const tag of tags) {
+    if (!BUILTIN_TAGS.includes(tag)) {
+      registeredTags.delete(tag);
+    }
+  }
+}
+
+/**
  * Get all registered action tags (builtin + plugin-registered)
  */
 export function getRegisteredTags(): string[] {

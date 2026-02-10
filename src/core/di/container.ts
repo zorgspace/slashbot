@@ -9,6 +9,13 @@ import { TYPES } from './types';
 // Create the container with singleton scope by default
 export const container = new Container({ defaultScope: 'Singleton' });
 
+import { HooksManager } from '../utils/hooks';
+
+container
+  .bind(TYPES.HooksManager)
+  .to(HooksManager)
+  .inSingletonScope();
+
 /**
  * Initialize the container with all services
  * Call this once at application startup
@@ -18,31 +25,11 @@ export async function initializeContainer(options: { basePath?: string }): Promi
 
   // Import and bind core services
   const { createConfigManager } = await import('../config/config');
-  const { createFileSystem } = await import('../services/filesystem');
-  const { createScheduler } = await import('../scheduler/scheduler');
-  const { createCodeEditor } = await import('../code/editor');
-  const { createCommandPermissions } = await import('../config/permissions');
 
   // Bind factories as dynamic values (they need to be initialized)
   container
     .bind(TYPES.ConfigManager)
     .toDynamicValue(() => createConfigManager())
-    .inSingletonScope();
-  container
-    .bind(TYPES.FileSystem)
-    .toDynamicValue(() => createFileSystem(basePath))
-    .inSingletonScope();
-  container
-    .bind(TYPES.TaskScheduler)
-    .toDynamicValue(() => createScheduler())
-    .inSingletonScope();
-  container
-    .bind(TYPES.CodeEditor)
-    .toDynamicValue(() => createCodeEditor(basePath))
-    .inSingletonScope();
-  container
-    .bind(TYPES.CommandPermissions)
-    .toDynamicValue(() => createCommandPermissions())
     .inSingletonScope();
 
   // Bind composite services

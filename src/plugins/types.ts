@@ -3,6 +3,7 @@
  */
 
 import type { Container } from 'inversify';
+import type { z } from 'zod/v4';
 
 export interface PluginMetadata {
   id: string;
@@ -58,6 +59,19 @@ export interface SidebarContribution {
   getStatus: () => boolean;
 }
 
+export interface ToolContribution {
+  /** Tool name exposed to the LLM, e.g. 'bash', 'read_file' */
+  name: string;
+  /** Description shown to the LLM */
+  description: string;
+  /** Zod schema for the tool parameters */
+  parameters: z.ZodType<any>;
+  /** Convert structured args from the LLM into an Action for the existing executor */
+  toAction: (args: Record<string, unknown>) => import('../core/actions/types').Action;
+  /** Control-flow hint: 'say' displays, 'end' stops the loop, 'continue' resets iteration */
+  controlFlow?: 'say' | 'end' | 'continue';
+}
+
 export interface Plugin {
   readonly metadata: PluginMetadata;
 
@@ -76,6 +90,8 @@ export interface Plugin {
   getEventSubscriptions?(): EventSubscription[];
 
   getSidebarContributions?(): SidebarContribution[];
+
+  getToolContributions?(): ToolContribution[];
 
   onBeforeGrokInit?(context: PluginContext): Promise<void>;
 

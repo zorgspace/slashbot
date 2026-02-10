@@ -31,15 +31,51 @@ export async function executeRead(
     // Detect language from file extension so the LLM knows the syntax
     const ext = action.path.split('.').pop()?.toLowerCase() || '';
     const langMap: Record<string, string> = {
-      ts: 'typescript', tsx: 'typescript (tsx)', js: 'javascript', jsx: 'javascript (jsx)',
-      py: 'python', rs: 'rust', go: 'go', rb: 'ruby', java: 'java', kt: 'kotlin',
-      c: 'c', cpp: 'c++', h: 'c header', hpp: 'c++ header', cs: 'c#',
-      swift: 'swift', sh: 'bash', bash: 'bash', zsh: 'zsh', fish: 'fish',
-      json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml',
-      html: 'html', css: 'css', scss: 'scss', less: 'less', svelte: 'svelte', vue: 'vue',
-      sql: 'sql', md: 'markdown', txt: 'plain text', dockerfile: 'dockerfile',
-      lua: 'lua', zig: 'zig', nim: 'nim', ex: 'elixir', exs: 'elixir',
-      php: 'php', r: 'r', pl: 'perl', dart: 'dart', sol: 'solidity',
+      ts: 'typescript',
+      tsx: 'typescript (tsx)',
+      js: 'javascript',
+      jsx: 'javascript (jsx)',
+      py: 'python',
+      rs: 'rust',
+      go: 'go',
+      rb: 'ruby',
+      java: 'java',
+      kt: 'kotlin',
+      c: 'c',
+      cpp: 'c++',
+      h: 'c header',
+      hpp: 'c++ header',
+      cs: 'c#',
+      swift: 'swift',
+      sh: 'bash',
+      bash: 'bash',
+      zsh: 'zsh',
+      fish: 'fish',
+      json: 'json',
+      yaml: 'yaml',
+      yml: 'yaml',
+      toml: 'toml',
+      xml: 'xml',
+      html: 'html',
+      css: 'css',
+      scss: 'scss',
+      less: 'less',
+      svelte: 'svelte',
+      vue: 'vue',
+      sql: 'sql',
+      md: 'markdown',
+      txt: 'plain text',
+      dockerfile: 'dockerfile',
+      lua: 'lua',
+      zig: 'zig',
+      nim: 'nim',
+      ex: 'elixir',
+      exs: 'elixir',
+      php: 'php',
+      r: 'r',
+      pl: 'perl',
+      dart: 'dart',
+      sol: 'solidity',
     };
     const lang = langMap[ext] || ext;
     // Send full content to LLM with language header and line numbers
@@ -52,7 +88,11 @@ export async function executeRead(
     const numberedContent = lines
       .map((line, i) => `${String(startLine + i).padStart(pad, ' ')}│${line}`)
       .join('\n');
-    return { action: `Read: ${action.path}`, success: true, result: `${header}\n${numberedContent}` };
+    return {
+      action: `Read: ${action.path}`,
+      success: true,
+      result: `${header}\n${numberedContent}`,
+    };
   } else {
     display.error('File not found');
     return {
@@ -115,7 +155,7 @@ export async function executeEdit(
         ? 'Skipped (already applied)'
         : result.success
           ? 'OK'
-          : (result.message || 'Failed'),
+          : result.message || 'Failed',
     error: result.success ? undefined : errorMsg,
   };
 }

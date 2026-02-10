@@ -1,22 +1,30 @@
 /**
- * Grok API Types
+ * LLM API Types
  */
 
 export interface Message {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content:
     | string
     | Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string } }>;
+  /** For tool-result messages: the tool call IDs and results */
+  toolResults?: Array<{ toolCallId: string; toolName: string; result: string }>;
+  /** For assistant messages with tool calls: raw AI SDK format for history replay */
+  _rawAIMessage?: any;
 }
 
-export interface GrokConfig {
-  apiKey: string;
+export interface LLMConfig {
+  provider: string;
   model?: string;
   modelImage?: string;
+  apiKey: string;
   baseUrl?: string;
   maxTokens?: number;
   temperature?: number;
 }
+
+/** Backwards compatibility alias */
+export type GrokConfig = LLMConfig;
 
 export interface UsageStats {
   promptTokens: number;
@@ -41,6 +49,15 @@ export interface ApiAuthProvider {
 }
 
 /**
+ * A tool call returned by the AI SDK
+ */
+export interface ToolCallResult {
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+/**
  * Options for the streaming API call
  */
 export interface StreamOptions {
@@ -48,6 +65,8 @@ export interface StreamOptions {
   displayStream?: boolean;
   timeout?: number;
   thinkingLabel?: string;
+  /** AI SDK tools map to pass to generateText(). When set, enables native tool calling. */
+  tools?: Record<string, any>;
 }
 
 /**
@@ -57,6 +76,10 @@ export interface StreamResult {
   content: string;
   thinking: string;
   finishReason: string | null;
+  /** Tool calls from native AI SDK tool calling (when tools are enabled) */
+  toolCalls?: ToolCallResult[];
+  /** Full response messages including assistant + tool-call parts (for history reconstruction) */
+  responseMessages?: any[];
 }
 
 /**
@@ -92,17 +115,20 @@ export interface AgenticLoopResult {
 
 /**
  * Internal context interface for extracted streaming/loop functions.
- * GrokClient implements this to pass its state without exposing private fields.
+ * LLMClient implements this to pass its state without exposing private fields.
  */
 export interface ClientContext {
   authProvider: ApiAuthProvider;
   sessionManager: import('./sessions').SessionManager;
-  config: GrokConfig;
+  config: LLMConfig;
   usage: UsageStats;
   thinkingActive: boolean;
   abortController: AbortController | null;
   rawOutputCallback: ((text: string) => void) | null;
   actionHandlers: import('../actions').ActionHandlers;
+  providerRegistry: import('../../plugins/providers/registry').ProviderRegistry;
+  toolRegistry: import('./toolRegistry').ToolRegistry | null;
   getModel(): string;
+  getProvider(): string;
   estimateTokens(): number;
 }

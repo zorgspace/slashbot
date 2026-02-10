@@ -13,6 +13,8 @@ import type {
   PromptContribution,
 } from '../types';
 import type { CommandHandler } from '../../core/commands/registry';
+import { createCommandPermissions } from './services/CommandPermissions';
+import { TYPES } from '../../core/di/types';
 
 export class SystemPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -28,7 +30,11 @@ export class SystemPlugin implements Plugin {
   private getPersonalityMod: (() => string) | null = null;
   private getCurrentPersonality: (() => string) | null = null;
 
-  async init(_context: PluginContext): Promise<void> {
+  async init(context: PluginContext): Promise<void> {
+    // Self-register CommandPermissions in DI
+    const permissions = createCommandPermissions();
+    context.container.bind(TYPES.CommandPermissions).toConstantValue(permissions);
+
     const { systemPluginCommands, getPersonalityMod, getCurrentPersonality } =
       await import('./commands');
     this.commands = systemPluginCommands;

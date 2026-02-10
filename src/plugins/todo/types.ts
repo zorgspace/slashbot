@@ -1,0 +1,19 @@
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  createdAt: number;
+  updatedAt: number;
+  /** Connector target for push notification on completion (e.g. 'telegram', 'discord') */
+  notifyTarget?: string;
+}
+
+export interface TodoWriteAction {
+  type: 'todo-write';
+  todos: TodoItem[];
+}
+
+export interface TodoReadAction {
+  type: 'todo-read';
+  filter?: string;
+}

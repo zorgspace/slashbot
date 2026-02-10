@@ -1,10 +1,14 @@
 /**
- * OpenTUI Dashboard - Public exports
+ * Core UI - Public exports (display facade, theme, types)
+ *
+ * TUIApp and panels have moved to src/plugins/tui/
  */
 
-export { TUIApp } from './TUIApp';
 export { theme } from './theme';
 export { display, setTUISpinnerCallbacks, banner } from './display';
 export type { TUISpinnerCallbacks, BannerOptions } from './display';
-export type { UIOutput, SidebarData, TUIAppCallbacks } from './types';
-export type { HeaderOptions } from './panels/HeaderPanel';
+export type { UIOutput, SidebarData, SidebarStatusItem, TUIAppCallbacks } from './types';
+
+/* TUIApp moved to plugins/tui but directory missing - temporarily disable */
+// export { TUIApp } from '../../plugins/tui/TUIApp';
+// export type { HeaderOptions } from '../../plugins/tui/panels/HeaderPanel';

@@ -1,6 +1,20 @@
+=======
+
 # Slashbot
 
 Lightweight CLI assistant powered by Grok API. A fast, extensible alternative to Claude Code with built-in Solana wallet, multi-platform connectors, and a plugin architecture.
+
+# =======
+
+## What's New
+
+
+
+- **Version 2.0.0**: Merged new features from pull request #4, introducing enhancements for better extensibility and performance.
+- **Heartbeat System Updates**: Improved to use HOME_SLASHBOT_DIR for workDir and removed redundant reflection display for cleaner monitoring.
+- **Build Script Improvements**: Inlined the --external flag in build.sh for streamlined compilation.
+- **Documentation Enhancements**: Updated README with detailed plugin descriptions and new documentation links for better user guidance.
+- **UI Refinements**: Removed background color from DiffPanel to improve visual consistency across interfaces.
 
 ## Features
 
@@ -35,9 +49,6 @@ Lightweight CLI assistant powered by Grok API. A fast, extensible alternative to
 - [Roadmap](./docs/ROADMAP.md) - Future features
 - [Token Utility](./docs/TOKEN_UTILITY.md) - $SLASHBOT economics
 
-## Authors
-
-- **Main Developer**: Slashbin
 
 ## Quick Start
 

@@ -5,6 +5,8 @@
 export const TYPES = {
   // Core services
   GrokClient: Symbol.for('GrokClient'),
+  LLMClient: Symbol.for('GrokClient'), // Alias pointing to same symbol
+  ProviderRegistry: Symbol.for('ProviderRegistry'),
   TaskScheduler: Symbol.for('TaskScheduler'),
   FileSystem: Symbol.for('FileSystem'),
   ConfigManager: Symbol.for('ConfigManager'),
@@ -20,6 +22,12 @@ export const TYPES = {
   // Event system
   EventBus: Symbol.for('EventBus'),
 
+  // Plugin-registered services
+  ProcessManager: Symbol.for('ProcessManager'),
+  ImageBuffer: Symbol.for('ImageBuffer'),
+
   // Plugin system
   PluginRegistry: Symbol.for('PluginRegistry'),
+  HooksManager: Symbol.for('HooksManager'),
+  ToolRegistry: Symbol.for('ToolRegistry'),
 };
