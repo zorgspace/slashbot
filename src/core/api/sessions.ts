@@ -16,6 +16,109 @@ export interface ConversationSession {
   lastActivity: number;
 }
 
+/**
+ * Interface for session access used by the agentic loop and streaming.
+ * ScopedSession implements this, pinned to a specific session ID —
+ * eliminating the currentSessionId race condition for concurrent requests.
+ */
+export interface SessionScope {
+  history: Message[];
+  readonly fileContextCache: LRUCache<string, string>;
+  displayedContent: string;
+  compressContext(): void;
+  condenseHistory(): string;
+}
+
+/**
+ * A session handle pinned to a specific session ID.
+ * Each concurrent request (Telegram chat, Discord channel) gets its own ScopedSession
+ * so they never interfere with each other via shared currentSessionId.
+ */
+export class ScopedSession implements SessionScope {
+  private session: ConversationSession;
+
+  constructor(private manager: SessionManager, sessionId: string) {
+    this.session = manager.ensureSession(sessionId);
+  }
+
+  get history(): Message[] {
+    return this.session.history;
+  }
+
+  set history(h: Message[]) {
+    this.session.history = h;
+  }
+
+  get fileContextCache(): LRUCache<string, string> {
+    return this.session.fileContextCache;
+  }
+
+  get displayedContent(): string {
+    return this.session.displayedContent;
+  }
+
+  set displayedContent(content: string) {
+    this.session.displayedContent = content;
+  }
+
+  compressContext(): void {
+    if (!this.manager.isContextCompressionEnabled()) return;
+    const maxCtx = this.manager.getMaxContextMessages();
+    const systemPrompt = this.history[0];
+    const messages = this.history.slice(1);
+    if (messages.length <= maxCtx) return;
+    let cutIdx = messages.length - maxCtx;
+    if (cutIdx > 0 && messages[cutIdx]?.role === 'tool') {
+      cutIdx--;
+    }
+    const recentMessages = messages.slice(cutIdx);
+    this.history = [systemPrompt, ...recentMessages];
+    display.muted(`[Context] Compressed: ${messages.length} \u2192 ${recentMessages.length} messages`);
+  }
+
+  condenseHistory(): string {
+    const messages = this.history.slice(1);
+    let summary = 'Conversation Summary:\n';
+    const userMessages: string[] = [];
+    const actions: string[] = [];
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        const content =
+          typeof msg.content === 'string' ? msg.content : msg.content?.[0]?.text || '';
+        if (
+          content &&
+          !content.includes('<session-actions>') &&
+          !content.includes('<system-instruction>')
+        ) {
+          userMessages.push(content.split('\n')[0]);
+        }
+      } else if (msg.role === 'assistant') {
+        const contentStr = typeof msg.content === 'string' ? msg.content : '';
+        const actionMatches = contentStr.match(
+          /<(bash|read|edit|write|grep|explore)\b[^>]*>/g,
+        );
+        if (actionMatches) {
+          actions.push(...actionMatches.slice(0, 3));
+        }
+      } else if (msg.role === 'tool') {
+        const toolResults = (msg as any).toolResults as Array<{ toolName: string }> | undefined;
+        if (toolResults) {
+          actions.push(...toolResults.map(r => r.toolName).slice(0, 3));
+        }
+      }
+    }
+    if (userMessages.length > 0) {
+      summary += `User requests: ${userMessages.slice(-5).join('; ')}\n`;
+    }
+    if (actions.length > 0) {
+      summary += `Actions performed: ${actions.slice(-5).join(', ')}\n`;
+    }
+    summary += `Total messages: ${messages.length}\n`;
+    summary += 'Please continue from this point.';
+    return summary;
+  }
+}
+
 export class SessionManager {
   private sessions = new Map<string, ConversationSession>();
   private currentSessionId: string = 'cli';
@@ -31,11 +134,11 @@ export class SessionManager {
   // ===== Session lifecycle =====
 
   /**
-   * Switch to a different conversation session
+   * Switch to a different conversation session (legacy — prefer scoped())
    */
   setSession(sessionId: string): void {
     this.currentSessionId = sessionId;
-    this.getSession(sessionId);
+    this.ensureSession(sessionId);
   }
 
   getSessionId(): string {
@@ -44,6 +147,21 @@ export class SessionManager {
 
   getSessionIds(): string[] {
     return Array.from(this.sessions.keys());
+  }
+
+  /**
+   * Create a ScopedSession pinned to a specific session ID.
+   * Use this for concurrent request handling (Telegram, Discord).
+   */
+  scoped(sessionId: string): ScopedSession {
+    return new ScopedSession(this, sessionId);
+  }
+
+  /**
+   * Get or create a session by ID. Public for ScopedSession access.
+   */
+  ensureSession(sessionId: string): ConversationSession {
+    return this.getSession(sessionId);
   }
 
   clearSession(sessionId: string): void {

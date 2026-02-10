@@ -1,20 +1,52 @@
-=======
-
 # Slashbot
 
-Lightweight CLI assistant powered by Grok API. A fast, extensible alternative to Claude Code with built-in Solana wallet, multi-platform connectors, and a plugin architecture.
+[![GitHub Repo stars](https://img.shields.io/github/stars/zorgspace/slashbot?style=social)](https://github.com/zorgspace/slashbot)
+[![GitHub license](https://img.shields.io/github/license/zorgspace/slashbot)](https://github.com/zorgspace/slashbot/blob/master/LICENSE)
+[![Bun](https://img.shields.io/badge/Bun-v1.0%2B-brightgreen?logo=bun)](https://bun.sh/)
 
-# =======
+Lightweight autonomous agentic AI for engineering, development & automation. Powered by xAI Grok with native tools, skills, Solana wallet & multi-platform support.
 
-## What's New
+## Why Slashbot?
 
+Slashbot is a fast, extensible alternative to Claude Code with unique features:
 
+- **Agentic AI**: Autonomous task execution with persistent context and tool chaining.
+- **Token Payments**: Pay for API usage with $SLASHBOT tokens on Solana - no API keys needed.
+- **Multi-Platform**: CLI, Telegram, and Discord connectors.
+- **Extensible Skills**: Load specialized capabilities like Docker, Solana trading, TUI building.
+- **Built-in Wallet**: Manage Solana wallet directly in chat.
+- **Heartbeat Monitoring**: Proactive AI reflection and notifications.
 
-- **Version 2.0.0**: Merged new features from pull request #4, introducing enhancements for better extensibility and performance.
-- **Heartbeat System Updates**: Improved to use HOME_SLASHBOT_DIR for workDir and removed redundant reflection display for cleaner monitoring.
-- **Build Script Improvements**: Inlined the --external flag in build.sh for streamlined compilation.
-- **Documentation Enhancements**: Updated README with detailed plugin descriptions and new documentation links for better user guidance.
-- **UI Refinements**: Removed background color from DiffPanel to improve visual consistency across interfaces.
+## Table of Contents
+
+- [Why Slashbot?](#why-slashbot)
+- [Changelog](#changelog)
+- [Features](#features)
+- [Documentation](#documentation)
+- [Quick Start](#quick-start)
+- [Payment Modes](#payment-modes)
+- [Commands](#commands)
+- [Plugins](#plugins)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Configuration](#configuration)
+- [$SLASHBOT Token](#slashbot-token)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
+- [Roadmap](#roadmap)
+
+## Changelog
+
+### v2.0.0
+
+- Enhanced extensibility & performance via feat/2.0.0 merge.
+- Heartbeat: Use `$HOME_SLASHBOT_DIR` for workDir; remove redundant display.
+- Build: Inline `--external` in `build.sh`.
+- Docs: Plugin details & new links.
+- UI: No background on DiffPanel for consistency.
+
+[Full changelog](https://github.com/zorgspace/slashbot/commits/master)
 
 ## Features
 
@@ -48,7 +80,6 @@ Lightweight CLI assistant powered by Grok API. A fast, extensible alternative to
 - [Architecture](./docs/ARCHITECTURE.md) - Deep technical overview
 - [Roadmap](./docs/ROADMAP.md) - Future features
 - [Token Utility](./docs/TOKEN_UTILITY.md) - $SLASHBOT economics
-
 
 ## Quick Start
 
@@ -222,11 +253,30 @@ All user configuration is stored in `~/.slashbot/`:
 
 ## Security
 
-- Dangerous shell commands are blocked (rm /, fork bombs, disk writes, privilege escalation)
-- Git operations are safe by default (no force-push, no destructive resets)
-- Wallet credentials are encrypted with AES-256-GCM
-- Passwords are never logged or stored in plaintext
-- Session-based wallet auth with 30-minute timeout
+- Dangerous shell commands are blocked (rm /etc, fork bombs, disk writes to system dirs, privilege escalation)
+- Git operations safe by default (no force-push, no destructive resets without consent)
+- Wallet credentials encrypted with AES-256-GCM
+- Passwords never logged or stored in plaintext
+- Session-based wallet auth with 30-min timeout
+
+## Community & Support
+
+- Report issues: [GitHub Issues](https://github.com/zorgspace/slashbot/issues)
+- Discussions: [GitHub Discussions](https://github.com/zorgspace/slashbot/discussions)
+- Telegram: Configure via `/telegram` command
+- Discord: Configure via `/discord` command
+
+## Contributing
+
+Contributions welcome!
+
+1. [Fork the repo](https://github.com/zorgspace/slashbot/fork)
+2. Create feature branch (`git checkout -b feat/amazing-feature`)
+3. Commit (`git commit -m 'feat: add amazing feature'`)
+4. Push (`git push origin feat/amazing-feature`)
+5. [Open PR](https://github.com/zorgspace/slashbot/compare)
+
+Ensure `bun test` passes. Use [conventional commits](https://www.conventionalcommits.org).
 
 ## License
 
@@ -235,3 +285,7 @@ MIT
 ## Roadmap
 
 See [ROADMAP.md](./docs/ROADMAP.md) for the full project roadmap and vision.
+
+---
+
+[GitHub](https://github.com/zorgspace/slashbot) | [Docs](./docs/) | Made with ❤️ by Slashbin

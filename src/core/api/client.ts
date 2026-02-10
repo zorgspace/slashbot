@@ -277,7 +277,9 @@ export class LLMClient implements ClientContext {
   // ===== Public chat methods =====
 
   async chat(userMessage: string): Promise<{ response: string; thinking: string }> {
-    this.sessionManager.displayedContent = '';
+    // Create a scoped session for this request
+    const scope = this.sessionManager.scoped(this.sessionManager.getSessionId());
+    scope.displayedContent = '';
 
     const recentImages = getRecentImages();
     const userContent: Array<{
@@ -288,13 +290,30 @@ export class LLMClient implements ClientContext {
     recentImages.forEach((imgUrl: string) => {
       userContent.push({ type: 'image_url', image_url: { url: imgUrl } });
     });
-    this.sessionManager.history.push({ role: 'user', content: userContent });
+    scope.history.push({ role: 'user', content: userContent });
 
-    this.sessionManager.compressContext();
+    scope.compressContext();
 
     const messageHasImages = recentImages.length > 0;
 
-    const result = await runAgenticLoop(this, messageHasImages, {
+    // Build a scoped context so the agentic loop operates on the pinned session
+    const ctx: ClientContext = {
+      authProvider: this.authProvider,
+      sessionManager: scope,
+      config: this.config,
+      usage: this.usage,
+      thinkingActive: this.thinkingActive,
+      abortController: this.abortController,
+      rawOutputCallback: this.rawOutputCallback,
+      actionHandlers: this.actionHandlers,
+      providerRegistry: this.providerRegistry,
+      toolRegistry: this.toolRegistry,
+      getModel: () => this.getModel(),
+      getProvider: () => this.getProvider(),
+      estimateTokens: () => this.estimateTokens(),
+    };
+
+    const result = await runAgenticLoop(ctx, messageHasImages, {
       displayStream: true,
       maxIterations: AGENTIC.MAX_ITERATIONS_CLI,
       cacheFileContents: true,
@@ -306,10 +325,14 @@ export class LLMClient implements ClientContext {
       continueActions: true,
     });
 
+    // Sync back mutable state from the scoped context
+    this.thinkingActive = ctx.thinkingActive;
+    this.abortController = ctx.abortController;
+
     // Store final response in history
-    const lastMessage = this.sessionManager.history[this.sessionManager.history.length - 1];
+    const lastMessage = scope.history[scope.history.length - 1];
     if (lastMessage?.role !== 'assistant' || lastMessage?.content !== result.finalResponse) {
-      this.sessionManager.history.push({ role: 'assistant', content: result.finalResponse });
+      scope.history.push({ role: 'assistant', content: result.finalResponse });
     }
 
     // Inject executed actions into context
@@ -318,7 +341,7 @@ export class LLMClient implements ClientContext {
         .map(a => `- ${a.success ? '\u2713' : '\u2717'} ${a.description}`)
         .join('\n');
 
-      this.sessionManager.history.push({
+      scope.history.push({
         role: 'user',
         content: `<session-actions>\n${actionSummary}\n</session-actions>`,
       });
@@ -336,7 +359,7 @@ export class LLMClient implements ClientContext {
     // Safety net: if nothing was displayed during streaming and no endMessage was shown,
     // display the cleaned response now. This handles cases where the LLM wraps everything
     // in action tags (as instructed) and the streaming display strips them.
-    if (!this.sessionManager.displayedContent && !result.endMessage && cleanResponse.trim()) {
+    if (!scope.displayedContent && !result.endMessage && cleanResponse.trim()) {
       display.sayResult(cleanResponse);
     }
 
@@ -358,7 +381,11 @@ export class LLMClient implements ClientContext {
     sessionId?: string,
   ): Promise<string> {
     const effectiveSessionId = sessionId || source || 'cli';
-    this.sessionManager.setSession(effectiveSessionId);
+
+    // Create a scoped session pinned to this specific chat/channel.
+    // This eliminates the race condition where concurrent requests
+    // from different Telegram chats or Discord channels clobber each other.
+    const scope = this.sessionManager.scoped(effectiveSessionId);
 
     const chatIdFromSession = sessionId?.includes(':') ? sessionId.split(':')[1] : undefined;
     const chatHint = chatIdFromSession ? ` CHAT:${chatIdFromSession}` : '';
@@ -378,14 +405,32 @@ export class LLMClient implements ClientContext {
       recentImages.forEach((imgUrl: string) => {
         userContent.push({ type: 'image_url', image_url: { url: imgUrl } });
       });
-      this.sessionManager.history.push({ role: 'user', content: userContent });
+      scope.history.push({ role: 'user', content: userContent });
     } else {
-      this.sessionManager.history.push({ role: 'user', content: userMessage + platformHint });
+      scope.history.push({ role: 'user', content: userMessage + platformHint });
     }
 
-    this.sessionManager.compressContext();
+    scope.compressContext();
 
-    const result = await runAgenticLoop(this, messageHasImages, {
+    // Build a scoped context — each concurrent request gets its own
+    // thinkingActive/abortController state so they don't interfere.
+    const ctx: ClientContext = {
+      authProvider: this.authProvider,
+      sessionManager: scope,
+      config: this.config,
+      usage: this.usage,
+      thinkingActive: false,
+      abortController: null,
+      rawOutputCallback: this.rawOutputCallback,
+      actionHandlers: this.actionHandlers,
+      providerRegistry: this.providerRegistry,
+      toolRegistry: this.toolRegistry,
+      getModel: () => this.getModel(),
+      getProvider: () => this.getProvider(),
+      estimateTokens: () => this.estimateTokens(),
+    };
+
+    const result = await runAgenticLoop(ctx, messageHasImages, {
       displayStream: false,
       maxIterations: AGENTIC.MAX_ITERATIONS_CONNECTOR,
       iterationTimeout: 60000,
@@ -405,9 +450,9 @@ export class LLMClient implements ClientContext {
     }
 
     // Defensive cleanup
-    if (this.thinkingActive) {
+    if (ctx.thinkingActive) {
       display.stopThinking();
-      this.thinkingActive = false;
+      ctx.thinkingActive = false;
     }
     display.endThinkingStream();
 

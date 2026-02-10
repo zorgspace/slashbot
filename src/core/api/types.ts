@@ -119,7 +119,7 @@ export interface AgenticLoopResult {
  */
 export interface ClientContext {
   authProvider: ApiAuthProvider;
-  sessionManager: import('./sessions').SessionManager;
+  sessionManager: import('./sessions').SessionScope;
   config: LLMConfig;
   usage: UsageStats;
   thinkingActive: boolean;

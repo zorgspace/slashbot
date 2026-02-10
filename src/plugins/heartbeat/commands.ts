@@ -12,9 +12,9 @@ export const heartbeatHandler: CommandHandler = {
   name: 'heartbeat',
   aliases: ['hb', 'pulse'],
   description: 'Manage heartbeat system - periodic AI reflection',
-  usage: '/heartbeat [status|config|every|target|enable|disable|hours|now]',
+  usage: '/heartbeat [status|config|period|enable|disable|hours|now]',
   group: 'Heartbeat',
-  subcommands: ['now', 'status', 'config', 'every', 'target', 'enable', 'disable', 'hours', 'md'],
+  subcommands: ['now', 'status', 'config', 'period', 'enable', 'disable', 'hours', 'md'],
 
   async execute(args: string[], context: CommandContext): Promise<boolean> {
     let heartbeatService: HeartbeatService;
@@ -64,8 +64,7 @@ export const heartbeatHandler: CommandHandler = {
       display.boldText('  Heartbeat Configuration');
       display.append('');
       display.muted('  enabled:     ' + (config.enabled ?? true));
-      display.muted('  every:       ' + (config.every || '30m'));
-      display.muted('  target:      ' + (config.target || 'cli'));
+      display.muted('  period:      ' + (config.period || '30m'));
       display.muted('  ackMaxChars: ' + (config.ackMaxChars || 300));
 
       if (config.activeHours) {
@@ -86,10 +85,10 @@ export const heartbeatHandler: CommandHandler = {
     }
 
     // Set interval
-    if (subcommand === 'every' || subcommand === 'interval') {
+    if (subcommand === 'period' || subcommand === 'interval') {
       const interval = args[1];
       if (!interval) {
-        display.errorText('Usage: /heartbeat every <interval>');
+        display.errorText('Usage: /heartbeat period <interval>');
         display.muted('  Examples: 30m, 1h, 2h30m');
         return true;
       }
@@ -100,7 +99,7 @@ export const heartbeatHandler: CommandHandler = {
         return true;
       }
 
-      await heartbeatService.saveConfig({ every: interval });
+      await heartbeatService.saveConfig({ period: interval });
 
       // Restart to apply new interval
       heartbeatService.stop();
@@ -110,20 +109,7 @@ export const heartbeatHandler: CommandHandler = {
       return true;
     }
 
-    // Set target
-    if (subcommand === 'target') {
-      const target = args[1]?.toLowerCase();
-      const validTargets = ['cli', 'telegram', 'discord', 'all', 'none'];
 
-      if (!target || !validTargets.includes(target)) {
-        display.errorText('Usage: /heartbeat target <cli|telegram|discord|all|none>');
-        return true;
-      }
-
-      await heartbeatService.saveConfig({ target: target as any });
-      display.successText('  Heartbeat target set to ' + target);
-      return true;
-    }
 
     // Enable
     if (subcommand === 'enable' || subcommand === 'on') {
@@ -189,8 +175,7 @@ export const heartbeatHandler: CommandHandler = {
     display.append('  /heartbeat              Trigger heartbeat now');
     display.append('  /heartbeat status       Show status and statistics');
     display.append('  /heartbeat config       Show current configuration');
-    display.append('  /heartbeat every 30m    Set interval (30m, 1h, 2h30m)');
-    display.append('  /heartbeat target cli   Set target (cli, telegram, discord, all, none)');
+    display.append('  /heartbeat period 30m   Set interval (30m, 1h, 2h30m)');
     display.append('  /heartbeat enable       Enable heartbeat');
     display.append('  /heartbeat disable      Disable heartbeat');
     display.append('  /heartbeat hours 8:00-22:00  Set active hours');

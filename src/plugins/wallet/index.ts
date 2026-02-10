@@ -204,7 +204,7 @@ export class WalletPlugin implements Plugin {
         title: 'Wallet - Solana Wallet Management',
         priority: 150,
         content: [
-          'The wallet system allows checking balances and managing Solana tokens.',
+          'The wallet system allows checking balances and managing Solana tokens and sending SOL and SLASHBOT.',
           '',
           '**Check wallet status (read-only, always safe):**',
           '```',
@@ -217,7 +217,6 @@ export class WalletPlugin implements Plugin {
           '<wallet-send token="slashbot" to="ADDRESS" amount="100"/>',
           '```',
           '',
-          'SECURITY: Sending tokens requires the wallet to be unlocked via /wallet unlock.',
           'Always confirm with the user before initiating any transfer.',
           '',
           '**Commands:** /wallet, /wallet create, /wallet balance, /wallet send, /wallet unlock, /wallet status',

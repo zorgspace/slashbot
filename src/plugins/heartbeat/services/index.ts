@@ -9,7 +9,6 @@ export {
   type FullHeartbeatConfig,
   type HeartbeatResult,
   type HeartbeatState,
-  type HeartbeatTarget,
   type HeartbeatAction,
   type HeartbeatVisibility,
   type ActiveHours,

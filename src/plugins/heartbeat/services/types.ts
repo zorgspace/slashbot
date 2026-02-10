@@ -14,13 +14,10 @@ export interface ActiveHours {
   timezone?: string; // IANA timezone, defaults to local
 }
 
-/**
- * Heartbeat delivery target configuration
- */
-export type HeartbeatTarget = 'cli' | 'telegram' | 'discord' | 'all' | 'none';
+
 
 /**
- * Per-connector heartbeat visibility settings
+ * Heartbeat visibility settings
  */
 export interface HeartbeatVisibility {
   showOk?: boolean; // Show OK acknowledgments (default: false)
@@ -29,12 +26,11 @@ export interface HeartbeatVisibility {
 }
 
 /**
- * Heartbeat configuration - can be set globally or per-connector
+ * Heartbeat configuration
  */
 export interface HeartbeatConfig {
   enabled?: boolean; // Enable heartbeat system (default: true)
-  every?: string; // Interval as duration string: "30m", "1h", "2h" (default: "30m")
-  target?: HeartbeatTarget; // Where to deliver alerts (default: "cli")
+  period?: string; // Interval as duration string: "30m", "1h", "2h" (default: "30m")
   prompt?: string; // Custom heartbeat instruction
   model?: string; // Optional model override for heartbeat runs
   activeHours?: ActiveHours; // Restrict to certain hours
@@ -44,15 +40,9 @@ export interface HeartbeatConfig {
 }
 
 /**
- * Full heartbeat configuration with per-connector overrides
+ * Full heartbeat configuration
  */
-export interface FullHeartbeatConfig extends HeartbeatConfig {
-  connectors?: {
-    telegram?: HeartbeatConfig;
-    discord?: HeartbeatConfig;
-    cli?: HeartbeatConfig;
-  };
-}
+export interface FullHeartbeatConfig extends HeartbeatConfig {}
 
 /**
  * Heartbeat response type - what the agent returned
@@ -68,7 +58,6 @@ export interface HeartbeatResult {
   reasoning?: string; // Thinking/reasoning if available
   timestamp: Date;
   duration: number; // Execution time in ms
-  target: HeartbeatTarget;
   actions?: HeartbeatAction[]; // Actions taken during heartbeat
 }
 

@@ -4,7 +4,6 @@
  * Implements OpenClaw-inspired heartbeat functionality:
  * - Periodic "wake-up" for the AI to reflect on its context
  * - HEARTBEAT.md checklist support
- * - Alert routing to connectors
  * - HEARTBEAT_OK suppression
  */
 
@@ -12,7 +11,6 @@ import 'reflect-metadata';
 import { injectable, inject } from 'inversify';
 import { TYPES } from '../../../core/di/types';
 import type { EventBus } from '../../../core/events/EventBus';
-import type { ConnectorRegistry } from '../../../connectors/registry';
 import type { GrokClient } from '../../../core/api';
 import { display } from '../../../core/ui';
 import { HOME_SLASHBOT_DIR } from '../../../core/config/constants';
@@ -20,7 +18,6 @@ import {
   type FullHeartbeatConfig,
   type HeartbeatResult,
   type HeartbeatState,
-  type HeartbeatTarget,
   type HeartbeatAction,
   DEFAULT_HEARTBEAT_PROMPT,
   parseDuration,
@@ -38,7 +35,7 @@ export type HeartbeatLLMHandler = (
 
 @injectable()
 export class HeartbeatService {
-  private config: FullHeartbeatConfig = { enabled: true, every: '30m', target: 'cli' };
+  private config: FullHeartbeatConfig = { enabled: true, period: '30m' };
   private state: HeartbeatState = { consecutiveOks: 0, totalRuns: 0, totalAlerts: 0 };
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -46,11 +43,10 @@ export class HeartbeatService {
   private lastTick: Date = new Date();
   private llmHandler: HeartbeatLLMHandler | null = null;
   private grokClient: GrokClient | null = null;
-  private workDir: string = HOME_SLASHBOT_DIR
+  private workDir: string = process.cwd()
 
   constructor(
     @inject(TYPES.EventBus) private eventBus: EventBus,
-    @inject(TYPES.ConnectorRegistry) private connectorRegistry: ConnectorRegistry,
   ) {}
 
   setLLMHandler(handler: HeartbeatLLMHandler): void {
@@ -75,8 +71,11 @@ export class HeartbeatService {
       const file = Bun.file(HEARTBEAT_CONFIG_FILE);
       if (await file.exists()) {
         const data = await file.json();
-        if (data.interval && !data.every) {
-          data.every = data.interval;
+        if (data.interval && !data.every && !data.period) {
+          data.period = data.interval;
+        }
+        if (data.every && !data.period) {
+          data.period = data.every;
         }
         this.config = { ...this.config, ...data };
       }
@@ -156,7 +155,7 @@ export class HeartbeatService {
     }
 
     const now = new Date();
-    const intervalMs = parseDuration(this.config.every || '30m');
+    const intervalMs = parseDuration(this.config.period || '30m');
     const lastRun = this.state.lastRun ? new Date(this.state.lastRun) : null;
 
     if (lastRun) {
@@ -169,20 +168,18 @@ export class HeartbeatService {
     await this.execute();
   }
 
-  async execute(options?: { prompt?: string; target?: HeartbeatTarget }): Promise<HeartbeatResult> {
+  async execute(options?: { prompt?: string }): Promise<HeartbeatResult> {
     if (this.executing) {
       return {
         type: 'ok',
         content: 'Skipped - heartbeat already in progress',
         timestamp: new Date(),
         duration: 0,
-        target: options?.target || this.config.target || 'cli',
       };
     }
 
     this.executing = true;
     const startTime = Date.now();
-    const target = options?.target || this.config.target || 'cli';
 
     this.eventBus.emit({
       type: 'heartbeat:started',
@@ -209,7 +206,6 @@ export class HeartbeatService {
         reasoning: llmResult.thinking,
         timestamp: new Date(),
         duration,
-        target,
         actions: llmResult.actions,
       };
 
@@ -228,10 +224,6 @@ export class HeartbeatService {
 
       await this.displayResult(result);
 
-      if (parsed.type === 'alert' && target !== 'none') {
-        await this.routeAlert(result);
-      }
-
       this.eventBus.emit({
         type: 'heartbeat:complete',
         result,
@@ -245,7 +237,6 @@ export class HeartbeatService {
         content: errorMsg,
         timestamp: new Date(),
         duration,
-        target,
       };
 
       this.state.lastRun = new Date().toISOString();
@@ -309,26 +300,10 @@ export class HeartbeatService {
     }
   }
 
-  private async routeAlert(result: HeartbeatResult): Promise<void> {
-    const target = result.target;
-
-    if (target === 'none') return;
-
-    const alertMessage = `[HEARTBEAT ALERT]\n${result.content}`;
-
-    if (target === 'telegram' || target === 'discord') {
-      display.connector(target, 'send');
-      const notifyResult = await this.connectorRegistry.notify(alertMessage, target);
-      if (notifyResult.sent.length === 0) {
-        display.error(`Failed to send to ${target}`);
-      }
-    }
-  }
-
   getNextHeartbeat(): Date | null {
     if (!this.config.enabled || !this.running) return null;
 
-    const intervalMs = parseDuration(this.config.every || '30m');
+    const intervalMs = parseDuration(this.config.period || '30m');
     const lastRun = this.state.lastRun ? new Date(this.state.lastRun) : new Date();
 
     return new Date(lastRun.getTime() + intervalMs);
@@ -349,7 +324,7 @@ export class HeartbeatService {
     return {
       running: this.running,
       enabled: this.config.enabled ?? true,
-      interval: this.config.every || '30m',
+      interval: this.config.period || '30m',
       nextRun: next ? this.formatRelativeTime(next) : null,
       lastRun: this.state.lastRun ? this.formatRelativeTime(new Date(this.state.lastRun)) : null,
       consecutiveOks: this.state.consecutiveOks,
@@ -400,7 +375,6 @@ export class HeartbeatService {
 
 export function createHeartbeatService(
   eventBus: EventBus,
-  connectorRegistry: ConnectorRegistry,
 ): HeartbeatService {
-  return new HeartbeatService(eventBus, connectorRegistry);
+  return new HeartbeatService(eventBus);
 }

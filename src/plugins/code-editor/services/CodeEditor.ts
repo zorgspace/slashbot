@@ -256,12 +256,11 @@ export class CodeEditor {
       await fsPromises.writeFile(fullPath, newContent, 'utf8');
       this.snapshots.set(fullPath, newContent);
       this.emitEditApplied(filePath, currentContent, newContent);
-      display.successText(`Modified: ${filePath}`);
       return {
         success: true,
         status: 'applied',
         path: filePath,
-        message: `Modified: ${filePath}`,
+        message: `Updated`,
       };
     } catch (error) {
       display.errorText(`Edit error: ${error}`);

@@ -21,7 +21,7 @@ export const FILESYSTEM_PROMPT = [
   '- Copy content from `read_file` output verbatim for `oldString`. Preserve exact indentation.',
   '- If the edit fails with "multiple matches", include more surrounding context in `oldString` to uniquely identify the location.',
   '- For multiple edits to the same file, make separate `edit_file` calls for each change.',
-  '- After editing, run a formatting tool to verify syntax. Fix ALL errors before `end_task`.',
+  '- After editing, run a formatting tool to verify syntax. MANDATORY Fix ALL errors before `end_task`.',
   '- NEVER generate code with syntax errors: unmatched braces, missing semicolons, broken imports, or incomplete statements.',
   '',
   '## write_file — Write complete content to a file',

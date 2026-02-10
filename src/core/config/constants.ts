@@ -302,12 +302,7 @@ export const CONNECTOR_CONFIG = {
 // DEFAULT SKILLS
 // ============================================================================
 
-export const DEFAULT_SKILLS = [
-  {
-    url: 'https://bags.fm/skill.md',
-    name: 'bags',
-  },
-] as const;
+export const DEFAULT_SKILLS: Array<{readonly name:string, readonly url:string}>= [] as const;
 
 // ============================================================================
 // MIME TYPES

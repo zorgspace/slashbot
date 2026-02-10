@@ -48,8 +48,7 @@ export class HeartbeatPlugin implements Plugin {
     if (!context.container.isBound(TYPES.HeartbeatService)) {
       context.container.bind(TYPES.HeartbeatService).toDynamicValue(() => {
         const eventBus = context.container.get<any>(TYPES.EventBus);
-        const connectorRegistry = context.container.get<any>(TYPES.ConnectorRegistry);
-        return createHeartbeatService(eventBus, connectorRegistry);
+        return createHeartbeatService(eventBus);
       }).inSingletonScope();
     }
 
@@ -157,12 +156,32 @@ export class HeartbeatPlugin implements Plugin {
           '- [ ] Review error logs',
           '</heartbeat-update>',
           '```',
+          'Note: HEARTBEAT.md is loaded from the current working directory.',
           '',
           '**Response format during heartbeat:**',
           '- If nothing needs attention: respond with a brief status summary',
           '- If something needs attention: provide a clear alert message',
           '',
           '**Commands:** /heartbeat, /heartbeat status, /heartbeat every 30m, /heartbeat enable/disable',
+          '',
+          '**Alerts:** Use `<notify>` tag in HEARTBEAT.md instructions to route alerts.',
+        ].join('\n'),
+      },
+      {
+        id: 'feature.heartbeat.quick',
+        title: 'Heartbeat Interaction Guide',
+        priority: 145,
+        content: [
+          'Heartbeat is a periodic reflection system for proactive task management.',
+          '',
+          '- **Trigger manually:** <heartbeat/> or /heartbeat now',
+          '- **Set interval:** /heartbeat every 1h',
+          '- **Enable/disable:** /heartbeat enable/disable',
+          '- **Check status:** /heartbeat status',
+          '- **Update checklist:** <heartbeat-update>content</heartbeat-update>',
+          '- **Alerts:** Use `<notify>` tag to route alerts.',
+          '',
+          'Create HEARTBEAT.md in the current working directory for custom checklists.',
         ].join('\n'),
       },
     ];
