@@ -14,8 +14,8 @@ export const helpCommand: CommandHandler = {
   aliases: ['?'],
   group: 'System',
   execute: async (args, context) => {
-    const { TYPES } = require('../../../core/di/types');
-    const { container } = require('../../../core/di/container');
+    const { TYPES } = await import('../../../core/di/types');
+    const { container } = await import('../../../core/di/container');
     const registry = container.get(TYPES.CommandRegistry) as any;
     const commands: Map<string, CommandHandler> = registry.commands;
 

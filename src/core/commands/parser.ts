@@ -8,7 +8,7 @@
 import { display } from '../ui';
 import clipboardy from 'clipboardy';
 import terminalImage from 'terminal-image';
-import { imageBuffer, addImage, getImage } from '../code/imageBuffer';
+import { imageBuffer, addImage, getImage } from '../../plugins/filesystem/services/ImageBuffer';
 
 // Re-export types from registry
 export type { CommandHandler, CommandContext, ConnectorHandle } from './registry';

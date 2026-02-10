@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "launch": [],
+    "shutdown": [],
+    "promptReceived": [],
+    "llmPromptSent": [],
+    "llmResponse": [],
+    "xmlParse": [],
+    "toolStart": [],
+    "toolEnd": [],
+    "say": [],
+    "end": []
+  },
+  "hookTimeoutMs": 10000
+}

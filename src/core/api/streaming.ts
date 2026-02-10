@@ -1,14 +1,16 @@
 /**
- * Streaming - Unified SSE streaming for both CLI and connector modes
+ * Streaming - Unified LLM response via Vercel AI SDK
  */
 
+import { generateText } from 'ai';
 import { display } from '../ui';
-import { cleanXmlTags, cleanSelfDialogue } from '../utils/xml';
-import { getRegisteredTags } from '../utils/tagRegistry';
-import type { ClientContext, StreamOptions, StreamResult } from './types';
+import { cleanXmlTags } from '../utils/xml';
+import type { ClientContext, StreamOptions, StreamResult, ToolCallResult } from './types';
+import { getModelInfo, PROVIDERS } from '../../plugins/providers/models';
 
 /**
- * Stream a response from the API, handling thinking/reasoning and content display.
+ * Get a response from the LLM, handling thinking/reasoning and content display.
+ * Uses Vercel AI SDK's generateText() for provider-agnostic non-streaming calls.
  */
 export async function streamResponse(
   ctx: ClientContext,
@@ -24,24 +26,15 @@ export async function streamResponse(
   }
 
   if (displayStream) {
-    console.log();
+    display.newline();
   }
-
-  const requestBody: Record<string, unknown> = {
-    model: ctx.getModel(),
-    messages: ctx.sessionManager.history,
-    max_tokens: ctx.config.maxTokens,
-    temperature: ctx.config.temperature,
-    stream: true,
-  };
 
   let responseContent = '';
   let thinkingContent = '';
-  let buffer = '';
   let finishReason: string | null = null;
+  const toolCalls: ToolCallResult[] = [];
+  let responseMessages: any[] = [];
   ctx.thinkingActive = true;
-  let firstChunk = true;
-  let thinkingStreamStarted = false;
 
   ctx.abortController = new AbortController();
 
@@ -76,128 +69,159 @@ export async function streamResponse(
   }
 
   try {
-    const requestBodyJson = JSON.stringify(requestBody);
+    // Resolve model via provider registry
+    const providerId = ctx.getProvider();
+    const modelId = ctx.getModel();
+    const model = ctx.providerRegistry.resolveModel(modelId, providerId);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...ctx.authProvider.getHeaders(requestBodyJson),
-    };
-
-    const response = await fetch(ctx.authProvider.getEndpoint(), {
-      method: 'POST',
-      headers,
-      body: requestBodyJson,
-      signal: ctx.abortController.signal,
+    // Build messages for the AI SDK in CoreMessage format
+    const messages: any[] = ctx.sessionManager.history.map(msg => {
+      // Assistant messages with tool calls: reconstruct CoreAssistantMessage
+      if (msg.role === 'assistant' && (msg as any)._toolCalls) {
+        const parts: any[] = [];
+        const text = typeof msg.content === 'string' ? msg.content : '';
+        if (text && text !== '[tool calls]') {
+          parts.push({ type: 'text', text });
+        }
+        for (const tc of (msg as any)._toolCalls) {
+          parts.push({
+            type: 'tool-call',
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: tc.args,
+          });
+        }
+        return { role: 'assistant', content: parts };
+      }
+      // Legacy: _rawAIMessage from older history entries — extract tool calls if possible
+      if ((msg as any)._rawAIMessage) {
+        const raw = (msg as any)._rawAIMessage;
+        // Try to extract tool-call parts from the raw message
+        if (raw.content && Array.isArray(raw.content)) {
+          const hasTool = raw.content.some((p: any) => p.type === 'tool-call');
+          if (hasTool) {
+            return { role: 'assistant', content: raw.content };
+          }
+        }
+        // Fallback: use as plain text
+        return { role: 'assistant', content: typeof msg.content === 'string' ? msg.content : '' };
+      }
+      // Tool-result messages (AI SDK v6: 'output' as { type: 'text', value } not 'result')
+      if (msg.role === 'tool' && (msg as any).toolResults) {
+        return {
+          role: 'tool',
+          content: (msg as any).toolResults.map((tr: any) => ({
+            type: 'tool-result',
+            toolCallId: tr.toolCallId,
+            toolName: tr.toolName,
+            output: { type: 'text', value: String(tr.result) },
+          })),
+        };
+      }
+      // Safety: tool messages without toolResults are invalid for the AI SDK — convert to user role
+      if (msg.role === 'tool') {
+        const content = typeof msg.content === 'string' ? msg.content : '[tool output]';
+        return { role: 'user', content: `<tool-output-summary>${content}</tool-output-summary>` };
+      }
+      if (typeof msg.content === 'string') {
+        return { role: msg.role, content: msg.content };
+      }
+      // Handle multimodal messages - convert to AI SDK format
+      const parts = (msg.content as any[]).map((part: any) => {
+        if (part.type === 'text') {
+          return { type: 'text' as const, text: part.text || '' };
+        }
+        if (part.type === 'image_url' && part.image_url?.url) {
+          return { type: 'image' as const, image: part.image_url.url };
+        }
+        return { type: 'text' as const, text: '' };
+      });
+      return { role: msg.role, content: parts };
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Grok API Error: ${response.status} - ${errorText}`);
+    // Cap maxOutputTokens to the model's actual limit (prevents errors with providers like OpenAI)
+    const modelInfo = getModelInfo(modelId);
+    const providerInfo = PROVIDERS[providerId];
+    const modelMaxOutput = modelInfo?.maxOutputTokens ?? providerInfo?.capabilities.maxOutputTokens;
+    const maxOutputTokens = modelMaxOutput
+      ? Math.min(ctx.config.maxTokens ?? modelMaxOutput, modelMaxOutput)
+      : ctx.config.maxTokens;
+
+    // Reasoning models (like grok-code-fast-1, o3) reject temperature and maxOutputTokens
+    const isReasoning = modelInfo?.reasoning ?? false;
+
+    const generateParams: any = {
+      model,
+      messages,
+      ...(!isReasoning && maxOutputTokens ? { maxOutputTokens } : {}),
+      ...(!isReasoning ? { temperature: ctx.config.temperature } : {}),
+      abortSignal: ctx.abortController.signal,
+    };
+
+    // Pass tools if provided (native AI SDK tool calling)
+    if (options?.tools && Object.keys(options.tools).length > 0) {
+      generateParams.tools = options.tools;
+      // maxSteps=1: we handle the loop ourselves, just get one set of tool calls
+      generateParams.maxSteps = 1;
     }
 
-    if (!response.body) {
-      throw new Error('No response body');
+    const result = await generateText(generateParams);
+
+    // Extract results from the atomic response
+    responseContent = result.text ?? '';
+    thinkingContent = (result as any).reasoning ?? '';
+    finishReason = result.finishReason ?? null;
+
+    // Update token usage
+    if (result.usage) {
+      ctx.usage.promptTokens += result.usage.inputTokens || 0;
+      ctx.usage.completionTokens += result.usage.outputTokens || 0;
+      ctx.usage.totalTokens += (result.usage.inputTokens || 0) + (result.usage.outputTokens || 0);
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+    // Extract tool calls if present
+    if (result.toolCalls && result.toolCalls.length > 0) {
+      for (const tc of result.toolCalls as any[]) {
+        toolCalls.push({
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+          args: (tc.input ?? tc.args ?? {}) as Record<string, unknown>,
+        });
+      }
+    }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    // Capture response messages for history reconstruction
+    if (result.response?.messages) {
+      responseMessages = result.response.messages;
+    }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+    // Notify rawOutputCallback with the full content
+    if (responseContent) {
+      ctx.rawOutputCallback?.(responseContent);
+    }
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
+    // Display thinking content if available
+    if (showThinking && thinkingContent) {
+      display.streamThinkingChunk(thinkingContent);
+    }
 
-        const data = line.slice(6);
-        if (data === '[DONE]') continue;
+    // Stop thinking indicators before displaying content
+    if (ctx.thinkingActive) {
+      display.stopThinking();
+      ctx.thinkingActive = false;
+    }
+    if (showThinking) {
+      display.endThinkingStream();
+    }
 
-        try {
-          const parsed = JSON.parse(data);
-
-          if (ctx.authProvider.onStreamChunk) {
-            ctx.authProvider.onStreamChunk(parsed);
-          }
-
-          const choice = parsed.choices?.[0];
-          const delta = choice?.delta;
-          const content = delta?.content;
-
-          if (choice?.finish_reason) {
-            finishReason = choice.finish_reason;
-          }
-
-          if (parsed.usage) {
-            ctx.usage.promptTokens += parsed.usage.prompt_tokens || 0;
-            ctx.usage.completionTokens += parsed.usage.completion_tokens || 0;
-            ctx.usage.totalTokens += parsed.usage.total_tokens || 0;
-          }
-
-          if (delta?.reasoning_content) {
-            if (!thinkingStreamStarted) {
-              thinkingStreamStarted = true;
-            }
-            thinkingContent += delta.reasoning_content;
-            if (showThinking) {
-              display.streamThinkingChunk(delta.reasoning_content);
-            }
-          }
-
-          if (content) {
-            responseContent += content;
-
-            ctx.rawOutputCallback?.(content);
-
-            if (displayStream) {
-              const tagAlt = getRegisteredTags().join('|');
-              const openTags = (
-                responseContent.match(new RegExp(`<(${tagAlt})\\b[^>]*>`, 'gi')) || []
-              ).length;
-              const closeTags = (
-                responseContent.match(new RegExp(`</(${tagAlt})>|/>`, 'gi')) || []
-              ).length;
-              const hasUnclosedTag = openTags > closeTags;
-              const partialTagMatch = responseContent.match(/<[a-z-]*$/i);
-              const hasPartialTag = partialTagMatch !== null;
-
-              if (!hasUnclosedTag && !hasPartialTag) {
-                let cleanFull = cleanSelfDialogue(cleanXmlTags(responseContent));
-                cleanFull = cleanFull.replace(/^Assistant:\s*/gim, '');
-                const normalized = cleanFull.replace(/\n{3,}/g, '\n\n');
-                const newContent = normalized.slice(ctx.sessionManager.displayedContent.length);
-                if (newContent && newContent.trim()) {
-                  const isDuplicate = ctx.sessionManager.displayedContent.includes(
-                    newContent.trim(),
-                  );
-                  if (!isDuplicate) {
-                    if (firstChunk) {
-                      if (ctx.thinkingActive) {
-                        display.stopThinking();
-                        ctx.thinkingActive = false;
-                      }
-                      if (showThinking) {
-                        display.endThinkingStream();
-                      }
-                      firstChunk = false;
-                    }
-                    ctx.sessionManager.displayedContent = normalized;
-                  }
-                }
-              }
-            } else {
-              if (ctx.thinkingActive) {
-                display.stopThinking();
-                ctx.thinkingActive = false;
-              }
-            }
-          }
-        } catch {
-          // Skip invalid JSON
-        }
+    // Display the full response
+    if (displayStream && responseContent) {
+      let cleaned = cleanXmlTags(responseContent);
+      cleaned = cleaned.replace(/^Assistant:\s*/gim, '');
+      const normalized = cleaned.replace(/\n{3,}/g, '\n\n');
+      if (normalized.trim()) {
+        display.append(normalized);
+        ctx.sessionManager.displayedContent = normalized;
       }
     }
 
@@ -205,8 +229,25 @@ export async function streamResponse(
     const deltaCompletion = ctx.usage.completionTokens - startCompletionTokens;
 
     display.streamThinkingChunk(
-      `🛬 #${callNum} ← ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
+      `\u{1F6EC} #${callNum} \u2190 ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
     );
+  } catch (error: any) {
+    // Re-throw for the agentic loop to handle
+    if (error.name === 'AbortError') {
+      throw error;
+    }
+
+    const msg = error.message || '';
+
+    // Check for token limit errors from various providers
+    if (
+      msg.includes('maximum prompt length') ||
+      msg.includes('context_length_exceeded') ||
+      msg.includes('max_tokens')
+    ) {
+      throw new Error(`maximum prompt length exceeded: ${msg}`);
+    }
+    throw new Error(`LLM API Error: ${msg}`);
   } finally {
     if (fetchTimeout) {
       clearTimeout(fetchTimeout);
@@ -221,9 +262,15 @@ export async function streamResponse(
     ctx.abortController = null;
   }
 
-  if (thinkingContent && !responseContent.trim()) {
-    display.warningText('[Model produced thinking but no response - may need to retry]');
+  if (thinkingContent && !responseContent.trim() && !toolCalls.length) {
+    display.warningText(`[Model produced thinking but no response (finish: ${finishReason}) - may need to retry]`);
   }
 
-  return { content: responseContent, thinking: thinkingContent, finishReason };
+  return {
+    content: responseContent,
+    thinking: thinkingContent,
+    finishReason,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    responseMessages: responseMessages.length > 0 ? responseMessages : undefined,
+  };
 }

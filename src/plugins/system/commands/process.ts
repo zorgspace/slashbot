@@ -11,7 +11,7 @@ export const psCommand: CommandHandler = {
   usage: '/ps',
   group: 'System',
   execute: async () => {
-    const { processManager } = await import('../../../core/utils/processManager');
+    const { processManager } = await import('../../bash/services/ProcessManager');
     const processes = processManager.list();
 
     if (processes.length === 0) {
@@ -46,7 +46,7 @@ export const killCommand: CommandHandler = {
       return true;
     }
 
-    const { processManager } = await import('../../../core/utils/processManager');
+    const { processManager } = await import('../../bash/services/ProcessManager');
     const pid = parseInt(target);
     const success = processManager.kill(isNaN(pid) ? target : pid);
 

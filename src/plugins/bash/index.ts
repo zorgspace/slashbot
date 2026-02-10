@@ -8,12 +8,16 @@ import type {
   PluginContext,
   ActionContribution,
   PromptContribution,
+  ToolContribution,
 } from '../types';
 import type { ActionHandlers } from '../../core/actions/types';
 import { registerActionParser } from '../../core/actions/parser';
 import { executeBash, executeExec } from './executors';
 import { getBashParserConfigs } from './parser';
 import { BASH_PROMPT } from './prompt';
+import { getBashToolContributions } from './tools';
+import { processManager } from './services/ProcessManager';
+import { TYPES } from '../../core/di/types';
 
 export class BashPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -28,6 +32,10 @@ export class BashPlugin implements Plugin {
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
+
+    // Self-register ProcessManager in DI
+    context.container.bind(TYPES.ProcessManager).toConstantValue(processManager);
+
     for (const config of getBashParserConfigs()) {
       registerActionParser(config);
     }
@@ -58,7 +66,7 @@ export class BashPlugin implements Plugin {
 
       // Background execution
       if (options?.runInBackground) {
-        const { processManager } = await import('../../core/utils/processManager');
+        const { processManager } = await import('./services/ProcessManager');
         const managed = processManager.spawn(command, workDir);
         await new Promise(resolve => setTimeout(resolve, 1500));
         const output = processManager.getOutput(managed.id, 10);
@@ -168,6 +176,10 @@ export class BashPlugin implements Plugin {
         execute: executeExec,
       },
     ];
+  }
+
+  getToolContributions(): ToolContribution[] {
+    return getBashToolContributions();
   }
 
   getPromptContributions(): PromptContribution[] {

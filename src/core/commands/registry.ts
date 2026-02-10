@@ -23,11 +23,11 @@ export interface ConnectorHandle {
 }
 
 import type { GrokClient } from '../api';
-import type { TaskScheduler } from '../scheduler/scheduler';
-import type { SecureFileSystem } from '../services/filesystem';
+import type { TaskScheduler } from '../../plugins/scheduling/services/TaskScheduler';
+import type { SecureFileSystem } from '../../plugins/filesystem/services/SecureFileSystem';
 import type { ConfigManager } from '../config/config';
-import type { CodeEditor } from '../code/editor';
-import type { TUIApp } from '../ui/TUIApp';
+import type { CodeEditor } from '../../plugins/code-editor/services/CodeEditor';
+import type { TUIApp } from '../../plugins/tui/TUIApp';
 import type { Interface as ReadlineInterface } from 'readline';
 
 export interface CommandContext {

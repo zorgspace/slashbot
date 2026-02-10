@@ -11,11 +11,17 @@ import type {
   PluginContext,
   ActionContribution,
   PromptContribution,
+  ToolContribution,
 } from '../types';
 import { registerActionParser } from '../../core/actions/parser';
 import { executeRead, executeEdit, executeWrite, executeCreate } from './executors';
 import { getFilesystemParserConfigs } from './parser';
 import { FILESYSTEM_PROMPT } from './prompt';
+import { getFilesystemToolContributions } from './tools';
+import { createFileSystem } from './services/SecureFileSystem';
+import { TYPES } from '../../core/di/types';
+import type { EventBus } from '../../core/events/EventBus';
+import type { CodeEditor } from '../code-editor/services/CodeEditor';
 
 export class FilesystemPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -30,15 +36,19 @@ export class FilesystemPlugin implements Plugin {
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
+
+    // Self-register SecureFileSystem in DI
+    const fileSystem = createFileSystem(context.workDir);
+    context.container.bind(TYPES.FileSystem).toConstantValue(fileSystem);
+
     for (const config of getFilesystemParserConfigs()) {
       registerActionParser(config);
     }
 
     // Wire EventBus into CodeEditor for edit:applied events
     try {
-      const { TYPES } = require('../../core/di/types');
-      const codeEditor = context.container.get<any>(TYPES.CodeEditor);
-      const eventBus = context.container.get<any>(TYPES.EventBus);
+      const codeEditor = context.container.get<CodeEditor>(TYPES.CodeEditor);
+      const eventBus = context.container.get<EventBus>(TYPES.EventBus);
       codeEditor.setEventBus(eventBus);
     } catch {
       // EventBus or CodeEditor not yet bound
@@ -81,6 +91,7 @@ export class FilesystemPlugin implements Plugin {
       blocks?: import('./types').SearchReplaceBlock[],
     ) => {
       const codeEditor = getCodeEditor();
+      // CodeEditor emits 'edit:applied' with full diff data via its own EventBus
       return await codeEditor.applyMergeEdit(path, mode, content, blocks);
     };
 
@@ -121,6 +132,10 @@ export class FilesystemPlugin implements Plugin {
         execute: (action, handlers) => executeCreate(action as any, handlers),
       },
     ];
+  }
+
+  getToolContributions(): ToolContribution[] {
+    return getFilesystemToolContributions();
   }
 
   getPromptContributions(): PromptContribution[] {

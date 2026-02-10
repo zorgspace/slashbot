@@ -8,6 +8,7 @@ import type {
   PluginContext,
   ActionContribution,
   PromptContribution,
+  ToolContribution,
 } from '../types';
 import type { CommandHandler } from '../../core/commands/registry';
 import { registerActionParser } from '../../core/actions/parser';
@@ -15,6 +16,9 @@ import { executeGlob, executeGrep, executeLS } from './executors';
 import { getCodeEditorParserConfigs } from './parser';
 import { codeEditorCommands } from './commands';
 import { CODE_EDITOR_PROMPT } from './prompt';
+import { getCodeEditorToolContributions } from './tools';
+import { createCodeEditor } from './services/CodeEditor';
+import { TYPES } from '../../core/di/types';
 
 export class CodeEditorPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -29,6 +33,14 @@ export class CodeEditorPlugin implements Plugin {
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
+
+    // Self-register CodeEditor in DI
+    const codeEditor = createCodeEditor(context.workDir);
+    if (context.eventBus) {
+      codeEditor.setEventBus(context.eventBus as any);
+    }
+    context.container.bind(TYPES.CodeEditor).toConstantValue(codeEditor);
+
     for (const config of getCodeEditorParserConfigs()) {
       registerActionParser(config);
     }
@@ -113,6 +125,10 @@ export class CodeEditorPlugin implements Plugin {
         execute: executeLS,
       },
     ];
+  }
+
+  getToolContributions(): ToolContribution[] {
+    return getCodeEditorToolContributions();
   }
 
   getCommandContributions(): CommandHandler[] {

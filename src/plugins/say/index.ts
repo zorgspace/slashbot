@@ -8,10 +8,12 @@ import type {
   PluginContext,
   ActionContribution,
   PromptContribution,
+  ToolContribution,
 } from '../types';
 import { registerActionParser } from '../../core/actions/parser';
 import { executeSay, executeEnd } from './executors';
 import { getSayParserConfigs } from './parser';
+import { getSayToolContributions } from './tools';
 
 export class SayPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -51,23 +53,27 @@ export class SayPlugin implements Plugin {
     ];
   }
 
+  getToolContributions(): ToolContribution[] {
+    return getSayToolContributions();
+  }
+
   getPromptContributions(): PromptContribution[] {
     return [
       {
         id: 'core.say.tools',
-        title: 'Say - Communicate with User',
+        title: 'Communication Tools',
         priority: 80,
         content: [
-          '```',
-          '<say>Your message to the user here</say>',
-          '```',
-          '- Use `<say>` for mid-task communication: progress updates, questions, interim findings like important discoveries or insights.',
-          '- Use `<end>` for the FINAL message when the task is complete. This will stop the agentic loop and return to the user the message.',
-          '```',
-          '<end>Your final summary here</end>',
-          '```',
-          '- IMPORTANT: `<end>` stops the agentic loop. Only use it when the task is FULLY verified and done.',
+          '## say_message — Mid-task communication',
+          '- Use for progress updates, questions, interim findings, or important discoveries.',
           '- Keep messages short (1-3 sentences). Never dump code or full file contents.',
+          '',
+          '## end_task — Signal task completion',
+          '- Use ONLY when the task is FULLY verified and done.',
+          '- IMPORTANT: `end_task` stops the agentic loop. All work must be verified before calling it.',
+          '',
+          '## continue_task — Reset iteration counter',
+          '- Use for long-running tasks that need more iterations.',
         ].join('\n'),
       },
     ];

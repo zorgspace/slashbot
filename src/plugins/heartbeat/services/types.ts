@@ -23,7 +23,7 @@ export type HeartbeatTarget = 'cli' | 'telegram' | 'discord' | 'all' | 'none';
  * Per-connector heartbeat visibility settings
  */
 export interface HeartbeatVisibility {
-  showOk?: boolean; // Show HEARTBEAT_OK acknowledgments (default: false)
+  showOk?: boolean; // Show OK acknowledgments (default: false)
   showAlerts?: boolean; // Show alert content (default: true)
   useIndicator?: boolean; // Emit indicator events for UI (default: true)
 }
@@ -38,7 +38,7 @@ export interface HeartbeatConfig {
   prompt?: string; // Custom heartbeat instruction
   model?: string; // Optional model override for heartbeat runs
   activeHours?: ActiveHours; // Restrict to certain hours
-  ackMaxChars?: number; // Max chars after HEARTBEAT_OK before suppressing (default: 300)
+  ackMaxChars?: number; // Max chars after OK before suppressing (default: 300)
   visibility?: HeartbeatVisibility; // Visibility settings
   includeReasoning?: boolean; // Include reasoning in output (default: false)
 }
@@ -64,7 +64,7 @@ export type HeartbeatResponseType = 'ok' | 'alert' | 'error';
  */
 export interface HeartbeatResult {
   type: HeartbeatResponseType;
-  content: string; // The agent's response (stripped of HEARTBEAT_OK if present)
+  content: string; // The agent's response
   reasoning?: string; // Thinking/reasoning if available
   timestamp: Date;
   duration: number; // Execution time in ms
@@ -104,9 +104,6 @@ You are receiving a scheduled heartbeat. This is your opportunity to:
 3. Take proactive actions if needed (notifications, file updates, etc.)
 
 RESPONSE RULES:
-- If nothing needs attention, respond with EXACTLY: HEARTBEAT_OK
-- You may add a brief status note after HEARTBEAT_OK (max 300 chars)
-- If something needs attention, provide a clear alert message (no HEARTBEAT_OK)
 - Do NOT infer or repeat tasks from prior conversations
 - Do NOT take destructive actions without explicit prior instructions
 - Focus on surfacing important items, not routine status updates
@@ -212,30 +209,12 @@ export function isWithinActiveHours(activeHours?: ActiveHours | string): boolean
 }
 
 /**
- * Extract HEARTBEAT_OK from response and determine response type
+ * Determine heartbeat response type
  */
 export function parseHeartbeatResponse(
   response: string,
-  ackMaxChars: number = 300,
+  _ackMaxChars: number = 300,
 ): { type: HeartbeatResponseType; content: string } {
   const trimmed = response.trim();
-  const okPattern = /^HEARTBEAT_OK\s*|HEARTBEAT_OK\s*$/i;
-
-  // Check if response starts or ends with HEARTBEAT_OK
-  if (okPattern.test(trimmed)) {
-    const content = trimmed.replace(/HEARTBEAT_OK/gi, '').trim();
-
-    // If remaining content is short enough, treat as OK
-    if (content.length <= ackMaxChars) {
-      return { type: 'ok', content };
-    }
-  }
-
-  // Check for HEARTBEAT_OK in the middle (treated as regular text)
-  if (/HEARTBEAT_OK/i.test(trimmed)) {
-    return { type: 'alert', content: trimmed };
-  }
-
-  // No HEARTBEAT_OK found - this is an alert
   return { type: 'alert', content: trimmed };
 }

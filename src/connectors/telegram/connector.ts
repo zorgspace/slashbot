@@ -12,8 +12,8 @@
 import { Telegraf } from 'telegraf';
 import { display } from '../../core/ui';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from '../base';
-import { getTranscriptionService } from '../../core/services/transcription';
-import { imageBuffer } from '../../core/code/imageBuffer';
+import { getTranscriptionService } from '../../plugins/transcription/services/TranscriptionService';
+import { imageBuffer } from '../../plugins/filesystem/services/ImageBuffer';
 import { acquireLock, releaseLock } from '../locks';
 import type { EventBus } from '../../core/events/EventBus';
 

@@ -87,7 +87,16 @@ export async function handleCliArgs(version: string): Promise<boolean> {
 
     const apiKey = args[1];
     if (apiKey) {
+      // Auto-detect provider from key prefix
+      let provider = 'xai';
+      if (apiKey.startsWith('sk-ant-')) provider = 'anthropic';
+      else if (apiKey.startsWith('sk-') && !apiKey.startsWith('sk-ant-')) provider = 'openai';
+      else if (apiKey.startsWith('xai-')) provider = 'xai';
+      else if (apiKey.startsWith('AIza')) provider = 'google';
+
       await configManager.saveApiKey(apiKey);
+      await configManager.saveProviderCredentials(provider, { apiKey });
+      await configManager.saveConfig({ provider });
       display.successText('API key saved!');
       display.muted('Run slashbot to start.');
     } else {

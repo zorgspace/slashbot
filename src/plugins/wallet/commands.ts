@@ -4,7 +4,7 @@
  */
 
 import type { CommandHandler, CommandContext } from '../../core/commands/registry';
-import type { TUIApp } from '../../core/ui/TUIApp';
+import type { TUIApp } from '../tui/TUIApp';
 import { PROXY_CONFIG } from '../../core/config/constants';
 import { display } from '../../core/ui';
 import { container } from '../../core/di/container';

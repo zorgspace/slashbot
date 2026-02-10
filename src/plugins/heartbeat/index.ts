@@ -159,7 +159,7 @@ export class HeartbeatPlugin implements Plugin {
           '```',
           '',
           '**Response format during heartbeat:**',
-          '- If nothing needs attention: respond with EXACTLY "HEARTBEAT_OK"',
+          '- If nothing needs attention: respond with a brief status summary',
           '- If something needs attention: provide a clear alert message',
           '',
           '**Commands:** /heartbeat, /heartbeat status, /heartbeat every 30m, /heartbeat enable/disable',

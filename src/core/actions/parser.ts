@@ -1,5 +1,5 @@
 import type { Action } from './types';
-import { registerActionTags } from '../utils/tagRegistry';
+import { registerActionTags, unregisterActionTags } from '../utils/tagRegistry';
 
 export type ParserUtils = {
   extractAttr: (tag: string, attr: string) => string | undefined;
@@ -28,6 +28,24 @@ export function registerActionParser(config: ActionParserConfig): void {
 
 export function clearActionParsers(): void {
   actionParsers = [];
+}
+
+/**
+ * Remove all parsers whose tags overlap with the given set.
+ * Also unregisters those tags from the tag registry.
+ */
+export function unregisterActionParsersForTags(tags: string[]): void {
+  const tagSet = new Set(tags);
+  const removed: string[] = [];
+  actionParsers = actionParsers.filter(p => {
+    const overlaps = p.tags.some(t => tagSet.has(t));
+    if (overlaps) {
+      removed.push(...p.tags);
+      if (p.selfClosingTags) removed.push(...p.selfClosingTags);
+    }
+    return !overlaps;
+  });
+  unregisterActionTags(removed);
 }
 
 export function parseActions(content: string): Action[] {

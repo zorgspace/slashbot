@@ -8,6 +8,8 @@
 import type { Plugin } from './types';
 
 // Core plugins
+import { CorePromptPlugin } from './core-prompt';
+import { ProvidersPlugin } from './providers';
 import { BashPlugin } from './bash';
 import { SayPlugin } from './say';
 import { FilesystemPlugin } from './filesystem';
@@ -15,6 +17,7 @@ import { CodeEditorPlugin } from './code-editor';
 import { WebPlugin } from './web';
 import { SystemPlugin } from './system';
 import { SessionPlugin } from './session';
+import { TUIPlugin } from './tui';
 
 // Feature plugins
 import { ExplorePlugin } from './explore';
@@ -23,6 +26,12 @@ import { SkillsPlugin } from './skills';
 import { SchedulingPlugin } from './scheduling';
 import { HeartbeatPlugin } from './heartbeat';
 import { WalletPlugin } from './wallet';
+import { TodoPlugin } from './todo';
+import { QuestionPlugin } from './question';
+import { GitPlugin } from './git';
+import { SubagentPlugin } from './subagent';
+import { MCPPlugin } from './mcp';
+import { TranscriptionPlugin } from './transcription';
 
 // Connector plugins
 import { TelegramPlugin } from '../connectors/telegram';
@@ -34,6 +43,8 @@ import { DiscordPlugin } from '../connectors/discord';
 export function loadBuiltinPlugins(): Plugin[] {
   return [
     // Core (always loaded, no deps)
+    new CorePromptPlugin(),
+    new ProvidersPlugin(),
     new BashPlugin(),
     new SayPlugin(),
     new FilesystemPlugin(),
@@ -41,6 +52,7 @@ export function loadBuiltinPlugins(): Plugin[] {
     new WebPlugin(),
     new SystemPlugin(),
     new SessionPlugin(),
+    new TUIPlugin(),
 
     // Features
     new ExplorePlugin(),
@@ -49,6 +61,12 @@ export function loadBuiltinPlugins(): Plugin[] {
     new SchedulingPlugin(),
     new HeartbeatPlugin(),
     new WalletPlugin(),
+    new TodoPlugin(),
+    new QuestionPlugin(),
+    new GitPlugin(),
+    new SubagentPlugin(),
+    new MCPPlugin(),
+    new TranscriptionPlugin(),
 
     // Connectors
     new TelegramPlugin(),

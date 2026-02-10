@@ -1,6 +1,7 @@
 import type { ActionParserConfig, ParserUtils } from '../../core/actions/parser';
 import { extractAttr, extractBoolAttr } from '../../core/actions/parser';
 import type { Action } from '../../core/actions/types';
+import { display } from '../../core/ui';
 
 // Quote pattern: matches both single and double quotes
 const Q = `["']`;
@@ -9,6 +10,52 @@ const NQR = `[^"']+`;
 /** Decode HTML entities that LLM APIs may produce inside XML tag content */
 function decodeEntities(s: string): string {
   return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+/**
+ * Detect if edit/write content is corrupted with raw LLM action tags.
+ * This happens when the LLM malfunctions and dumps its own action syntax
+ * (edit tags, end tags, search/replace blocks) as literal file content.
+ *
+ * Returns a reason string if corrupted, or null if clean.
+ */
+function detectContentCorruption(content: string, targetPath: string): string | null {
+  // Signal 1: Nested edit tag targeting the same file — the LLM is recursively
+  // emitting edit instructions inside its own edit content.
+  const escaped = targetPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (new RegExp(`<edit\\s+path\\s*=\\s*["']${escaped}["']`, 'i').test(content)) {
+    return `nested <edit> targeting same file "${targetPath}"`;
+  }
+
+  // Signal 2: Multiple nested edit tags (3+) — retry/hallucination loop.
+  const nestedEditCount = (content.match(/<edit\s+path\s*=/gi) || []).length;
+  if (nestedEditCount >= 3) {
+    return `${nestedEditCount} nested <edit> tags detected`;
+  }
+
+  // Signal 3: Slashbot control tags that are never valid file content.
+  // Count distinct action tag patterns; 3+ different ones = corruption.
+  const corruptionSignals = [
+    /<edit\s+path\s*=/i,
+    /<\/edit>/i,
+    /<end>/i,
+    /<\/end>/i,
+    /<bash>/i,
+    /<\/bash>/i,
+    /<say>/i,
+    /<\/say>/i,
+    /<write\s+path\s*=/i,
+    /<\/write>/i,
+  ];
+  let signalCount = 0;
+  for (const pattern of corruptionSignals) {
+    if (pattern.test(content)) signalCount++;
+  }
+  if (signalCount >= 3) {
+    return `${signalCount} different action tag patterns in content`;
+  }
+
+  return null;
 }
 
 /**
@@ -46,8 +93,8 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
   return [
     // Read action (post-strip)
     {
-      tags: ['read'],
-      selfClosingTags: ['read'],
+      tags: ['read', 'read_file'],
+      selfClosingTags: ['read', 'read_file'],
       protectedTags: ['edit'],
       parse(content, { extractAttr }): Action[] {
         const actions: Action[] = [];
@@ -74,9 +121,9 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
     // preStrip: content-bearing tag — parsed first, then stripped so inner tags
     // (e.g. <bash> inside edit content) are not executed as actions.
     {
-      tags: ['edit'],
+      tags: ['edit', 'edit_file'],
       preStrip: true,
-      protectedTags: ['edit'],
+      protectedTags: ['edit', 'edit_file'],
       fixups(content: string): string {
         let result = content;
 
@@ -97,6 +144,13 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         while ((outerMatch = outerRegex.exec(content)) !== null) {
           const path = outerMatch[1];
           const innerContent = decodeEntities(outerMatch[2]);
+
+          // Reject edits whose content is corrupted with raw action tags
+          const corruption = detectContentCorruption(innerContent, path);
+          if (corruption) {
+            display.errorText(`Rejected corrupted edit for ${path}: ${corruption}`);
+            continue;
+          }
 
           const mode = detectEditMode(innerContent);
 
@@ -158,7 +212,7 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
     },
     // Write action (pre-strip to preserve code blocks inside write tags)
     {
-      tags: ['write'],
+      tags: ['write', 'write_file'],
       preStrip: true,
       parse(content, { extractAttr: _extractAttr }): Action[] {
         const actions: Action[] = [];
@@ -166,10 +220,16 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         let match;
         while ((match = regex.exec(content)) !== null) {
           const [, path, fileContent] = match;
+          const decoded = decodeEntities(fileContent.trim());
+          const corruption = detectContentCorruption(decoded, path);
+          if (corruption) {
+            display.errorText(`Rejected corrupted write for ${path}: ${corruption}`);
+            continue;
+          }
           actions.push({
             type: 'write',
             path,
-            content: decodeEntities(fileContent.trim()),
+            content: decoded,
           } as Action);
         }
         return actions;
@@ -188,10 +248,16 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         let match;
         while ((match = regex.exec(content)) !== null) {
           const [, path, fileContent] = match;
+          const decoded = decodeEntities(fileContent.trim());
+          const corruption = detectContentCorruption(decoded, path);
+          if (corruption) {
+            display.errorText(`Rejected corrupted create for ${path}: ${corruption}`);
+            continue;
+          }
           actions.push({
             type: 'create',
             path,
-            content: decodeEntities(fileContent.trim()),
+            content: decoded,
           } as Action);
         }
         return actions;

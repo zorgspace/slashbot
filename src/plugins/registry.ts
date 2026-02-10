@@ -11,6 +11,7 @@ import type {
   ContextProvider,
   EventSubscription,
   SidebarContribution,
+  ToolContribution,
 } from './types';
 import type { CommandHandler } from '../core/commands/registry';
 
@@ -212,6 +213,19 @@ export class PluginRegistry {
       contributions.push(...sidebar);
     }
     return contributions.sort((a, b) => a.order - b.order);
+  }
+
+  /**
+   * Collect all tool contributions from initialized plugins
+   */
+  getToolContributions(): ToolContribution[] {
+    const contributions: ToolContribution[] = [];
+    for (const [id, plugin] of this.plugins) {
+      if (!this.initialized.has(id)) continue;
+      const tools = plugin.getToolContributions?.() || [];
+      contributions.push(...tools);
+    }
+    return contributions;
   }
 
   /**

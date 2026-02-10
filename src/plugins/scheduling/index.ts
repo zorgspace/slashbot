@@ -14,6 +14,8 @@ import { registerActionParser } from '../../core/actions/parser';
 import { executeSchedule, executeNotify } from './executors';
 import { getSchedulingParserConfigs } from './parser';
 import { schedulingCommands } from './commands';
+import { createScheduler } from './services/TaskScheduler';
+import { TYPES } from '../../core/di/types';
 
 export class SchedulingPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -28,6 +30,19 @@ export class SchedulingPlugin implements Plugin {
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
+
+    // Self-register TaskScheduler in DI
+    const scheduler = createScheduler();
+    context.container.bind(TYPES.TaskScheduler).toConstantValue(scheduler);
+
+    // Wire EventBus
+    try {
+      const eventBus = context.container.get<any>(TYPES.EventBus);
+      scheduler.setEventBus(eventBus);
+    } catch {
+      // EventBus not yet bound
+    }
+
     for (const config of getSchedulingParserConfigs()) {
       registerActionParser(config);
     }

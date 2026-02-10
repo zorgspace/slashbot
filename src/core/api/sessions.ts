@@ -127,10 +127,17 @@ export class SessionManager {
 
     if (messages.length <= this.maxContextMessages) return;
 
-    const recentMessages = messages.slice(-this.maxContextMessages);
+    // Find a safe cut point that doesn't split assistant+tool pairs
+    let cutIdx = messages.length - this.maxContextMessages;
+    // If the message at the cut point is a tool-result, include its preceding assistant message
+    if (cutIdx > 0 && messages[cutIdx]?.role === 'tool') {
+      cutIdx--;
+    }
+
+    const recentMessages = messages.slice(cutIdx);
     this.history = [systemPrompt, ...recentMessages];
 
-    display.muted(`[Context] Compressed: ${messages.length} → ${recentMessages.length} messages`);
+    display.muted(`[Context] Compressed: ${messages.length} \u2192 ${recentMessages.length} messages`);
   }
 
   condenseHistory(): string {
@@ -152,11 +159,19 @@ export class SessionManager {
           userMessages.push(content.split('\n')[0]);
         }
       } else if (msg.role === 'assistant') {
-        const actionMatches = (msg.content as string).match(
+        const contentStr = typeof msg.content === 'string' ? msg.content : '';
+        // Extract XML action tags
+        const actionMatches = contentStr.match(
           /<(bash|read|edit|write|grep|explore)\b[^>]*>/g,
         );
         if (actionMatches) {
           actions.push(...actionMatches.slice(0, 3));
+        }
+      } else if (msg.role === 'tool') {
+        // Extract tool names from tool-result messages
+        const toolResults = (msg as any).toolResults as Array<{ toolName: string }> | undefined;
+        if (toolResults) {
+          actions.push(...toolResults.map(r => r.toolName).slice(0, 3));
         }
       }
     }
@@ -180,7 +195,146 @@ export class SessionManager {
   }
 
   estimateTokens(): number {
-    return Math.ceil(this.history.reduce((sum, m) => sum + m.content.length, 0) / 4);
+    return Math.ceil(
+      this.history.reduce((sum, m) => {
+        if (typeof m.content === 'string') return sum + m.content.length;
+        if (Array.isArray(m.content)) {
+          return sum + m.content.reduce((s: number, p: any) => s + (p.text?.length || 100), 0);
+        }
+        // Estimate tokens for tool-result messages
+        const toolResults = (m as any).toolResults;
+        if (toolResults && Array.isArray(toolResults)) {
+          return sum + toolResults.reduce((s: number, r: any) => s + (r.result?.length || 50), 0);
+        }
+        return sum;
+      }, 0) / 4,
+    );
+  }
+
+  // ===== LLM-Powered Compaction =====
+
+  /**
+   * Check if compaction is needed based on token estimate vs model limit
+   */
+  needsCompaction(modelMaxTokens: number = 256000, thresholdRatio: number = 0.8): boolean {
+    const tokens = this.estimateTokens();
+    return tokens > modelMaxTokens * thresholdRatio;
+  }
+
+  /**
+   * Prune old tool outputs from history, keeping recent ones intact.
+   * Handles both XML action-output messages and native tool-result messages.
+   */
+  pruneOldToolOutputs(protectLastN: number = 10): void {
+    const systemPrompt = this.history[0];
+    const messages = this.history.slice(1);
+
+    // Count prunable messages (action-output XML and tool-result messages)
+    const isToolOutput = (m: Message) =>
+      (typeof m.content === 'string' && m.content.includes('<action-output>')) ||
+      m.role === 'tool';
+    const totalToolOutputs = messages.filter(isToolOutput).length;
+
+    // Track which indices are being pruned (tool messages converted to user)
+    const prunedToolIndices = new Set<number>();
+    let toolOutputCount = 0;
+    const pruned = messages.map((m, idx) => {
+      if (!isToolOutput(m)) return m;
+
+      toolOutputCount++;
+      // Protect last N tool outputs
+      if (totalToolOutputs - toolOutputCount < protectLastN) {
+        return m;
+      }
+
+      // Prune: for tool messages, convert to user role with compact summary
+      // (AI SDK requires tool messages to have structured toolResults, not plain strings)
+      if (m.role === 'tool') {
+        prunedToolIndices.add(idx);
+        const toolResults = (m as any).toolResults as Array<{ toolName: string; result: string }> | undefined;
+        const summary = toolResults
+          ? `[${toolResults.length} tool results: ${toolResults.map(r => r.toolName).join(', ')}]`
+          : '[pruned tool results]';
+        return { role: 'user' as const, content: `<tool-output-summary>${summary}</tool-output-summary>` };
+      }
+
+      // XML action-output pruning
+      const content = typeof m.content === 'string' ? m.content : '';
+      const actionMatches = content.match(/\[[\u2713\u2717]\]\s*\w+:/g) || [];
+      const summary = actionMatches.length > 0
+        ? `<action-output>[${actionMatches.length} actions: ${actionMatches.slice(0, 3).join(', ')}...]</action-output>`
+        : '<action-output>[pruned]</action-output>';
+      return { ...m, content: summary };
+    });
+
+    // Strip _toolCalls/_rawAIMessage from assistant messages whose tool-result was pruned
+    for (const idx of prunedToolIndices) {
+      if (idx > 0 && pruned[idx - 1]?.role === 'assistant') {
+        const prev = pruned[idx - 1] as any;
+        delete prev._toolCalls;
+        delete prev._rawAIMessage;
+      }
+    }
+
+    this.history = [systemPrompt, ...pruned];
+    const prunedCount = Math.max(0, totalToolOutputs - protectLastN);
+    if (prunedCount > 0) {
+      display.muted(`[Compaction] Pruned ${prunedCount} old tool outputs`);
+    }
+  }
+
+  /**
+   * Perform full compaction: prune + replace old history with summary.
+   * The summary is a structured condensation of the conversation.
+   */
+  compact(summary: string): void {
+    const systemPrompt = this.history[0];
+    const recentCount = 20;
+    const messages = this.history.slice(1);
+
+    // Keep recent messages intact
+    const recentMessages = messages.slice(-recentCount);
+
+    // Replace old history with the LLM-generated summary
+    this.history = [
+      systemPrompt,
+      {
+        role: 'user' as const,
+        content: `<session-summary>\nThe following is a summary of the conversation so far:\n\n${summary}\n\nContinue from this point. The recent messages below provide current context.\n</session-summary>`,
+      },
+      ...recentMessages,
+    ];
+
+    display.muted(
+      `[Compaction] Compressed ${messages.length} messages → 1 summary + ${recentMessages.length} recent`,
+    );
+  }
+
+  /**
+   * Build a compaction prompt from current history for the LLM to summarize
+   */
+  buildCompactionPrompt(): string {
+    const messages = this.history.slice(1);
+    const oldMessages = messages.slice(0, -20);
+
+    if (oldMessages.length === 0) return '';
+
+    let prompt = 'Summarize the following conversation concisely. Focus on:\n';
+    prompt += '1. What the user requested\n';
+    prompt += '2. What actions were taken and their results\n';
+    prompt += '3. What files were read/modified\n';
+    prompt += '4. Any unresolved issues or pending work\n\n';
+    prompt += 'Conversation to summarize:\n\n';
+
+    for (const msg of oldMessages) {
+      const role = msg.role.toUpperCase();
+      const content = typeof msg.content === 'string'
+        ? msg.content.slice(0, 500)
+        : '[multimodal content]';
+      prompt += `${role}: ${content}\n\n`;
+    }
+
+    return prompt;
   }
 
   // ===== System prompt rebuild =====
