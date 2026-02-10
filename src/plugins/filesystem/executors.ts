@@ -112,26 +112,22 @@ export async function executeEdit(
 
   display.update(action.path);
 
-  const result = await handlers.onEdit(action.path, action.mode, action.content, action.blocks);
+  const result = await handlers.onEdit(action.path, action.oldString, action.newString, action.replaceAll);
 
   if (result.status === 'applied') {
     display.updateResult(true, 0, 0);
   } else if (result.status === 'already_applied') {
     display.success('Already applied (skipped)');
-  } else if (result.status === 'conflict') {
-    display.updateResult(true, 0, 0);
-    const conflictCount = result.conflicts?.length || 0;
-    display.warning(`Applied with ${conflictCount} conflict(s) — LLM version used for conflicts`);
   } else if (result.status === 'not_found') {
     display.updateResult(false, 0, 0);
     display.error(
       result.message?.includes('File not found')
-        ? `File not found: ${action.path}. Use <read> to check if file exists, or <write> to make a new file.`
+        ? `File not found: ${action.path}. Use read_file to check if file exists, or write_file to make a new file.`
         : `${result.message}`,
     );
   } else if (result.status === 'no_match') {
     display.updateResult(false, 0, 0);
-    display.error(`Search block not found in ${action.path} — re-read and retry.`);
+    display.error(`Search string not found in ${action.path} — re-read and retry.`);
   } else {
     display.updateResult(false, 0, 0);
   }
@@ -140,8 +136,8 @@ export async function executeEdit(
   if (!result.success) {
     if (result.status === 'not_found') {
       errorMsg = result.message?.includes('File not found')
-        ? `${result.message} - Use <read> to verify path or <write> to make new file`
-        : `${result.message} - Use <read path="${action.path}"/> first to see actual content`;
+        ? `${result.message} - Use read_file to verify path or write_file to make new file`
+        : `${result.message} - Use read_file("${action.path}") first to see actual content`;
     } else if (result.status === 'no_match') {
       errorMsg = `${result.message}`;
     }

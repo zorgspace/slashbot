@@ -76,9 +76,9 @@ export interface StreamResult {
   content: string;
   thinking: string;
   finishReason: string | null;
-  /** Tool calls from native AI SDK tool calling (when tools are enabled) */
-  toolCalls?: ToolCallResult[];
-  /** Full response messages including assistant + tool-call parts (for history reconstruction) */
+  /** Whether the model made tool calls that were executed via AI SDK execute callbacks */
+  hasToolCalls: boolean;
+  /** Full response messages from AI SDK (assistant + tool-result pairs) for history reconstruction */
   responseMessages?: any[];
 }
 

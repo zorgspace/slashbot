@@ -2,355 +2,495 @@
  * Cascading replacer system for search/replace edits.
  * Ported from OpenCode's battle-tested 9-strategy approach.
  *
- * Each replacer is a generator that yields candidate replacements
- * from strictest (exact match) to most lenient (context-aware fuzzy).
+ * Each replacer is a generator that yields **candidate found substrings**
+ * (not the whole file). The replace() function then verifies uniqueness
+ * via indexOf/lastIndexOf before substituting.
+ *
+ * Replacers are tried from strictest (exact match) to most lenient.
  * The first successful match wins.
  */
 
-// ── Result types ────────────────────────────────────────────────
+// ── Replacer type ───────────────────────────────────────────────
 
-export interface ReplaceResult {
-  ok: true;
-  content: string;
-  strategy: string;
-}
-
-export interface ReplaceFailure {
-  ok: false;
-  message: string;
-}
+type Replacer = (content: string, find: string) => Generator<string, void, unknown>;
 
 // ── Levenshtein distance ────────────────────────────────────────
 
-export function levenshtein(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-
-  let prev = new Array<number>(n + 1);
-  let curr = new Array<number>(n + 1);
-
-  for (let j = 0; j <= n; j++) prev[j] = j;
-
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    [prev, curr] = [curr, prev];
+function levenshtein(a: string, b: string): number {
+  if (a === '' || b === '') {
+    return Math.max(a.length, b.length);
   }
+  const matrix = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
 
-  return prev[n];
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost,
+      );
+    }
+  }
+  return matrix[a.length][b.length];
 }
 
-function similarity(a: string, b: string): number {
-  const maxLen = Math.max(a.length, b.length);
-  if (maxLen === 0) return 1;
-  return 1 - levenshtein(a, b) / maxLen;
-}
-
-// ── Replacer type ───────────────────────────────────────────────
-
-type Replacer = (content: string, search: string, replace: string) => Generator<string, void, undefined>;
+// Similarity thresholds for block anchor fallback matching
+const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.0;
+const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3;
 
 // ── 1. SimpleReplacer – exact string match ──────────────────────
 
-function* SimpleReplacer(content: string, search: string, replace: string): Generator<string> {
-  const idx = content.indexOf(search);
-  if (idx !== -1) {
-    // Ensure unique match
-    if (content.indexOf(search, idx + 1) !== -1) return;
-    yield content.slice(0, idx) + replace + content.slice(idx + search.length);
-  }
-}
+const SimpleReplacer: Replacer = function* (_content, find) {
+  yield find;
+};
 
 // ── 2. LineTrimmedReplacer – trim each line before compare ──────
 
-function* LineTrimmedReplacer(content: string, search: string, replace: string): Generator<string> {
-  const contentLines = content.split('\n');
-  const searchLines = search.split('\n');
+const LineTrimmedReplacer: Replacer = function* (content, find) {
+  const originalLines = content.split('\n');
+  const searchLines = find.split('\n');
 
-  // Strip leading/trailing empty lines from search
-  while (searchLines.length > 0 && searchLines[0].trim() === '') searchLines.shift();
-  while (searchLines.length > 0 && searchLines[searchLines.length - 1].trim() === '') searchLines.pop();
-  if (searchLines.length === 0) return;
+  if (searchLines[searchLines.length - 1] === '') {
+    searchLines.pop();
+  }
 
-  const matches: number[] = [];
+  for (let i = 0; i <= originalLines.length - searchLines.length; i++) {
+    let matches = true;
 
-  for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
-    let ok = true;
     for (let j = 0; j < searchLines.length; j++) {
-      if (contentLines[i + j].trim() !== searchLines[j].trim()) {
-        ok = false;
+      if (originalLines[i + j].trim() !== searchLines[j].trim()) {
+        matches = false;
         break;
       }
     }
-    if (ok) matches.push(i);
+
+    if (matches) {
+      let matchStartIndex = 0;
+      for (let k = 0; k < i; k++) {
+        matchStartIndex += originalLines[k].length + 1;
+      }
+
+      let matchEndIndex = matchStartIndex;
+      for (let k = 0; k < searchLines.length; k++) {
+        matchEndIndex += originalLines[i + k].length;
+        if (k < searchLines.length - 1) {
+          matchEndIndex += 1;
+        }
+      }
+
+      yield content.substring(matchStartIndex, matchEndIndex);
+    }
+  }
+};
+
+// ── 3. BlockAnchorReplacer – first/last line anchor + variable block size ─
+
+const BlockAnchorReplacer: Replacer = function* (content, find) {
+  const originalLines = content.split('\n');
+  const searchLines = find.split('\n');
+
+  if (searchLines.length < 3) {
+    return;
   }
 
-  if (matches.length !== 1) return;
+  if (searchLines[searchLines.length - 1] === '') {
+    searchLines.pop();
+  }
 
-  const i = matches[0];
-  const replaceLines = replace.split('\n');
-  const result = [...contentLines.slice(0, i), ...replaceLines, ...contentLines.slice(i + searchLines.length)];
-  yield result.join('\n');
-}
+  const firstLineSearch = searchLines[0].trim();
+  const lastLineSearch = searchLines[searchLines.length - 1].trim();
+  const searchBlockSize = searchLines.length;
 
-// ── 3. BlockAnchorReplacer – first/last line anchor + Levenshtein middle ─
+  // Collect all candidate positions where both anchors match
+  const candidates: Array<{ startLine: number; endLine: number }> = [];
+  for (let i = 0; i < originalLines.length; i++) {
+    if (originalLines[i].trim() !== firstLineSearch) {
+      continue;
+    }
 
-function* BlockAnchorReplacer(content: string, search: string, replace: string): Generator<string> {
-  const contentLines = content.split('\n');
-  const searchLines = search.split('\n');
-
-  while (searchLines.length > 0 && searchLines[0].trim() === '') searchLines.shift();
-  while (searchLines.length > 0 && searchLines[searchLines.length - 1].trim() === '') searchLines.pop();
-  if (searchLines.length < 3) return;
-
-  const firstLine = searchLines[0].trim();
-  const lastLine = searchLines[searchLines.length - 1].trim();
-  const middleSearch = searchLines.slice(1, -1);
-
-  const candidates: number[] = [];
-
-  for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
-    if (contentLines[i].trim() !== firstLine) continue;
-    const endIdx = i + searchLines.length - 1;
-    if (endIdx >= contentLines.length) continue;
-    if (contentLines[endIdx].trim() !== lastLine) continue;
-
-    // Verify middle lines via Levenshtein similarity (>= 60%)
-    let middleOk = true;
-    for (let j = 0; j < middleSearch.length; j++) {
-      if (similarity(contentLines[i + 1 + j].trim(), middleSearch[j].trim()) < 0.6) {
-        middleOk = false;
+    // Look for the matching last line after this first line
+    for (let j = i + 2; j < originalLines.length; j++) {
+      if (originalLines[j].trim() === lastLineSearch) {
+        candidates.push({ startLine: i, endLine: j });
         break;
       }
     }
-    if (middleOk) candidates.push(i);
   }
 
-  if (candidates.length !== 1) return;
+  if (candidates.length === 0) {
+    return;
+  }
 
-  const i = candidates[0];
-  const replaceLines = replace.split('\n');
-  const result = [...contentLines.slice(0, i), ...replaceLines, ...contentLines.slice(i + searchLines.length)];
-  yield result.join('\n');
-}
+  // Handle single candidate scenario (using relaxed threshold)
+  if (candidates.length === 1) {
+    const { startLine, endLine } = candidates[0];
+    const actualBlockSize = endLine - startLine + 1;
+
+    let similarity = 0;
+    const linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2);
+
+    if (linesToCheck > 0) {
+      for (let j = 1; j < searchBlockSize - 1 && j < actualBlockSize - 1; j++) {
+        const originalLine = originalLines[startLine + j].trim();
+        const searchLine = searchLines[j].trim();
+        const maxLen = Math.max(originalLine.length, searchLine.length);
+        if (maxLen === 0) {
+          continue;
+        }
+        const distance = levenshtein(originalLine, searchLine);
+        similarity += (1 - distance / maxLen) / linesToCheck;
+
+        if (similarity >= SINGLE_CANDIDATE_SIMILARITY_THRESHOLD) {
+          break;
+        }
+      }
+    } else {
+      similarity = 1.0;
+    }
+
+    if (similarity >= SINGLE_CANDIDATE_SIMILARITY_THRESHOLD) {
+      let matchStartIndex = 0;
+      for (let k = 0; k < startLine; k++) {
+        matchStartIndex += originalLines[k].length + 1;
+      }
+      let matchEndIndex = matchStartIndex;
+      for (let k = startLine; k <= endLine; k++) {
+        matchEndIndex += originalLines[k].length;
+        if (k < endLine) {
+          matchEndIndex += 1;
+        }
+      }
+      yield content.substring(matchStartIndex, matchEndIndex);
+    }
+    return;
+  }
+
+  // Calculate similarity for multiple candidates
+  let bestMatch: { startLine: number; endLine: number } | null = null;
+  let maxSimilarity = -1;
+
+  for (const candidate of candidates) {
+    const { startLine, endLine } = candidate;
+    const actualBlockSize = endLine - startLine + 1;
+
+    let similarity = 0;
+    const linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2);
+
+    if (linesToCheck > 0) {
+      for (let j = 1; j < searchBlockSize - 1 && j < actualBlockSize - 1; j++) {
+        const originalLine = originalLines[startLine + j].trim();
+        const searchLine = searchLines[j].trim();
+        const maxLen = Math.max(originalLine.length, searchLine.length);
+        if (maxLen === 0) {
+          continue;
+        }
+        const distance = levenshtein(originalLine, searchLine);
+        similarity += 1 - distance / maxLen;
+      }
+      similarity /= linesToCheck;
+    } else {
+      similarity = 1.0;
+    }
+
+    if (similarity > maxSimilarity) {
+      maxSimilarity = similarity;
+      bestMatch = candidate;
+    }
+  }
+
+  if (maxSimilarity >= MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD && bestMatch) {
+    const { startLine, endLine } = bestMatch;
+    let matchStartIndex = 0;
+    for (let k = 0; k < startLine; k++) {
+      matchStartIndex += originalLines[k].length + 1;
+    }
+    let matchEndIndex = matchStartIndex;
+    for (let k = startLine; k <= endLine; k++) {
+      matchEndIndex += originalLines[k].length;
+      if (k < endLine) {
+        matchEndIndex += 1;
+      }
+    }
+    yield content.substring(matchStartIndex, matchEndIndex);
+  }
+};
 
 // ── 4. WhitespaceNormalizedReplacer – collapse \s+ → single space ─
 
-function normalizeWhitespace(s: string): string {
-  return s.replace(/\s+/g, ' ').trim();
-}
+const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
+  const normalizeWhitespace = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const normalizedFind = normalizeWhitespace(find);
 
-function* WhitespaceNormalizedReplacer(content: string, search: string, replace: string): Generator<string> {
-  const contentLines = content.split('\n');
-  const searchLines = search.split('\n');
-
-  while (searchLines.length > 0 && searchLines[0].trim() === '') searchLines.shift();
-  while (searchLines.length > 0 && searchLines[searchLines.length - 1].trim() === '') searchLines.pop();
-  if (searchLines.length === 0) return;
-
-  const normalizedSearch = searchLines.map(normalizeWhitespace);
-  const matches: number[] = [];
-
-  for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
-    let ok = true;
-    for (let j = 0; j < searchLines.length; j++) {
-      if (normalizeWhitespace(contentLines[i + j]) !== normalizedSearch[j]) {
-        ok = false;
-        break;
+  // Handle single line matches
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (normalizeWhitespace(line) === normalizedFind) {
+      yield line;
+    } else {
+      const normalizedLine = normalizeWhitespace(line);
+      if (normalizedLine.includes(normalizedFind)) {
+        const words = find
+          .trim()
+          .split(/\s+/);
+        if (words.length > 0) {
+          const pattern = words
+            .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .join('\\s+');
+          try {
+            const regex = new RegExp(pattern);
+            const match = line.match(regex);
+            if (match) {
+              yield match[0];
+            }
+          } catch {
+            // Invalid regex pattern, skip
+          }
+        }
       }
     }
-    if (ok) matches.push(i);
   }
 
-  if (matches.length !== 1) return;
-
-  const i = matches[0];
-  const replaceLines = replace.split('\n');
-  const result = [...contentLines.slice(0, i), ...replaceLines, ...contentLines.slice(i + searchLines.length)];
-  yield result.join('\n');
-}
+  // Handle multi-line matches
+  const findLines = find.split('\n');
+  if (findLines.length > 1) {
+    for (let i = 0; i <= lines.length - findLines.length; i++) {
+      const block = lines.slice(i, i + findLines.length);
+      if (normalizeWhitespace(block.join('\n')) === normalizedFind) {
+        yield block.join('\n');
+      }
+    }
+  }
+};
 
 // ── 5. IndentationFlexibleReplacer – strip common indent ────────
 
-function stripCommonIndent(lines: string[]): string[] {
-  const nonEmpty = lines.filter(l => l.trim().length > 0);
-  if (nonEmpty.length === 0) return lines;
+const IndentationFlexibleReplacer: Replacer = function* (content, find) {
+  const removeIndentation = (text: string) => {
+    const lines = text.split('\n');
+    const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+    if (nonEmptyLines.length === 0) return text;
 
-  let minIndent = Infinity;
-  for (const line of nonEmpty) {
-    const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
-    if (indent < minIndent) minIndent = indent;
-  }
+    const minIndent = Math.min(
+      ...nonEmptyLines.map((line) => {
+        const match = line.match(/^(\s*)/);
+        return match ? match[1].length : 0;
+      }),
+    );
 
-  return lines.map(l => l.slice(minIndent));
-}
+    return lines.map((line) => (line.trim().length === 0 ? line : line.slice(minIndent))).join('\n');
+  };
 
-function* IndentationFlexibleReplacer(content: string, search: string, replace: string): Generator<string> {
+  const normalizedFind = removeIndentation(find);
   const contentLines = content.split('\n');
-  const searchLines = search.split('\n');
+  const findLines = find.split('\n');
 
-  while (searchLines.length > 0 && searchLines[0].trim() === '') searchLines.shift();
-  while (searchLines.length > 0 && searchLines[searchLines.length - 1].trim() === '') searchLines.pop();
-  if (searchLines.length === 0) return;
-
-  const strippedSearch = stripCommonIndent(searchLines);
-  const matches: number[] = [];
-
-  for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
-    const slice = contentLines.slice(i, i + searchLines.length);
-    const strippedSlice = stripCommonIndent(slice);
-
-    let ok = true;
-    for (let j = 0; j < searchLines.length; j++) {
-      if (strippedSlice[j] !== strippedSearch[j]) {
-        ok = false;
-        break;
-      }
+  for (let i = 0; i <= contentLines.length - findLines.length; i++) {
+    const block = contentLines.slice(i, i + findLines.length).join('\n');
+    if (removeIndentation(block) === normalizedFind) {
+      yield block;
     }
-    if (ok) matches.push(i);
+  }
+};
+
+// ── 6. EscapeNormalizedReplacer – handle \n, \t, \', \", etc. ───
+
+const EscapeNormalizedReplacer: Replacer = function* (content, find) {
+  const unescapeString = (str: string): string => {
+    return str.replace(/\\(n|t|r|'|"|`|\\|\n|\$)/g, (match, capturedChar) => {
+      switch (capturedChar) {
+        case 'n':
+          return '\n';
+        case 't':
+          return '\t';
+        case 'r':
+          return '\r';
+        case "'":
+          return "'";
+        case '"':
+          return '"';
+        case '`':
+          return '`';
+        case '\\':
+          return '\\';
+        case '\n':
+          return '\n';
+        case '$':
+          return '$';
+        default:
+          return match;
+      }
+    });
+  };
+
+  const unescapedFind = unescapeString(find);
+
+  // Try direct match with unescaped find string
+  if (content.includes(unescapedFind)) {
+    yield unescapedFind;
   }
 
-  if (matches.length !== 1) return;
+  // Also try finding escaped versions in content that match unescaped find
+  const lines = content.split('\n');
+  const findLines = unescapedFind.split('\n');
 
-  const i = matches[0];
-  const replaceLines = replace.split('\n');
-  const result = [...contentLines.slice(0, i), ...replaceLines, ...contentLines.slice(i + searchLines.length)];
-  yield result.join('\n');
-}
+  for (let i = 0; i <= lines.length - findLines.length; i++) {
+    const block = lines.slice(i, i + findLines.length).join('\n');
+    const unescapedBlock = unescapeString(block);
 
-// ── 6. EscapeNormalizedReplacer – handle \n, \t, etc. ───────────
-
-function normalizeEscapes(s: string): string {
-  return s
-    .replace(/\\n/g, '\n')
-    .replace(/\\t/g, '\t')
-    .replace(/\\r/g, '\r')
-    .replace(/\\\\/g, '\\');
-}
-
-function* EscapeNormalizedReplacer(content: string, search: string, replace: string): Generator<string> {
-  const normalizedSearch = normalizeEscapes(search);
-  if (normalizedSearch === search) return; // No escapes to normalize
-
-  const idx = content.indexOf(normalizedSearch);
-  if (idx === -1) return;
-  if (content.indexOf(normalizedSearch, idx + 1) !== -1) return; // Not unique
-
-  const normalizedReplace = normalizeEscapes(replace);
-  yield content.slice(0, idx) + normalizedReplace + content.slice(idx + normalizedSearch.length);
-}
+    if (unescapedBlock === unescapedFind) {
+      yield block;
+    }
+  }
+};
 
 // ── 7. TrimmedBoundaryReplacer – trim entire block boundaries ───
 
-function* TrimmedBoundaryReplacer(content: string, search: string, replace: string): Generator<string> {
-  const trimmedSearch = search.trim();
-  if (trimmedSearch === search) return; // Nothing to trim
-  if (trimmedSearch.length === 0) return;
+const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
+  const trimmedFind = find.trim();
 
-  const idx = content.indexOf(trimmedSearch);
-  if (idx === -1) return;
-  if (content.indexOf(trimmedSearch, idx + 1) !== -1) return; // Not unique
+  if (trimmedFind === find) {
+    return;
+  }
 
-  yield content.slice(0, idx) + replace + content.slice(idx + trimmedSearch.length);
-}
+  if (content.includes(trimmedFind)) {
+    yield trimmedFind;
+  }
+
+  const lines = content.split('\n');
+  const findLines = find.split('\n');
+
+  for (let i = 0; i <= lines.length - findLines.length; i++) {
+    const block = lines.slice(i, i + findLines.length).join('\n');
+
+    if (block.trim() === trimmedFind) {
+      yield block;
+    }
+  }
+};
 
 // ── 8. ContextAwareReplacer – anchor lines + 50% middle threshold ─
 
-function* ContextAwareReplacer(content: string, search: string, replace: string): Generator<string> {
-  const contentLines = content.split('\n');
-  const searchLines = search.split('\n');
-
-  while (searchLines.length > 0 && searchLines[0].trim() === '') searchLines.shift();
-  while (searchLines.length > 0 && searchLines[searchLines.length - 1].trim() === '') searchLines.pop();
-  if (searchLines.length < 2) return;
-
-  const firstLine = searchLines[0].trim();
-  const lastLine = searchLines[searchLines.length - 1].trim();
-
-  const candidates: number[] = [];
-
-  for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
-    if (contentLines[i].trim() !== firstLine) continue;
-    const endIdx = i + searchLines.length - 1;
-    if (endIdx >= contentLines.length) continue;
-    if (contentLines[endIdx].trim() !== lastLine) continue;
-
-    // Count middle lines that match (50% threshold)
-    const middleCount = searchLines.length - 2;
-    if (middleCount > 0) {
-      let matchCount = 0;
-      for (let j = 1; j < searchLines.length - 1; j++) {
-        if (similarity(contentLines[i + j].trim(), searchLines[j].trim()) >= 0.5) {
-          matchCount++;
-        }
-      }
-      if (matchCount / middleCount < 0.5) continue;
-    }
-
-    candidates.push(i);
+const ContextAwareReplacer: Replacer = function* (content, find) {
+  const findLines = find.split('\n');
+  if (findLines.length < 3) {
+    return;
   }
 
-  if (candidates.length !== 1) return;
+  if (findLines[findLines.length - 1] === '') {
+    findLines.pop();
+  }
 
-  const i = candidates[0];
-  const replaceLines = replace.split('\n');
-  const result = [...contentLines.slice(0, i), ...replaceLines, ...contentLines.slice(i + searchLines.length)];
-  yield result.join('\n');
-}
+  const contentLines = content.split('\n');
+  const firstLine = findLines[0].trim();
+  const lastLine = findLines[findLines.length - 1].trim();
 
-// ── 9. MultiOccurrenceReplacer – replace all exact matches (for replaceAll) ─
+  for (let i = 0; i < contentLines.length; i++) {
+    if (contentLines[i].trim() !== firstLine) continue;
 
-function* MultiOccurrenceReplacer(content: string, search: string, replace: string): Generator<string> {
-  if (!content.includes(search)) return;
+    for (let j = i + 2; j < contentLines.length; j++) {
+      if (contentLines[j].trim() === lastLine) {
+        const blockLines = contentLines.slice(i, j + 1);
+        const block = blockLines.join('\n');
 
-  // Only yield if there are multiple occurrences (single occurrence is handled by SimpleReplacer)
-  const firstIdx = content.indexOf(search);
-  if (content.indexOf(search, firstIdx + 1) === -1) return;
+        if (blockLines.length === findLines.length) {
+          let matchingLines = 0;
+          let totalNonEmptyLines = 0;
 
-  yield content.split(search).join(replace);
-}
+          for (let k = 1; k < blockLines.length - 1; k++) {
+            const blockLine = blockLines[k].trim();
+            const findLine = findLines[k].trim();
+
+            if (blockLine.length > 0 || findLine.length > 0) {
+              totalNonEmptyLines++;
+              if (blockLine === findLine) {
+                matchingLines++;
+              }
+            }
+          }
+
+          if (totalNonEmptyLines === 0 || matchingLines / totalNonEmptyLines >= 0.5) {
+            yield block;
+            break;
+          }
+        }
+        break;
+      }
+    }
+  }
+};
+
+// ── 9. MultiOccurrenceReplacer – yields all exact matches ───────
+
+const MultiOccurrenceReplacer: Replacer = function* (content, find) {
+  let startIndex = 0;
+
+  while (true) {
+    const index = content.indexOf(find, startIndex);
+    if (index === -1) break;
+
+    yield find;
+    startIndex = index + find.length;
+  }
+};
 
 // ── Ordered replacer list ───────────────────────────────────────
 
-const REPLACERS: { name: string; fn: Replacer }[] = [
-  { name: 'exact', fn: SimpleReplacer },
-  { name: 'line-trimmed', fn: LineTrimmedReplacer },
-  { name: 'block-anchor', fn: BlockAnchorReplacer },
-  { name: 'whitespace-normalized', fn: WhitespaceNormalizedReplacer },
-  { name: 'indentation-flexible', fn: IndentationFlexibleReplacer },
-  { name: 'escape-normalized', fn: EscapeNormalizedReplacer },
-  { name: 'trimmed-boundary', fn: TrimmedBoundaryReplacer },
-  { name: 'context-aware', fn: ContextAwareReplacer },
-  { name: 'multi-occurrence', fn: MultiOccurrenceReplacer },
+const REPLACERS: Replacer[] = [
+  SimpleReplacer,
+  LineTrimmedReplacer,
+  BlockAnchorReplacer,
+  WhitespaceNormalizedReplacer,
+  IndentationFlexibleReplacer,
+  EscapeNormalizedReplacer,
+  TrimmedBoundaryReplacer,
+  ContextAwareReplacer,
+  MultiOccurrenceReplacer,
 ];
 
 // ── Main entry point ────────────────────────────────────────────
 
-export function replace(content: string, search: string, replaceStr: string): ReplaceResult | ReplaceFailure {
-  for (const { name, fn } of REPLACERS) {
-    const gen = fn(content, search, replaceStr);
-    const result = gen.next();
-    if (!result.done && result.value !== undefined) {
-      return { ok: true, content: result.value, strategy: name };
+/**
+ * Replace oldString with newString in content.
+ * Tries 9 strategies from strictest to most lenient.
+ *
+ * @throws Error("oldString and newString must be different")
+ * @throws Error("oldString not found in content")
+ * @throws Error("Found multiple matches...")
+ */
+export function replace(
+  content: string,
+  oldString: string,
+  newString: string,
+  replaceAll = false,
+): string {
+  if (oldString === newString) {
+    throw new Error('oldString and newString must be different');
+  }
+
+  let notFound = true;
+
+  for (const replacer of REPLACERS) {
+    for (const search of replacer(content, oldString)) {
+      const index = content.indexOf(search);
+      if (index === -1) continue;
+      notFound = false;
+      if (replaceAll) {
+        return content.replaceAll(search, newString);
+      }
+      const lastIndex = content.lastIndexOf(search);
+      if (index !== lastIndex) continue;
+      return content.substring(0, index) + newString + content.substring(index + search.length);
     }
   }
 
-  // Build a helpful failure message
-  const searchPreview = search.split('\n').slice(0, 5).join('\n');
-  return {
-    ok: false,
-    message: [
-      'Search block not found after trying all 9 matching strategies.',
-      'Searched for:',
-      searchPreview,
-      '',
-      'Ensure the search block exactly matches existing file content.',
-      'Re-read the file and try again with the correct content.',
-    ].join('\n'),
-  };
+  if (notFound) {
+    throw new Error('oldString not found in content');
+  }
+  throw new Error(
+    'Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match.',
+  );
 }

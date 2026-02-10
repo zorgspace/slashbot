@@ -154,7 +154,8 @@ export const bannerCommand: CommandHandler = {
     } catch {
       // HeartbeatService not bound
     }
-    const voiceEnabled = !!context.configManager.getOpenAIApiKey();
+    const cfg = context.configManager.getConfig();
+    const voiceEnabled = !!(cfg.providers?.openai?.apiKey || process.env.OPENAI_API_KEY);
     const walletUnlocked = isSessionActive();
 
     const pkg = await import('../../../../package.json');

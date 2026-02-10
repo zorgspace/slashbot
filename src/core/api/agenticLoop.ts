@@ -2,7 +2,7 @@
  * Agentic Loop - Iterative action execution loop for both CLI and connector modes
  *
  * Supports two action paths:
- * 1. Native AI SDK tool calling (when toolRegistry is available and model supports it)
+ * 1. Native AI SDK tool calling with execute callbacks (primary)
  * 2. XML tag parsing (fallback, or when tool calling is disabled)
  */
 
@@ -10,7 +10,8 @@ import { display } from '../ui';
 import { parseActions, executeActions, type ActionResult } from '../actions';
 import { compressActionResults } from './utils';
 import { streamResponse } from './streaming';
-import type { ClientContext, AgenticLoopOptions, AgenticLoopResult, ToolCallResult } from './types';
+import type { ClientContext, AgenticLoopOptions, AgenticLoopResult } from './types';
+import type { ToolExecContext } from './toolRegistry';
 import { getModelInfo } from '../../plugins/providers/models';
 
 /**
@@ -41,7 +42,6 @@ export async function runAgenticLoop(
 
   // Edit safety guards
   const unresolvedEditPaths = new Set<string>();
-  let blockedEndCount = 0;
   const MAX_BLOCKED_ENDS = 2;
   const readFiles = new Map<string, 'full' | 'partial'>();
 
@@ -54,11 +54,32 @@ export async function runAgenticLoop(
     toolRegistry.size > 0 &&
     modelInfo?.toolCalling !== false
   );
-  const toolsParam = toolCallingEnabled ? toolRegistry!.buildToolsParam() : undefined;
   let useXmlFallback = false;
+
+  // Shared execution context for tool execute callbacks
+  const execCtx: ToolExecContext = {
+    actionHandlers: ctx.actionHandlers,
+    readFiles,
+    unresolvedEditPaths,
+    signals: {
+      shouldBreak: false,
+      shouldResetIteration: false,
+      blockedEndCount: 0,
+    },
+    maxBlockedEnds: MAX_BLOCKED_ENDS,
+    cacheFileContents: opts.cacheFileContents,
+    fileContextCache: ctx.sessionManager.fileContextCache,
+    onRead: ctx.actionHandlers.onRead as ((path: string) => Promise<string>) | undefined,
+    actionResults: [],
+  };
 
   while (true) {
     iteration++;
+
+    // Reset per-iteration signals
+    execCtx.signals.shouldBreak = false;
+    execCtx.signals.shouldResetIteration = false;
+    execCtx.actionResults = [];
 
     // Overall timeout check
     if (opts.overallTimeout && Date.now() - startTime > opts.overallTimeout) {
@@ -81,10 +102,15 @@ export async function runAgenticLoop(
       };
     }
 
+    // Build executable tools (with execute callbacks) for this iteration
+    const toolsParam = (toolCallingEnabled && !useXmlFallback)
+      ? toolRegistry!.buildExecutableTools(execCtx)
+      : undefined;
+
     let responseContent: string;
     let thinkingContent: string;
     let finishReason: string | null = null;
-    let toolCalls: ToolCallResult[] | undefined;
+    let hasToolCalls = false;
     let responseMessages: any[] | undefined;
 
     try {
@@ -93,13 +119,13 @@ export async function runAgenticLoop(
         displayStream: opts.displayStream,
         timeout: opts.iterationTimeout,
         thinkingLabel: opts.displayStream ? 'Reflection...' : 'Thinking...',
-        tools: useXmlFallback ? undefined : toolsParam,
+        tools: toolsParam,
       });
       isFirstIteration = false;
       responseContent = result.content;
       thinkingContent = result.thinking;
       finishReason = result.finishReason;
-      toolCalls = result.toolCalls;
+      hasToolCalls = result.hasToolCalls;
       responseMessages = result.responseMessages;
 
       if (opts.displayStream) {
@@ -132,7 +158,7 @@ export async function runAgenticLoop(
           responseContent = result.content;
           thinkingContent = result.thinking;
           finishReason = result.finishReason;
-          toolCalls = result.toolCalls;
+          hasToolCalls = result.hasToolCalls;
           responseMessages = result.responseMessages;
         } catch (retryError: any) {
           display.errorText(`[API Error after condensation] ${retryError.message || retryError}`);
@@ -163,21 +189,18 @@ export async function runAgenticLoop(
     }
 
     // ===== TOOL CALL PATH =====
-    // When the model used native tool calling, handle tool calls directly
-    if (toolCalls && toolCalls.length > 0 && toolRegistry) {
-      const loopResult = await handleToolCalls(
-        ctx, toolRegistry, toolCalls, responseMessages, responseContent,
-        opts, readFiles, unresolvedEditPaths, blockedEndCount, MAX_BLOCKED_ENDS,
-        executedActions, actionsSummary, iteration,
-      );
+    // When the model used native tool calling, tools already executed via callbacks
+    if (hasToolCalls && toolRegistry) {
+      // Push response messages to history
+      pushResponseMessages(ctx, responseContent, responseMessages);
 
-      if (loopResult.endMessage !== undefined) endMessage = loopResult.endMessage;
-      if (loopResult.blockedEndCount !== undefined) blockedEndCount = loopResult.blockedEndCount;
-
-      if (loopResult.signal === 'break') break;
-      if (loopResult.signal === 'continue') {
-        if (loopResult.resetIteration) iteration = 0;
-        // Reset retry counters on successful tool execution
+      // Check control flow signals
+      if (execCtx.signals.shouldBreak) {
+        endMessage = execCtx.signals.endMessage;
+        break;
+      }
+      if (execCtx.signals.shouldResetIteration) {
+        iteration = 0;
         emptyResponseRetries = 0;
         forcedRetryAttempted = false;
         useXmlFallback = false;
@@ -186,12 +209,12 @@ export async function runAgenticLoop(
       }
 
       // Consecutive error tracking for connector mode
-      if (opts.maxConsecutiveErrors !== undefined && loopResult.actionResults) {
-        const errorCount = loopResult.actionResults.filter(r => !r.success).length;
-        if (errorCount === loopResult.actionResults.length && loopResult.actionResults.length > 0) {
+      if (opts.maxConsecutiveErrors !== undefined && execCtx.actionResults.length > 0) {
+        const errorCount = execCtx.actionResults.filter(r => !r.success).length;
+        if (errorCount === execCtx.actionResults.length) {
           consecutiveErrors++;
           if (consecutiveErrors >= opts.maxConsecutiveErrors) {
-            const failedActions = loopResult.actionResults.map(r => r.action).join(', ');
+            const failedActions = execCtx.actionResults.map(r => r.action).join(', ');
             const errorMsg = `Stopped after ${opts.maxConsecutiveErrors} consecutive failures. Last errors: ${failedActions}`;
             display.errorText(errorMsg);
             if (ctx.thinkingActive) {
@@ -213,9 +236,40 @@ export async function runAgenticLoop(
         }
       }
 
-      // Tool calls handled, loop continues
+      // Cache file contents and build summaries from actionResults
+      if (opts.cacheFileContents) {
+        for (const result of execCtx.actionResults) {
+          const action = String(result.action ?? '');
+          const success = Boolean(result.success);
+          executedActions.push({
+            type: action.split('(')[0].trim(),
+            description: action,
+            success,
+          });
+        }
+      } else {
+        for (const r of execCtx.actionResults) {
+          const status = r.success ? '\u2713' : '\u2717';
+          const action = (r as { action?: string }).action ?? '';
+          actionsSummary.push(`${status} ${action}`);
+        }
+      }
+
+      // Hard limit check
+      if (iteration >= opts.maxIterations) {
+        break;
+      }
+
+      // No actions at all (only unknown tools) — done
+      if (execCtx.actionResults.length === 0) {
+        break;
+      }
+
+      // Reset retry counters on successful tool execution
       emptyResponseRetries = 0;
       forcedRetryAttempted = false;
+      useXmlFallback = false;
+      consecutiveErrors = 0;
       continue;
     }
 
@@ -350,8 +404,8 @@ export async function runAgenticLoop(
     // End action: block if unresolved edit failures remain
     const endResult = actionResults.find(r => r.action === 'End');
     if (endResult) {
-      if (unresolvedEditPaths.size > 0 && blockedEndCount < MAX_BLOCKED_ENDS) {
-        blockedEndCount++;
+      if (unresolvedEditPaths.size > 0 && execCtx.signals.blockedEndCount < MAX_BLOCKED_ENDS) {
+        execCtx.signals.blockedEndCount++;
         const failedList = Array.from(unresolvedEditPaths).join(', ');
         ctx.sessionManager.history.push({ role: 'assistant', content: responseContent });
         ctx.sessionManager.history.push({
@@ -482,7 +536,7 @@ export async function runAgenticLoop(
           // Fall back to XML mode: reasoning models often exhaust their output budget on
           // thinking tokens when using native tool calling, leaving nothing for the response.
           // XML mode avoids this by letting the model output actions as plain text.
-          if (toolsParam && !useXmlFallback) {
+          if (toolCallingEnabled && !useXmlFallback) {
             display.warningText('[Switching to XML mode - reasoning model may lack output budget for tool calls]');
             useXmlFallback = true;
             emptyResponseRetries = 0;
@@ -609,306 +663,76 @@ export async function runAgenticLoop(
   return { finalResponse, finalThinking, executedActions, actionsSummary, timedOut: false, endMessage };
 }
 
-// ===== Tool Call Handler =====
-
-interface ToolCallHandleResult {
-  signal: 'break' | 'continue';
-  resetIteration?: boolean;
-  endMessage?: string;
-  blockedEndCount?: number;
-  actionResults?: ActionResult[];
-}
+// ===== History Helpers =====
 
 /**
- * Handle native AI SDK tool calls: map to Actions, execute, build history messages.
+ * Push AI SDK response messages to history in portable format.
+ * Extracts _toolCalls from assistant messages and toolResults from tool messages.
  */
-async function handleToolCalls(
+function pushResponseMessages(
   ctx: ClientContext,
-  toolRegistry: import('./toolRegistry').ToolRegistry,
-  toolCalls: ToolCallResult[],
-  responseMessages: any[] | undefined,
   responseContent: string,
-  opts: AgenticLoopOptions,
-  readFiles: Map<string, 'full' | 'partial'>,
-  unresolvedEditPaths: Set<string>,
-  blockedEndCount: number,
-  MAX_BLOCKED_ENDS: number,
-  executedActions: Array<{ type: string; description: string; success: boolean }>,
-  actionsSummary: string[],
-  iteration: number,
-): Promise<ToolCallHandleResult> {
-  // Separate control-flow calls from action calls
-  const controlFlowCalls: ToolCallResult[] = [];
-  const actionCalls: ToolCallResult[] = [];
-
-  for (const tc of toolCalls) {
-    const flow = toolRegistry.getControlFlow(tc.toolName);
-    if (flow) {
-      controlFlowCalls.push(tc);
-    } else {
-      actionCalls.push(tc);
-    }
+  responseMessages: any[] | undefined,
+): void {
+  if (!responseMessages || responseMessages.length === 0) {
+    // Fallback: just push text
+    ctx.sessionManager.history.push({ role: 'assistant', content: responseContent || '[tool calls]' });
+    return;
   }
 
-  // Map action calls to Actions
-  const actions = actionCalls
-    .map(tc => {
-      const action = toolRegistry.mapToolCallToAction(tc.toolName, tc.args);
-      if (action) (action as any)._toolCallId = tc.toolCallId;
-      return action;
-    })
-    .filter((a): a is NonNullable<typeof a> => a !== null);
+  for (const msg of responseMessages) {
+    if (msg.role === 'assistant') {
+      // Extract text and tool-call parts
+      const parts = Array.isArray(msg.content) ? msg.content : [];
+      const textParts = parts
+        .filter((p: any) => p.type === 'text')
+        .map((p: any) => p.text || '')
+        .join('');
+      const toolCallParts = parts.filter((p: any) => p.type === 'tool-call');
 
-  // Read tracking for tool-call actions
-  for (const action of actions) {
-    if (action.type === 'read') {
-      const path = (action as any).path;
-      if (path) {
-        const hasOffset = (action as any).offset !== undefined;
-        const hasLimit = (action as any).limit !== undefined;
-        const coverage = hasOffset || hasLimit ? 'partial' : 'full';
-        if (readFiles.get(path) !== 'full') {
-          readFiles.set(path, coverage);
-        }
-      }
-    }
-  }
-
-  // Edit validation: reject edits on files not fully read
-  const syntheticResults: ActionResult[] = [];
-  const filteredActions = actions.filter(action => {
-    if (action.type === 'edit') {
-      const path = (action as any).path;
-      if (path && readFiles.get(path) !== 'full') {
-        const wasPartial = readFiles.get(path) === 'partial';
-        syntheticResults.push({
-          action: `Edit: ${path}`,
-          success: false,
-          result: 'Blocked',
-          error: wasPartial
-            ? `Cannot edit ${path} \u2014 you only read part of this file. Use read_file (without offset/limit) to read the entire file first, then retry.`
-            : `Cannot edit ${path} \u2014 you have not read this file yet. Use read_file first, then retry the edit.`,
-          _toolCallId: (action as any)._toolCallId,
-        });
-        return false;
-      }
-    }
-    return true;
-  });
-
-  // Execute actions through existing pipeline
-  const executedResults = await executeActions(filteredActions, ctx.actionHandlers);
-  const actionResults = [...syntheticResults, ...executedResults];
-
-  // Build tool-result content for each tool call
-  // We need to match results back to toolCallIds
-  const toolResultsForHistory: Array<{ toolCallId: string; toolName: string; result: string }> = [];
-
-  // Map action results to their tool call IDs
-  let resultIdx = 0;
-  for (const tc of actionCalls) {
-    const action = toolRegistry.mapToolCallToAction(tc.toolName, tc.args);
-    if (!action) {
-      toolResultsForHistory.push({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        result: 'Error: Unknown tool',
-      });
-      continue;
-    }
-
-    // Find the matching result (synthetic results for blocked edits, or sequential from executed)
-    const syntheticMatch = syntheticResults.find(
-      r => (r as any)._toolCallId === tc.toolCallId,
-    );
-    if (syntheticMatch) {
-      toolResultsForHistory.push({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        result: syntheticMatch.error || syntheticMatch.result || 'Blocked',
-      });
-    } else if (resultIdx < executedResults.length) {
-      const r = executedResults[resultIdx++];
-      const success = r.success ? '\u2713' : '\u2717';
-      const resultText = r.error ? `${r.result}\nError: ${r.error}` : r.result;
-      toolResultsForHistory.push({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        result: `[${success}] ${resultText}`,
-      });
-    } else {
-      toolResultsForHistory.push({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        result: 'No result',
-      });
-    }
-  }
-
-  // Handle control-flow calls
-  for (const tc of controlFlowCalls) {
-    const flow = toolRegistry.getControlFlow(tc.toolName);
-    const action = toolRegistry.mapToolCallToAction(tc.toolName, tc.args);
-    const message = (action as any)?.message || '';
-
-    if (flow === 'say' && message) {
-      display.sayResult(message);
-      toolResultsForHistory.push({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        result: 'Message displayed',
-      });
-    } else if (flow === 'end') {
-      // Check unresolved edits before allowing end
-      if (unresolvedEditPaths.size > 0 && blockedEndCount < MAX_BLOCKED_ENDS) {
-        const failedList = Array.from(unresolvedEditPaths).join(', ');
-        toolResultsForHistory.push({
+      const assistantEntry: any = {
+        role: 'assistant',
+        content: textParts || responseContent || '[tool calls]',
+      };
+      if (toolCallParts.length > 0) {
+        assistantEntry._toolCalls = toolCallParts.map((tc: any) => ({
           toolCallId: tc.toolCallId,
           toolName: tc.toolName,
-          result: `BLOCKED: Cannot finish \u2014 unresolved edit failures: ${failedList}. Fix them first.`,
-        });
-        // Push history and continue
-        pushToolCallHistory(ctx, responseContent, responseMessages, toolResultsForHistory, toolCalls);
-        return {
-          signal: 'continue',
-          blockedEndCount: blockedEndCount + 1,
-          actionResults,
-        };
+          args: tc.input ?? tc.args ?? {},
+        }));
       }
+      ctx.sessionManager.history.push(assistantEntry);
+    } else if (msg.role === 'tool') {
+      // Extract tool results
+      const parts = Array.isArray(msg.content) ? msg.content : [];
+      const toolResults = parts.map((tr: any) => ({
+        toolCallId: tr.toolCallId,
+        toolName: tr.toolName,
+        result: extractToolResultText(tr),
+      }));
 
-      if (message) {
-        display.sayResult(message);
-      }
-      toolResultsForHistory.push({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        result: 'Task ended',
-      });
-      // Push history and break
-      pushToolCallHistory(ctx, responseContent, responseMessages, toolResultsForHistory, toolCalls);
-      return { signal: 'break', endMessage: message || undefined, actionResults };
-    } else if (flow === 'continue') {
-      toolResultsForHistory.push({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        result: 'Iteration counter reset',
-      });
-      pushToolCallHistory(ctx, responseContent, responseMessages, toolResultsForHistory, toolCalls);
-      return { signal: 'continue', resetIteration: true, actionResults };
-    } else {
-      toolResultsForHistory.push({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        result: 'OK',
-      });
-    }
-  }
-
-  // Track unresolved edit failures
-  for (const r of actionResults) {
-    const action = String(r.action ?? '');
-    if (action.startsWith('Edit:')) {
-      const path = action.replace(/^Edit:\s*/, '').trim();
-      if (r.success) unresolvedEditPaths.delete(path);
-      else unresolvedEditPaths.add(path);
-    } else if (action.startsWith('Write:') && r.success) {
-      const path = action.replace(/^Write:\s*/, '').trim();
-      unresolvedEditPaths.delete(path);
-    }
-  }
-
-  // Cache file contents (CLI mode)
-  if (opts.cacheFileContents) {
-    for (const result of actionResults) {
-      const action = String(result.action ?? '');
-      const success = Boolean(result.success);
-      executedActions.push({
-        type: action.split('(')[0].trim(),
-        description: action,
-        success,
-      });
-
-      if (action.startsWith('Read:') && success && result.result) {
-        const filePath = action.replace('Read: ', '').trim();
-        if (result.result.length < 50000) {
-          ctx.sessionManager.fileContextCache.set(filePath, result.result);
-        }
-      }
-      if (action.startsWith('Edit:') && success && ctx.actionHandlers.onRead) {
-        const filePath = action.replace(/^Edit: /, '').trim();
-        try {
-          const newContent = await ctx.actionHandlers.onRead(filePath);
-          if (newContent && newContent.length < 50000) {
-            ctx.sessionManager.fileContextCache.set(filePath, newContent);
-          }
-        } catch { /* ignore */ }
-      }
-      if (action.startsWith('Write:') && success && ctx.actionHandlers.onRead) {
-        const filePath = action.replace('Write: ', '').trim();
-        try {
-          const newContent = await ctx.actionHandlers.onRead(filePath);
-          if (newContent && newContent.length < 50000) {
-            ctx.sessionManager.fileContextCache.set(filePath, newContent);
-          }
-        } catch { /* ignore */ }
+      if (toolResults.length > 0) {
+        ctx.sessionManager.history.push({
+          role: 'tool',
+          content: toolResults.map((tr: any) => `[${tr.toolName}] ${tr.result}`).join('\n'),
+          toolResults,
+        } as any);
       }
     }
-  } else {
-    for (const r of actionResults) {
-      const status = r.success ? '\u2713' : '\u2717';
-      const action = (r as { action?: string }).action ?? '';
-      actionsSummary.push(`${status} ${action}`);
-    }
   }
-
-  // Hard limit check
-  if (iteration >= opts.maxIterations) {
-    pushToolCallHistory(ctx, responseContent, responseMessages, toolResultsForHistory, toolCalls);
-    return { signal: 'break', actionResults };
-  }
-
-  // No actions at all (only unknown tools) — done
-  if (actionResults.length === 0 && controlFlowCalls.length === 0) {
-    ctx.sessionManager.history.push({ role: 'assistant', content: responseContent });
-    return { signal: 'break', actionResults };
-  }
-
-  // Push history (assistant + tool results) and continue
-  pushToolCallHistory(ctx, responseContent, responseMessages, toolResultsForHistory, toolCalls);
-  return { signal: 'continue', actionResults };
 }
 
 /**
- * Push assistant message (with tool calls) and tool-result message to history.
- * Stores tool calls in portable CoreMessage format (not provider-specific ResponseMessage).
+ * Extract text from a tool result part, handling various AI SDK output formats.
  */
-function pushToolCallHistory(
-  ctx: ClientContext,
-  responseContent: string,
-  _responseMessages: any[] | undefined,
-  toolResults: Array<{ toolCallId: string; toolName: string; result: string }>,
-  toolCalls?: ToolCallResult[],
-): void {
-  // Build assistant message with explicit tool-call data for replay
-  const assistantEntry: any = {
-    role: 'assistant',
-    content: responseContent || '[tool calls]',
-  };
-  if (toolCalls && toolCalls.length > 0) {
-    assistantEntry._toolCalls = toolCalls.map(tc => ({
-      toolCallId: tc.toolCallId,
-      toolName: tc.toolName,
-      args: tc.args,
-    }));
-  }
-  ctx.sessionManager.history.push(assistantEntry);
-
-  // Push tool-result message
-  if (toolResults.length > 0) {
-    ctx.sessionManager.history.push({
-      role: 'tool',
-      content: toolResults.map(tr => `[${tr.toolName}] ${tr.result}`).join('\n'),
-      toolResults,
-    } as any);
-  }
+function extractToolResultText(tr: any): string {
+  // Direct output: string
+  if (typeof tr.output === 'string') return tr.output;
+  // AI SDK v6 format: { type: 'text', value: string }
+  if (tr.output && typeof tr.output.value === 'string') return tr.output.value;
+  // Nested result field
+  if (typeof tr.result === 'string') return tr.result;
+  // Fallback: stringify
+  if (tr.output !== undefined) return JSON.stringify(tr.output);
+  return 'No result';
 }

@@ -206,8 +206,14 @@ export class InputPanel {
       const savedPlaceholder = this.input.placeholder;
       const savedValue = this.input.value;
 
-      // Change prompt label
-      this.promptLabel.placeholder = t`${bold(fg(theme.warning)(label))} `;
+      // Hide prompt label for password prompts
+      const savedPromptPlaceholder = this.promptLabel.placeholder;
+      if (masked) {
+        this.promptLabel.placeholder = '';
+      } else {
+        // Change prompt label
+        this.promptLabel.placeholder = t`${bold(fg(theme.warning)(label))} `;
+      }
       this.input.value = '';
       this.input.placeholder = masked ? 'Enter password...' : 'Enter text...';
       this.input.focus();
@@ -221,7 +227,7 @@ export class InputPanel {
         if (inputListener) this.input.off(InputRenderableEvents.INPUT, inputListener);
         if (enterListener) this.input.off(InputRenderableEvents.ENTER, enterListener);
         // Restore normal state
-        this.promptLabel.placeholder = t`${bold(fg(theme.primary)('❯'))} `;
+        this.promptLabel.placeholder = savedPromptPlaceholder;
         this.input.value = savedValue;
         this.input.placeholder = savedPlaceholder;
         this.input.focus();

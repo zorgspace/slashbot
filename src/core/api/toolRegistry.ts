@@ -6,7 +6,31 @@
 
 import type { Tool } from 'ai';
 import type { ToolContribution } from '../../plugins/types';
-import type { Action } from '../actions/types';
+import type { Action, ActionResult, ActionHandlers } from '../actions/types';
+import { executeActions } from '../actions/executor';
+import { display } from '../ui';
+
+/**
+ * Execution context shared between tool execute callbacks and the agentic loop.
+ * Signals are mutated by execute callbacks; the loop reads them after streamResponse().
+ */
+export interface ToolExecContext {
+  actionHandlers: ActionHandlers;
+  readFiles: Map<string, 'full' | 'partial'>;
+  unresolvedEditPaths: Set<string>;
+  signals: {
+    shouldBreak: boolean;
+    shouldResetIteration: boolean;
+    endMessage?: string;
+    blockedEndCount: number;
+  };
+  maxBlockedEnds: number;
+  cacheFileContents: boolean;
+  fileContextCache: { set(key: string, value: string): void };
+  onRead?: (path: string) => Promise<string>;
+  /** Populated by execute callbacks for the agentic loop to inspect */
+  actionResults: ActionResult[];
+}
 
 export class ToolRegistry {
   private contributions = new Map<string, ToolContribution>();
@@ -21,8 +45,8 @@ export class ToolRegistry {
   }
 
   /**
-   * Build the AI SDK `tools` parameter for generateText().
-   * Returns a record of tool definitions keyed by tool name.
+   * Build the AI SDK `tools` parameter for generateText() — bare definitions without execute.
+   * Used as fallback for XML mode.
    */
   buildToolsParam(): Record<string, Tool> {
     const tools: Record<string, Tool> = {};
@@ -32,6 +56,29 @@ export class ToolRegistry {
         inputSchema: contrib.parameters,
       };
     }
+    return tools;
+  }
+
+  /**
+   * Build AI SDK tools with execute callbacks.
+   * Each callback handles control flow, read tracking, edit validation,
+   * action execution, and file caching — so the agentic loop doesn't need to.
+   */
+  buildExecutableTools(ctx: ToolExecContext): Record<string, Tool> {
+    const tools: Record<string, Tool> = {};
+
+    for (const [name, contrib] of this.contributions) {
+      // Use inputSchema directly (not tool() helper) — Zod v4 schemas work
+      // with inputSchema but tool()'s parameters conversion breaks them.
+      tools[name] = {
+        description: contrib.description,
+        inputSchema: contrib.parameters,
+        execute: async (args: Record<string, unknown>) => {
+          return this.executeToolCallback(contrib, args, ctx);
+        },
+      } as Tool;
+    }
+
     return tools;
   }
 
@@ -71,5 +118,156 @@ export class ToolRegistry {
    */
   get size(): number {
     return this.contributions.size;
+  }
+
+  // ===== Private =====
+
+  /**
+   * Execute callback for a single tool. Handles control flow, read tracking,
+   * edit validation, action execution, unresolved edit tracking, and file caching.
+   */
+  private async executeToolCallback(
+    contrib: ToolContribution,
+    args: Record<string, unknown>,
+    ctx: ToolExecContext,
+  ): Promise<string> {
+    const controlFlow = contrib.controlFlow;
+
+    // --- Control flow: end ---
+    if (controlFlow === 'end') {
+      if (ctx.unresolvedEditPaths.size > 0 && ctx.signals.blockedEndCount < ctx.maxBlockedEnds) {
+        ctx.signals.blockedEndCount++;
+        const failedList = Array.from(ctx.unresolvedEditPaths).join(', ');
+        return `BLOCKED: Cannot finish \u2014 unresolved edit failures: ${failedList}. Fix them first.`;
+      }
+      const action = contrib.toAction(args);
+      const message = (action as any).message || '';
+      if (message) display.sayResult(message);
+      ctx.signals.shouldBreak = true;
+      ctx.signals.endMessage = message || undefined;
+      return 'Task ended';
+    }
+
+    // --- Control flow: say ---
+    if (controlFlow === 'say') {
+      const action = contrib.toAction(args);
+      const message = (action as any).message || '';
+      if (message) display.sayResult(message);
+      return 'Message displayed';
+    }
+
+    // --- Control flow: continue ---
+    if (controlFlow === 'continue') {
+      ctx.signals.shouldResetIteration = true;
+      return 'Iteration counter reset';
+    }
+
+    // --- Regular action tools ---
+    const action = contrib.toAction(args);
+
+    // Read tracking
+    if (action.type === 'read') {
+      const path = action.path as string | undefined;
+      if (path) {
+        const hasOffset = action.offset !== undefined;
+        const hasLimit = action.limit !== undefined;
+        const coverage = hasOffset || hasLimit ? 'partial' : 'full';
+        if (ctx.readFiles.get(path) !== 'full') {
+          ctx.readFiles.set(path, coverage);
+        }
+      }
+    }
+
+    // Edit validation: reject edits on files not fully read
+    if (action.type === 'edit') {
+      const path = action.path as string | undefined;
+      if (path && ctx.readFiles.get(path) !== 'full') {
+        const wasPartial = ctx.readFiles.get(path) === 'partial';
+        const errorMsg = wasPartial
+          ? `Cannot edit ${path} \u2014 you only read part of this file. Use read_file (without offset/limit) to read the entire file first, then retry.`
+          : `Cannot edit ${path} \u2014 you have not read this file yet. Use read_file first, then retry the edit.`;
+        ctx.actionResults.push({
+          action: `Edit: ${path}`,
+          success: false,
+          result: 'Blocked',
+          error: errorMsg,
+        });
+        return errorMsg;
+      }
+    }
+
+    // Execute the action
+    const results = await executeActions([action], ctx.actionHandlers);
+    const result = results[0];
+
+    if (!result) {
+      ctx.actionResults.push({
+        action: contrib.name,
+        success: false,
+        result: 'No result',
+      });
+      return 'No result';
+    }
+
+    // Track in actionResults
+    ctx.actionResults.push(result);
+
+    // Track unresolved edit failures
+    const actionStr = String(result.action ?? '');
+    if (actionStr.startsWith('Edit:')) {
+      const path = actionStr.replace(/^Edit:\s*/, '').trim();
+      if (result.success) ctx.unresolvedEditPaths.delete(path);
+      else ctx.unresolvedEditPaths.add(path);
+    } else if (actionStr.startsWith('Write:') && result.success) {
+      const path = actionStr.replace(/^Write:\s*/, '').trim();
+      ctx.unresolvedEditPaths.delete(path);
+    }
+
+    // Cache file contents
+    if (ctx.cacheFileContents) {
+      await this.cacheFileContent(actionStr, result, ctx);
+    }
+
+    // Format result for the LLM
+    const status = result.success ? '\u2713' : '\u2717';
+    const errorNote = result.error ? `\nError: ${result.error}` : '';
+    return `[${status}] ${result.result}${errorNote}`;
+  }
+
+  private async cacheFileContent(
+    actionStr: string,
+    result: ActionResult,
+    ctx: ToolExecContext,
+  ): Promise<void> {
+    if (actionStr.startsWith('Read:') && result.success && result.result) {
+      const filePath = actionStr.replace('Read: ', '').trim();
+      if (result.result.length < 50000) {
+        ctx.fileContextCache.set(filePath, result.result);
+      }
+    }
+    if (actionStr.startsWith('Edit:') && result.success && ctx.onRead) {
+      const filePath = actionStr.replace(/^Edit: /, '').trim();
+      try {
+        const newContent = await ctx.onRead(filePath);
+        if (newContent && newContent.length < 50000) {
+          ctx.fileContextCache.set(filePath, newContent);
+        }
+      } catch { /* ignore */ }
+    }
+    if (actionStr.startsWith('Write:') && result.success && ctx.onRead) {
+      const filePath = actionStr.replace('Write: ', '').trim();
+      try {
+        const newContent = await ctx.onRead(filePath);
+        if (newContent && newContent.length < 50000) {
+          ctx.fileContextCache.set(filePath, newContent);
+        }
+      } catch { /* ignore */ }
+    }
+    if (actionStr.startsWith('Grep:') && result.success && result.result) {
+      const grepKey = `grep:${actionStr}`;
+      if (result.result.length < 50000) {
+        ctx.fileContextCache.set(grepKey, result.result);
+      }
+    }
   }
 }

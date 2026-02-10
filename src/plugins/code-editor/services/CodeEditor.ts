@@ -10,7 +10,6 @@ import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import type { EditResult, GrepOptions } from '../../../core/actions/types';
 import { EXCLUDED_DIRS, EXCLUDED_FILES } from '../../../core/config/constants';
-import { merge3 } from './diff3';
 import { replace } from './replacers';
 import type { EventBus } from '../../../core/events/EventBus';
 
@@ -38,11 +37,6 @@ export interface SearchResult {
   line: number;
   content: string;
   match: string;
-}
-
-interface SearchReplaceBlock {
-  search: string;
-  replace: string;
 }
 
 export class CodeEditor {
@@ -192,19 +186,13 @@ export class CodeEditor {
   }
 
   /**
-   * Apply a merge-based edit. Supports two modes:
-   *
-   * - 'full': LLM provides the complete intended file content.
-   *   Uses diff3 merge if the file changed since read.
-   *
-   * - 'search-replace': LLM provides search/replace blocks.
-   *   Finds each search block in the file and replaces it.
+   * Apply a single search/replace edit using the cascading replacer system.
    */
-  async applyMergeEdit(
+  async applyEdit(
     filePath: string,
-    mode: 'full' | 'search-replace',
-    content?: string,
-    blocks?: SearchReplaceBlock[],
+    oldString: string,
+    newString: string,
+    replaceAll?: boolean,
   ): Promise<EditResult> {
     try {
       const fullPath = this.resolvePath(filePath);
@@ -221,81 +209,41 @@ export class CodeEditor {
 
       const currentContent = await fsPromises.readFile(fullPath, 'utf8');
 
-      if (mode === 'full') {
-        return await this.applyFullEdit(filePath, fullPath, currentContent, content || '');
-      } else {
-        return await this.applySearchReplaceEdit(filePath, fullPath, currentContent, blocks || []);
+      // Safety net: reject newString corrupted with raw action tags
+      if (hasActionTagCorruption(newString)) {
+        display.errorText(`Blocked corrupted edit to ${filePath}: content contains raw action tags`);
+        return {
+          success: false,
+          status: 'error',
+          path: filePath,
+          message: `Edit rejected: newString for ${filePath} is corrupted with raw action tags. The LLM malfunctioned — retry the edit.`,
+        };
       }
-    } catch (error) {
-      display.errorText(`Edit error: ${error}`);
-      return {
-        success: false,
-        status: 'error',
-        path: filePath,
-        message: `Edit error: ${error}`,
-      };
-    }
-  }
 
-  /**
-   * Full-file edit: diff3 merge between snapshot, current disk, and LLM output.
-   */
-  private async applyFullEdit(
-    filePath: string,
-    fullPath: string,
-    currentContent: string,
-    newContent: string,
-  ): Promise<EditResult> {
-    // Safety net: reject content corrupted with raw action tags
-    if (hasActionTagCorruption(newContent)) {
-      display.errorText(`Blocked corrupted write to ${filePath}: content contains raw action tags`);
-      return {
-        success: false,
-        status: 'error',
-        path: filePath,
-        message: `Edit rejected: content for ${filePath} is corrupted with raw action tags (nested <edit>/<end>/<bash>/<say> detected). The LLM malfunctioned — retry the edit.`,
-      };
-    }
+      // Apply replacement using cascading replacer system
+      let newContent: string;
+      try {
+        newContent = replace(currentContent, oldString, newString, replaceAll);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes('not found')) {
+          return {
+            success: false,
+            status: 'no_match',
+            path: filePath,
+            message: `${filePath}: ${msg}`,
+          };
+        }
+        return {
+          success: false,
+          status: 'error',
+          path: filePath,
+          message: `${filePath}: ${msg}`,
+        };
+      }
 
-    // Idempotency: if new content matches current, nothing to do
-    if (newContent === currentContent) {
-      display.muted(`Edit already applied: ${filePath}`);
-      return {
-        success: true,
-        status: 'already_applied',
-        path: filePath,
-        message: 'Edit already applied',
-      };
-    }
-
-    const snapshot = this.snapshots.get(fullPath);
-
-    // Fast path: no snapshot (file was never read) or snapshot matches current disk
-    if (!snapshot || snapshot === currentContent) {
-      await fsPromises.writeFile(fullPath, newContent, 'utf8');
-      // Update snapshot to new content
-      this.snapshots.set(fullPath, newContent);
-      this.emitEditApplied(filePath, currentContent, newContent);
-      display.successText(`Modified: ${filePath}`);
-      return {
-        success: true,
-        status: 'applied',
-        path: filePath,
-        message: `Modified: ${filePath}`,
-      };
-    }
-
-    // Merge path: file changed since read — three-way merge
-    const baseLines = snapshot.split('\n');
-    const oursLines = currentContent.split('\n');
-    const theirsLines = newContent.split('\n');
-
-    const result = merge3(baseLines, oursLines, theirsLines);
-
-    if (result.success) {
-      const mergedContent = result.merged.join('\n');
-
-      if (mergedContent === currentContent) {
+      // Idempotency check
+      if (newContent === currentContent) {
         display.muted(`Edit already applied: ${filePath}`);
         return {
           success: true,
@@ -305,98 +253,25 @@ export class CodeEditor {
         };
       }
 
-      await fsPromises.writeFile(fullPath, mergedContent, 'utf8');
-      this.snapshots.set(fullPath, mergedContent);
-      this.emitEditApplied(filePath, currentContent, mergedContent);
-      display.warningText(`Merged (file changed since read): ${filePath}`);
+      await fsPromises.writeFile(fullPath, newContent, 'utf8');
+      this.snapshots.set(fullPath, newContent);
+      this.emitEditApplied(filePath, currentContent, newContent);
+      display.successText(`Modified: ${filePath}`);
       return {
         success: true,
         status: 'applied',
         path: filePath,
-        message: `Merged: ${filePath} (${result.conflictCount} conflicts resolved)`,
+        message: `Modified: ${filePath}`,
       };
-    }
-
-    // Conflict path: apply with conflicts (favor LLM intent) but report
-    const mergedContent = result.merged.join('\n');
-    await fsPromises.writeFile(fullPath, mergedContent, 'utf8');
-    this.snapshots.set(fullPath, mergedContent);
-    this.emitEditApplied(filePath, currentContent, mergedContent);
-    display.warningText(`Applied with ${result.conflictCount} conflict(s): ${filePath}`);
-    return {
-      success: true,
-      status: 'conflict',
-      path: filePath,
-      message: `Applied with ${result.conflictCount} conflict(s) in ${filePath}. The LLM's version was used for conflicting regions.`,
-      conflicts: result.conflicts,
-    };
-  }
-
-  /**
-   * Search/Replace edit: cascading replacer system with 9 strategies.
-   */
-  private async applySearchReplaceEdit(
-    filePath: string,
-    fullPath: string,
-    currentContent: string,
-    blocks: SearchReplaceBlock[],
-  ): Promise<EditResult> {
-    if (blocks.length === 0) {
+    } catch (error) {
+      display.errorText(`Edit error: ${error}`);
       return {
         success: false,
         status: 'error',
         path: filePath,
-        message: 'No search/replace blocks provided',
+        message: `Edit error: ${error}`,
       };
     }
-
-    let content = currentContent;
-
-    for (const block of blocks) {
-      if (typeof block.search !== 'string' || typeof block.replace !== 'string') {
-        return {
-          success: false,
-          status: 'error',
-          path: filePath,
-          message: `${filePath}: Invalid search/replace block — search and replace must be strings`,
-        };
-      }
-      const result = replace(content, block.search, block.replace);
-
-      if (!result.ok) {
-        return {
-          success: false,
-          status: 'no_match',
-          path: filePath,
-          message: `${filePath}: ${result.message}`,
-        };
-      }
-
-      content = result.content;
-    }
-
-    // Idempotency check
-    if (content === currentContent) {
-      display.muted(`Edit already applied: ${filePath}`);
-      return {
-        success: true,
-        status: 'already_applied',
-        path: filePath,
-        message: 'Edit already applied',
-      };
-    }
-
-    await fsPromises.writeFile(fullPath, content, 'utf8');
-    // Update snapshot
-    this.snapshots.set(fullPath, content);
-    this.emitEditApplied(filePath, currentContent, content);
-    display.successText(`Modified: ${filePath}`);
-    return {
-      success: true,
-      status: 'applied',
-      path: filePath,
-      message: `Modified: ${filePath}`,
-    };
   }
 
   private emitEditApplied(filePath: string, beforeContent: string, afterContent: string): void {

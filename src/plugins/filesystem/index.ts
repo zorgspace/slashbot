@@ -86,13 +86,12 @@ export class FilesystemPlugin implements Plugin {
 
     const onEdit = async (
       path: string,
-      mode: 'full' | 'search-replace',
-      content?: string,
-      blocks?: import('./types').SearchReplaceBlock[],
+      oldString: string,
+      newString: string,
+      replaceAll?: boolean,
     ) => {
       const codeEditor = getCodeEditor();
-      // CodeEditor emits 'edit:applied' with full diff data via its own EventBus
-      return await codeEditor.applyMergeEdit(path, mode, content, blocks);
+      return await codeEditor.applyEdit(path, oldString, newString, replaceAll);
     };
 
     const onCreate = async (path: string, content: string) => {

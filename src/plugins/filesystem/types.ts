@@ -5,17 +5,12 @@ export interface ReadAction {
   limit?: number;
 }
 
-export interface SearchReplaceBlock {
-  search: string;
-  replace: string;
-}
-
 export interface EditAction {
   type: 'edit';
   path: string;
-  mode: 'full' | 'search-replace';
-  content?: string;              // full mode
-  blocks?: SearchReplaceBlock[]; // search-replace mode
+  oldString: string;
+  newString: string;
+  replaceAll?: boolean;
 }
 
 export interface WriteAction {

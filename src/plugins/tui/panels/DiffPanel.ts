@@ -18,7 +18,7 @@ import {
   type CliRenderer,
 } from '@opentui/core';
 import { theme } from '../../../core/ui/theme';
-import { diffLines } from '../../code-editor/services/diff3';
+import { diffLines } from '../../code-editor/services/diff';
 import { basename } from 'path';
 
 const MAX_DIFF_LINES = 300;

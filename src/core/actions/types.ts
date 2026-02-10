@@ -23,13 +23,12 @@ export interface GrepOptions {
   [key: string]: unknown;
 }
 
-export type EditStatus = 'applied' | 'no_match' | 'error' | 'not_found' | 'already_applied' | 'conflict';
+export type EditStatus = 'applied' | 'no_match' | 'error' | 'not_found' | 'already_applied';
 
 export interface EditResult {
   status: EditStatus;
   path?: string;
   message?: string;
   success?: boolean;
-  conflicts?: { oursLines: string[]; theirsLines: string[] }[];
   [key: string]: unknown;
 }
