@@ -16,7 +16,7 @@ import type {
   MCPLocalServerConfig,
   MCPRemoteServerConfig,
 } from './types';
-import { HOME_SLASHBOT_DIR } from '../../core/config/constants';
+import { getLocalConfigDir } from '../../core/config/constants';
 import * as path from 'path';
 
 const DEFAULT_CONNECT_TIMEOUT = 30_000;
@@ -56,7 +56,7 @@ interface MCPConnection {
   serverName: string;
 }
 
-const MCP_CONFIG_PATH = path.join(HOME_SLASHBOT_DIR, 'config', 'mcp.json');
+const MCP_CONFIG_PATH = path.join(getLocalConfigDir(), 'mcp.json');
 
 export class MCPManager {
   private connections = new Map<string, MCPConnection>();

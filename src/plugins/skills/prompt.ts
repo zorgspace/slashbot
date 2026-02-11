@@ -3,7 +3,7 @@
  */
 
 export const SKILLS_PROMPT = `## Skills — On-demand capabilities
-Skills are specialized capabilities that can be loaded on demand. They are stored in ~/.slashbot/skills/ and can be installed from a URL via \`<skill-install url="">\`.
+Skills are specialized capabilities that can be loaded on demand. They are stored in ./.slashbot/skills/ and can be installed from a URL via \`<skill-install url="">\`.
 \`\`\`
 Load a skill with: <skill name="docker"/>
 Install a skill from a URL with: <skill-install url="https://example.com/skill.md"/>

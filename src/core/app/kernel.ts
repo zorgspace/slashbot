@@ -537,8 +537,7 @@ export class Slashbot {
       const history = this.grokClient.getHistory();
       if (history.length <= 1) return; // Only system prompt, no conversation
 
-      const homeDir = process.env.HOME || process.env.USERPROFILE || '.';
-      const contextDir = path.join(homeDir, '.slashbot', 'context');
+      const contextDir = path.join(getLocalSlashbotDir(this.codeEditor.getWorkDir()), 'context');
 
       // Create directory if it doesn't exist
       if (!fs.existsSync(contextDir)) {

@@ -58,8 +58,8 @@ export class HeartbeatPlugin implements Plugin {
     this.heartbeatService = context.container.get<HeartbeatService>(TYPES.HeartbeatService);
 
     // Initialize the heartbeat service (loads config + state from disk)
-    await this.heartbeatService.init();
     if (context.workDir) this.heartbeatService.setWorkDir(context.workDir);
+    await this.heartbeatService.init();
 
     // Set LLM handler with lazy GrokClient resolution.
     // The GrokClient is null during plugin init (created later in initializeGrok),
@@ -74,12 +74,22 @@ export class HeartbeatPlugin implements Plugin {
       const safePrompt = `[HEARTBEAT - REFLECTION MODE]\n${prompt}`;
       const result = await (
         grokClient as {
-          chat: (
+          chatIsolated?: (
             p: string,
-            opts?: { saveToHistory?: boolean },
+            opts?: { quiet?: boolean; includeFileContext?: boolean; continueActions?: boolean },
           ) => Promise<{ response?: string; thinking?: string }>;
+          chat: (p: string) => Promise<{ response?: string; thinking?: string }>;
         }
-      ).chat(safePrompt, { saveToHistory: false });
+      ).chatIsolated?.(safePrompt, {
+        quiet: true,
+        includeFileContext: false,
+        continueActions: false,
+      }) ??
+      (await (
+        grokClient as {
+          chat: (p: string) => Promise<{ response?: string; thinking?: string }>;
+        }
+      ).chat(safePrompt));
       return { response: result.response || '', thinking: result.thinking };
     });
 
@@ -100,7 +110,7 @@ export class HeartbeatPlugin implements Plugin {
         tagName: 'heartbeat',
         handler: {
           onHeartbeat: async (prompt?: string) => {
-            const result = await heartbeatService.execute({ prompt });
+            const result = await heartbeatService.execute({ prompt, silent: true });
             return { type: result.type, content: result.content };
           },
         },

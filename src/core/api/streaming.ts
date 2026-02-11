@@ -22,6 +22,7 @@ export async function streamResponse(
 ): Promise<StreamResult> {
   const showThinking = options?.showThinking ?? true;
   const displayStream = options?.displayStream ?? true;
+  const quiet = options?.quiet ?? false;
   const timeout = options?.timeout;
   const thinkingLabel = options?.thinkingLabel ?? 'Thinking...';
 
@@ -29,7 +30,7 @@ export async function streamResponse(
     await ctx.authProvider.beforeRequest();
   }
 
-  if (displayStream) {
+  if (displayStream && !quiet) {
     display.scrollToBottom();
   }
 
@@ -48,8 +49,10 @@ export async function streamResponse(
   }
 
   // Always show spinner while waiting for API response
-  display.startThinking(thinkingLabel);
-  if (showThinking) {
+  if (!quiet) {
+    display.startThinking(thinkingLabel);
+  }
+  if (showThinking && !quiet) {
     display.startThinkingStream();
   }
 
@@ -67,7 +70,7 @@ export async function streamResponse(
       const textPart = lastMsg.content.find((p: any) => p.type === 'text');
       promptText = textPart?.text || '';
     }
-    if (promptText) {
+    if (promptText && !quiet) {
       display.logPrompt(promptText);
     }
   }
@@ -178,14 +181,16 @@ export async function streamResponse(
       if (ctx.thinkingActive && (type === 'text-delta' || type === 'tool-call')) {
         display.stopThinking();
         ctx.thinkingActive = false;
-        if (showThinking) {
+        if (showThinking && !quiet) {
           display.endThinkingStream();
         }
       }
 
       if (type === 'tool-call') {
         hasToolCalls = true;
-        display.logAction((event as any).toolName);
+        if (!quiet) {
+          display.logAction((event as any).toolName);
+        }
       }
     }
 
@@ -199,7 +204,7 @@ export async function streamResponse(
       const reasoning = await (stream as any).reasoning;
       if (typeof reasoning === 'string' && reasoning) {
         thinkingContent = reasoning;
-        if (showThinking) {
+        if (showThinking && !quiet) {
           display.streamThinkingChunk(reasoning);
         }
       }
@@ -232,12 +237,12 @@ export async function streamResponse(
       display.stopThinking();
       ctx.thinkingActive = false;
     }
-    if (showThinking) {
+    if (showThinking && !quiet) {
       display.endThinkingStream();
     }
 
     // Display the full response
-    if (displayStream && responseContent) {
+    if (displayStream && responseContent && !quiet) {
       let cleaned = cleanXmlTags(responseContent);
       cleaned = cleaned.replace(/^Assistant:\s*/gim, '');
       const normalized = cleaned.replace(/\n{3,}/g, '\n\n');
@@ -250,9 +255,11 @@ export async function streamResponse(
     const deltaPrompt = ctx.usage.promptTokens - startPromptTokens;
     const deltaCompletion = ctx.usage.completionTokens - startCompletionTokens;
 
-    display.streamThinkingChunk(
-      `\u{1F6EC} #${callNum} \u2190 ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
-    );
+    if (!quiet) {
+      display.streamThinkingChunk(
+        `\u{1F6EC} #${callNum} \u2190 ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
+      );
+    }
   } catch (error: any) {
     if (error.name === 'AbortError') {
       throw error;
@@ -276,7 +283,7 @@ export async function streamResponse(
       display.stopThinking();
       ctx.thinkingActive = false;
     }
-    if (showThinking) {
+    if (showThinking && !quiet) {
       display.endThinkingStream();
     }
     ctx.abortController = null;

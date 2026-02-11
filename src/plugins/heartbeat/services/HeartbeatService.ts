@@ -13,20 +13,19 @@ import { TYPES } from '../../../core/di/types';
 import type { EventBus } from '../../../core/events/EventBus';
 import type { GrokClient } from '../../../core/api';
 import { display, formatToolAction } from '../../../core/ui';
-import { HOME_SLASHBOT_DIR } from '../../../core/config/constants';
+import { getLocalSlashbotDir } from '../../../core/config/constants';
 import {
   type FullHeartbeatConfig,
   type HeartbeatResult,
   type HeartbeatState,
   type HeartbeatAction,
   DEFAULT_HEARTBEAT_PROMPT,
+  DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
   parseDuration,
   isWithinActiveHours,
+  isHeartbeatContentEffectivelyEmpty,
   parseHeartbeatResponse,
 } from './types';
-
-const HEARTBEAT_STATE_FILE = `${HOME_SLASHBOT_DIR}/heartbeat-state.json`;
-const HEARTBEAT_CONFIG_FILE = `${HOME_SLASHBOT_DIR}/heartbeat.json`;
 
 // LLM handler type for processing heartbeat prompts
 export type HeartbeatLLMHandler = (
@@ -35,7 +34,11 @@ export type HeartbeatLLMHandler = (
 
 @injectable()
 export class HeartbeatService {
-  private config: FullHeartbeatConfig = { enabled: true, period: '30m' };
+  private config: FullHeartbeatConfig = {
+    enabled: true,
+    period: '30m',
+    ackMaxChars: DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+  };
   private state: HeartbeatState = { consecutiveOks: 0, totalRuns: 0, totalAlerts: 0 };
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -59,6 +62,18 @@ export class HeartbeatService {
     this.workDir = dir;
   }
 
+  private getSlashbotDir(): string {
+    return getLocalSlashbotDir(this.workDir);
+  }
+
+  private getHeartbeatStateFile(): string {
+    return `${this.getSlashbotDir()}/heartbeat-state.json`;
+  }
+
+  private getHeartbeatConfigFile(): string {
+    return `${this.getSlashbotDir()}/heartbeat.json`;
+  }
+
   async init(): Promise<void> {
     await this.loadConfig();
     await this.loadState();
@@ -66,16 +81,17 @@ export class HeartbeatService {
 
   private async loadConfig(): Promise<void> {
     try {
-      const file = Bun.file(HEARTBEAT_CONFIG_FILE);
+      const filePath = this.getHeartbeatConfigFile();
+      const file = Bun.file(filePath);
       if (await file.exists()) {
-        const data = await file.json();
+        const data = (await file.json()) as Record<string, unknown>;
         if (data.interval && !data.every && !data.period) {
-          data.period = data.interval;
+          data.period = data.interval as string;
         }
         if (data.every && !data.period) {
-          data.period = data.every;
+          data.period = data.every as string;
         }
-        this.config = { ...this.config, ...data };
+        this.config = { ...this.config, ...(data as Partial<FullHeartbeatConfig>) };
       }
     } catch {
       // Use defaults
@@ -83,16 +99,23 @@ export class HeartbeatService {
   }
 
   async saveConfig(config: Partial<FullHeartbeatConfig>): Promise<void> {
-    this.config = { ...this.config, ...config };
+    const normalized = { ...config } as Partial<FullHeartbeatConfig> & {
+      every?: string;
+      interval?: string;
+    };
+    if (normalized.interval && !normalized.period) normalized.period = normalized.interval;
+    if (normalized.every && !normalized.period) normalized.period = normalized.every;
+    this.config = { ...this.config, ...normalized };
 
     const { mkdir } = await import('fs/promises');
-    await mkdir(HOME_SLASHBOT_DIR, { recursive: true });
-    await Bun.write(HEARTBEAT_CONFIG_FILE, JSON.stringify(this.config, null, 2));
+    const slashbotDir = this.getSlashbotDir();
+    await mkdir(slashbotDir, { recursive: true });
+    await Bun.write(this.getHeartbeatConfigFile(), JSON.stringify(this.config, null, 2));
   }
 
   private async loadState(): Promise<void> {
     try {
-      const file = Bun.file(HEARTBEAT_STATE_FILE);
+      const file = Bun.file(this.getHeartbeatStateFile());
       if (await file.exists()) {
         const data = await file.json();
         this.state = { ...this.state, ...data };
@@ -105,8 +128,9 @@ export class HeartbeatService {
   private async saveState(): Promise<void> {
     try {
       const { mkdir } = await import('fs/promises');
-      await mkdir(HOME_SLASHBOT_DIR, { recursive: true });
-      await Bun.write(HEARTBEAT_STATE_FILE, JSON.stringify(this.state, null, 2));
+      const slashbotDir = this.getSlashbotDir();
+      await mkdir(slashbotDir, { recursive: true });
+      await Bun.write(this.getHeartbeatStateFile(), JSON.stringify(this.state, null, 2));
     } catch (err) {
       display.errorText(`[HEARTBEAT] Failed to save state: ${err}`);
     }
@@ -163,10 +187,10 @@ export class HeartbeatService {
       }
     }
 
-    await this.execute();
+    await this.execute({ silent: true });
   }
 
-  async execute(options?: { prompt?: string }): Promise<HeartbeatResult> {
+  async execute(options?: { prompt?: string; silent?: boolean }): Promise<HeartbeatResult> {
     if (this.executing) {
       return {
         type: 'ok',
@@ -175,6 +199,8 @@ export class HeartbeatService {
         duration: 0,
       };
     }
+
+    const silent = options?.silent ?? true;
 
     this.executing = true;
     const startTime = Date.now();
@@ -190,11 +216,37 @@ export class HeartbeatService {
         throw new Error('LLM handler not configured');
       }
 
-      const prompt = await this.buildHeartbeatPrompt(options?.prompt);
+      const promptInfo = await this.buildHeartbeatPrompt(options?.prompt);
+      if (promptInfo.skipRun) {
+        const duration = Date.now() - startTime;
+        result = {
+          type: 'ok',
+          content: '',
+          timestamp: new Date(),
+          duration,
+        };
 
-      const llmResult = await this.llmHandler(prompt);
+        this.state.lastRun = new Date().toISOString();
+        this.state.lastResult = 'ok';
+        this.state.totalRuns++;
+        this.state.consecutiveOks++;
+        await this.saveState();
+        if (!silent) {
+          await this.displayResult(result);
+        }
+        this.eventBus.emit({
+          type: 'heartbeat:complete',
+          result,
+        });
+        return result;
+      }
 
-      const parsed = parseHeartbeatResponse(llmResult.response, this.config.ackMaxChars || 300);
+      const llmResult = await this.llmHandler(promptInfo.prompt);
+
+      const parsed = parseHeartbeatResponse(
+        llmResult.response,
+        this.config.ackMaxChars ?? DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+      );
 
       const duration = Date.now() - startTime;
 
@@ -220,7 +272,9 @@ export class HeartbeatService {
 
       await this.saveState();
 
-      await this.displayResult(result);
+      if (!silent) {
+        await this.displayResult(result);
+      }
 
       this.eventBus.emit({
         type: 'heartbeat:complete',
@@ -240,7 +294,9 @@ export class HeartbeatService {
       this.state.lastRun = new Date().toISOString();
       await this.saveState().catch(() => {});
 
-      display.error(errorMsg);
+      if (!silent) {
+        display.error(errorMsg);
+      }
 
       this.eventBus.emit({
         type: 'heartbeat:error',
@@ -255,7 +311,9 @@ export class HeartbeatService {
     return result;
   }
 
-  private async buildHeartbeatPrompt(customPrompt?: string): Promise<string> {
+  private async buildHeartbeatPrompt(
+    customPrompt?: string,
+  ): Promise<{ prompt: string; skipRun: boolean }> {
     const basePrompt = customPrompt || this.config.prompt || DEFAULT_HEARTBEAT_PROMPT;
 
     const heartbeatMdPath = `${this.workDir}/HEARTBEAT.md`;
@@ -265,8 +323,10 @@ export class HeartbeatService {
       const file = Bun.file(heartbeatMdPath);
       if (await file.exists()) {
         const content = await file.text();
-        const meaningful = content.replace(/^#+\s*$/gm, '').trim();
-        if (meaningful.length > 0) {
+        if (isHeartbeatContentEffectivelyEmpty(content)) {
+          return { prompt: basePrompt, skipRun: true };
+        }
+        if (content.trim().length > 0) {
           heartbeatContext = `\n\n--- HEARTBEAT.md ---\n${content}\n--- END HEARTBEAT.md ---\n`;
         }
       }
@@ -274,7 +334,7 @@ export class HeartbeatService {
       // No HEARTBEAT.md file
     }
 
-    return basePrompt + heartbeatContext;
+    return { prompt: basePrompt + heartbeatContext, skipRun: false };
   }
 
   private async displayResult(result: HeartbeatResult): Promise<void> {

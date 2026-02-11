@@ -40,6 +40,28 @@ export async function runAgenticLoop(
   let truncatedContent = '';
   const startTime = Date.now();
 
+  // Ralph loop: retry-continuation guard to prevent premature stops
+  // On each ralph retry we strip previous ralph noise and re-inject a clean
+  // task-focused prompt so the model starts fresh instead of drowning in nudges.
+  let ralphRetries = 0;
+  const MAX_RALPH_RETRIES = 3;
+  const RALPH_TAG = '[ralph-nudge]';
+
+  // Capture the original user task from the last user message in history
+  const originalUserTask = (() => {
+    for (let i = ctx.sessionManager.history.length - 1; i >= 0; i--) {
+      const msg = ctx.sessionManager.history[i];
+      if (msg.role === 'user') {
+        return typeof msg.content === 'string'
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? msg.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join(' ')
+            : '';
+      }
+    }
+    return '';
+  })();
+
   // Edit safety guards
   const unresolvedEditPaths = new Set<string>();
   const MAX_BLOCKED_ENDS = 2;
@@ -118,6 +140,7 @@ export async function runAgenticLoop(
       const result = await streamResponse(ctx, {
         showThinking: isFirstIteration,
         displayStream: opts.displayStream,
+        quiet: opts.quiet ?? false,
         timeout: opts.iterationTimeout,
         thinkingLabel: opts.displayStream ? 'Reflection...' : 'Thinking...',
         tools: toolsParam,
@@ -154,6 +177,7 @@ export async function runAgenticLoop(
         try {
           const result = await streamResponse(ctx, {
             displayStream: opts.displayStream,
+            quiet: opts.quiet ?? false,
             tools: toolsParam,
           });
           responseContent = result.content;
@@ -261,12 +285,34 @@ export async function runAgenticLoop(
         break;
       }
 
-      // No actions at all (only unknown tools) — done
+      // No actions at all (only unknown tools) — ralph loop: nudge model to continue
       if (execCtx.actionResults.length === 0) {
-        break;
+        ralphRetries++;
+        if (ralphRetries >= MAX_RALPH_RETRIES) {
+          display.muted(`[Ralph] Model produced no actions after ${MAX_RALPH_RETRIES} nudges — stopping`);
+          break;
+        }
+        display.muted(`[Ralph] No actions detected — nudging model to continue (${ralphRetries}/${MAX_RALPH_RETRIES})`);
+
+        // Strip previous ralph nudges so context stays clean
+        ctx.sessionManager.history = ctx.sessionManager.history.filter(
+          m => !(m.role === 'user' && typeof m.content === 'string' && m.content.includes(RALPH_TAG)),
+        );
+
+        ctx.sessionManager.history.push({
+          role: 'user',
+          content: [
+            RALPH_TAG,
+            `You did not execute any action. Focus only on the task:`,
+            `"${originalUserTask}"`,
+            `Execute a tool NOW to make progress, or use the End tool if the task is done.`,
+          ].join('\n'),
+        });
+        continue;
       }
 
       // Reset retry counters on successful tool execution
+      ralphRetries = 0;
       emptyResponseRetries = 0;
       forcedRetryAttempted = false;
       useXmlFallback = false;
@@ -611,12 +657,35 @@ export async function runAgenticLoop(
         continue;
       }
 
-      // No actions, not a hallucination — done
+      // No actions, not a hallucination — ralph loop: nudge model instead of stopping
+      ralphRetries++;
+      if (ralphRetries >= MAX_RALPH_RETRIES) {
+        display.muted(`[Ralph] Model produced no actions after ${MAX_RALPH_RETRIES} nudges — stopping`);
+        ctx.sessionManager.history.push({ role: 'assistant', content: responseContent });
+        break;
+      }
+      display.muted(`[Ralph] No actions detected — nudging model to continue (${ralphRetries}/${MAX_RALPH_RETRIES})`);
+
+      // Strip previous ralph nudges so context stays clean
+      ctx.sessionManager.history = ctx.sessionManager.history.filter(
+        m => !(m.role === 'user' && typeof m.content === 'string' && m.content.includes(RALPH_TAG)),
+      );
+
       ctx.sessionManager.history.push({ role: 'assistant', content: responseContent });
-      break;
+      ctx.sessionManager.history.push({
+        role: 'user',
+        content: [
+          RALPH_TAG,
+          `You did not execute any action. Focus only on the task:`,
+          `"${originalUserTask}"`,
+          `Use an action tag (<read>, <edit>, <write>, <bash>, etc.) to make progress, or <end>message</end> if the task is done.`,
+        ].join('\n'),
+      });
+      continue;
     }
 
     // Reset retry counters on successful action execution
+    ralphRetries = 0;
     emptyResponseRetries = 0;
     forcedRetryAttempted = false;
 

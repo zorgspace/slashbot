@@ -3,7 +3,6 @@
  */
 
 import { display } from '../../core/ui';
-import { HOME_SKILLS_DIR } from '../../core/config/constants';
 import type { CommandHandler } from '../../core/commands/registry';
 import { TYPES } from '../../core/di/types';
 import type { SkillManager } from './services/SkillManager';
@@ -34,7 +33,7 @@ export const skillCommand: CommandHandler = {
           display.append('');
           display.muted('No skills installed');
           display.muted('Install with: /skill install <url>');
-          display.muted('Skills are stored in ' + HOME_SKILLS_DIR + '/');
+          display.muted('Skills are stored in ./.slashbot/skills/');
           display.append('');
         } else {
           display.append('');

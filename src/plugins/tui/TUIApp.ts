@@ -127,6 +127,7 @@ export class TUIApp implements UIOutput {
       flexDirection: 'column',
       flexGrow: 1,
       justifyContent: 'flex-end',
+      padding:2
     });
 
     // Chat panel

@@ -387,6 +387,63 @@ export class LLMClient implements ClientContext {
   }
 
   /**
+   * Run a stateless request in an isolated temporary session.
+   * Used by background systems (e.g. heartbeat) to avoid contaminating chat context.
+   */
+  async chatIsolated(
+    userMessage: string,
+    options?: {
+      quiet?: boolean;
+      includeFileContext?: boolean;
+      continueActions?: boolean;
+      maxIterations?: number;
+    },
+  ): Promise<{ response: string; thinking: string }> {
+    const scopeId = `__isolated_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const scope = this.sessionManager.scoped(scopeId);
+    scope.displayedContent = '';
+    scope.history.push({ role: 'user', content: userMessage });
+
+    const ctx: ClientContext = {
+      authProvider: this.authProvider,
+      sessionManager: scope,
+      config: this.config,
+      usage: this.usage,
+      thinkingActive: false,
+      abortController: null,
+      rawOutputCallback: this.rawOutputCallback,
+      actionHandlers: this.actionHandlers,
+      providerRegistry: this.providerRegistry,
+      toolRegistry: this.toolRegistry,
+      getModel: () => this.getModel(),
+      getProvider: () => this.getProvider(),
+      estimateTokens: () => this.estimateTokens(),
+    };
+
+    try {
+      const result = await runAgenticLoop(ctx, false, {
+        displayStream: false,
+        quiet: options?.quiet ?? true,
+        maxIterations: options?.maxIterations ?? AGENTIC.MAX_ITERATIONS_CONNECTOR,
+        cacheFileContents: false,
+        includeFileContext: options?.includeFileContext ?? false,
+        tokenLimitStrategy: 'condense',
+        hallucinationDetection: 'basic',
+        emptyResponseRetry: false,
+        editTagDebug: false,
+        continueActions: options?.continueActions ?? false,
+        maxConsecutiveErrors: AGENTIC.MAX_CONSECUTIVE_ERRORS,
+      });
+
+      const response = cleanSelfDialogue(cleanXmlTags(result.endMessage || result.finalResponse)).trim();
+      return { response, thinking: result.finalThinking };
+    } finally {
+      this.sessionManager.deleteSession(scopeId);
+      this.responseEndCallback?.();
+    }
+  }
+
+  /**
    * Chat with action execution for Telegram/Discord
    */
   async chatWithResponse(

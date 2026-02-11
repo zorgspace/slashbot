@@ -33,7 +33,7 @@ export const heartbeatHandler: CommandHandler = {
     if (!subcommand || subcommand === 'now' || subcommand === 'trigger') {
       display.muted('');
       display.muted('  Triggering heartbeat...');
-      await heartbeatService.execute();
+      await heartbeatService.execute({ silent: false });
       return true;
     }
 

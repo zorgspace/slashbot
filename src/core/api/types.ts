@@ -63,6 +63,7 @@ export interface ToolCallResult {
 export interface StreamOptions {
   showThinking?: boolean;
   displayStream?: boolean;
+  quiet?: boolean;
   timeout?: number;
   thinkingLabel?: string;
   /** AI SDK tools map to pass to generateText(). When set, enables native tool calling. */
@@ -87,6 +88,7 @@ export interface StreamResult {
  */
 export interface AgenticLoopOptions {
   displayStream: boolean;
+  quiet?: boolean;
   maxIterations: number;
   iterationTimeout?: number;
   overallTimeout?: number;

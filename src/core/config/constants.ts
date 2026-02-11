@@ -11,16 +11,23 @@ import * as os from 'os';
 // DIRECTORY PATHS
 // ============================================================================
 
-// Home directory: credentials, skills, connector locks (shared across all projects)
+// Home directory: credentials only
 export const HOME_SLASHBOT_DIR = path.join(os.homedir(), '.slashbot');
-export const HOME_CONFIG_FILE = path.join(HOME_SLASHBOT_DIR, 'config', 'config.json');
-export const PROMPTS_DIR = path.join(HOME_SLASHBOT_DIR, 'prompts');
-export const HOME_SKILLS_DIR = path.join(HOME_SLASHBOT_DIR, 'skills');
-export const HOME_LOCKS_DIR = path.join(HOME_SLASHBOT_DIR, 'locks');
+export const HOME_CREDENTIALS_FILE = path.join(HOME_SLASHBOT_DIR, 'credentials.json');
 
 // Local directory: project-specific data (history, tasks)
 export const getLocalSlashbotDir = (workDir?: string) =>
   path.join(workDir || process.cwd(), '.slashbot');
+export const getLocalConfigDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'config');
+export const getLocalConfigFile = (workDir?: string) =>
+  path.join(getLocalConfigDir(workDir), 'config.json');
+export const getLocalPromptsDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'prompts');
+export const getLocalSkillsDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'skills');
+export const getLocalLocksDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'locks');
 export const getLocalHistoryFile = (workDir?: string) =>
   path.join(getLocalSlashbotDir(workDir), 'history');
 export const getLocalTasksFile = (workDir?: string) =>
@@ -69,7 +76,7 @@ export const DEFAULT_PROVIDER_CONFIG = GROK_CONFIG;
 // PROXY CONFIGURATION (slashbot-web)
 // ============================================================================
 
-const WALLET_CONFIG_PATH = path.join(os.homedir(), '.slashbot', 'wallet-config.json');
+const WALLET_CONFIG_PATH = path.join(getLocalSlashbotDir(), 'wallet-config.json');
 
 interface WalletConfigFile {
   walletAddress: string;

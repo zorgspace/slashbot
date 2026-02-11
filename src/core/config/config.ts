@@ -4,10 +4,15 @@
  *
  * Credentials are stored in ~/.slashbot (home directory) for global access
  * - credentials.json: all secrets (API keys, provider creds, bot tokens)
- * - config/config.json: non-secret settings (model, provider name, temperature)
+ * - .slashbot/config/config.json (cwd): non-secret settings (model, provider name, temperature)
  */
 
-import { HOME_SLASHBOT_DIR, HOME_CONFIG_FILE } from './constants';
+import {
+  HOME_CREDENTIALS_FILE,
+  getLocalConfigDir,
+  getLocalConfigFile,
+  getLocalSlashbotDir,
+} from './constants';
 
 export interface TelegramConfig {
   botToken: string;
@@ -39,9 +44,9 @@ export interface SlashbotConfig {
 }
 
 // Use home directory for credentials (shared across all projects)
-const CONFIG_DIR = HOME_SLASHBOT_DIR;
-const CONFIG_FILE = HOME_CONFIG_FILE;
-const CREDENTIALS_FILE = `${HOME_SLASHBOT_DIR}/credentials.json`;
+const CONFIG_DIR = getLocalSlashbotDir();
+const CONFIG_FILE = getLocalConfigFile();
+const CREDENTIALS_FILE = HOME_CREDENTIALS_FILE;
 
 export class ConfigManager {
   private config: SlashbotConfig = {};
@@ -206,7 +211,7 @@ export class ConfigManager {
 
   async saveConfig(config: Partial<SlashbotConfig>): Promise<void> {
     const { mkdir } = await import('fs/promises');
-    const configDir = HOME_SLASHBOT_DIR + '/config';
+    const configDir = getLocalConfigDir();
     await mkdir(configDir, { recursive: true });
 
     // Separate secrets from non-secret config
