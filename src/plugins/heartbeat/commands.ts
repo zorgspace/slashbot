@@ -3,6 +3,8 @@
  */
 
 import { display } from '../../core/ui';
+import { fg, bold } from '@opentui/core';
+import { theme } from '../../core/ui/theme';
 import type { CommandHandler, CommandContext } from '../../core/commands/registry';
 import { TYPES } from '../../core/di/types';
 import { parseDuration, formatDuration } from './services';
@@ -39,20 +41,20 @@ export const heartbeatHandler: CommandHandler = {
     if (subcommand === 'status' || subcommand === 's') {
       const status = heartbeatService.getStatus();
 
-      display.append('');
-      display.boldText('  Heartbeat Status');
-      display.append('');
-      display.append('  Running:    ' + (status.running ? 'Yes' : 'No'));
-      display.append('  Enabled:    ' + (status.enabled ? 'Yes' : 'No'));
-      display.append('  Interval:   ' + status.interval);
-      display.append('  Next run:   ' + (status.nextRun || 'N/A'));
-      display.append('  Last run:   ' + (status.lastRun || 'Never'));
-      display.append('');
-      display.muted('  Statistics:');
-      display.append('    Total runs:      ' + status.totalRuns);
-      display.append('    Total alerts:    ' + status.totalAlerts);
-      display.append('    Consecutive OKs: ' + status.consecutiveOks);
-      display.append('');
+      const statusBlock = `${bold(fg(theme.accent)('  Heartbeat Status'))}
+
+  Running:    ${status.running ? fg(theme.success)('Yes') : fg(theme.warning)('No')}
+  Enabled:    ${status.enabled ? fg(theme.success)('Yes') : fg(theme.warning)('No')}
+  Interval:   ${status.interval}
+  Next run:   ${status.nextRun || 'N/A'}
+  Last run:   ${status.lastRun || 'Never'}
+
+${fg(theme.muted)('  Statistics:')}
+    Total runs:      ${status.totalRuns}
+    Total alerts:    ${status.totalAlerts}
+    Consecutive OKs: ${status.consecutiveOks}
+`;
+      display.append(statusBlock);
       return true;
     }
 
@@ -60,27 +62,27 @@ export const heartbeatHandler: CommandHandler = {
     if (subcommand === 'config' || subcommand === 'c') {
       const config = heartbeatService.getConfig();
 
-      display.append('');
-      display.boldText('  Heartbeat Configuration');
-      display.append('');
-      display.muted('  enabled:     ' + (config.enabled ?? true));
-      display.muted('  period:      ' + (config.period || '30m'));
-      display.muted('  ackMaxChars: ' + (config.ackMaxChars || 300));
+      const configBlock = `${fg(bold(theme.accent)('  Heartbeat Configuration'))}
 
-      if (config.activeHours) {
-        display.muted(
-          '  activeHours: ' + config.activeHours.start + ' - ' + config.activeHours.end,
-        );
-      }
+  enabled:     ${fg((config.enabled ?? true) ? theme.success : theme.warning)(String(config.enabled ?? true))}
+  period:      ${fg(theme.muted)(config.period || '30m')}
+  ackMaxChars: ${fg(theme.muted)(String(config.ackMaxChars || 300))}
 
-      if (config.visibility) {
-        display.muted('  visibility:');
-        display.append('    showOk:       ' + (config.visibility.showOk ?? false));
-        display.append('    showAlerts:   ' + (config.visibility.showAlerts ?? true));
-        display.append('    useIndicator: ' + (config.visibility.useIndicator ?? true));
-      }
+${config.activeHours ? fg(theme.muted)('  activeHours: ' + config.activeHours.start + ' - ' + config.activeHours.end) + '\n' : ''}
 
-      display.append('');
+${
+  config.visibility
+    ? `
+  visibility:
+    showOk:       ${fg((config.visibility.showOk ?? false) ? theme.success : theme.warning)((config.visibility.showOk ?? false).toString())}
+    showAlerts:   ${fg((config.visibility.showAlerts ?? true) ? theme.success : theme.warning)((config.visibility.showAlerts ?? true).toString())}
+    useIndicator: ${fg((config.visibility.useIndicator ?? true) ? theme.success : theme.warning)((config.visibility.useIndicator ?? true).toString())}
+`
+    : ''
+}
+
+`;
+      display.append(configBlock);
       return true;
     }
 
@@ -108,8 +110,6 @@ export const heartbeatHandler: CommandHandler = {
       display.successText('  Heartbeat interval set to ' + formatDuration(ms));
       return true;
     }
-
-
 
     // Enable
     if (subcommand === 'enable' || subcommand === 'on') {
@@ -169,20 +169,20 @@ export const heartbeatHandler: CommandHandler = {
     }
 
     // Unknown subcommand - show help
-    display.append('');
-    display.boldText('  Heartbeat Commands');
-    display.append('');
-    display.append('  /heartbeat              Trigger heartbeat now');
-    display.append('  /heartbeat status       Show status and statistics');
-    display.append('  /heartbeat config       Show current configuration');
-    display.append('  /heartbeat period 30m   Set interval (30m, 1h, 2h30m)');
-    display.append('  /heartbeat enable       Enable heartbeat');
-    display.append('  /heartbeat disable      Disable heartbeat');
-    display.append('  /heartbeat hours 8:00-22:00  Set active hours');
-    display.append('  /heartbeat md           Show HEARTBEAT.md content');
-    display.append('');
-    display.muted('  Create a HEARTBEAT.md file to guide the agent during heartbeats.');
-    display.append('');
+    const helpBlock = `${fg(bold(theme.accent)('  Heartbeat Commands '))}
+
+  /heartbeat              ${fg(theme.muted)('Trigger heartbeat now')}
+  /heartbeat status       ${fg(theme.muted)('Show status and statistics')}
+  /heartbeat config       ${fg(theme.muted)('Show current configuration')}
+  /heartbeat period 30m   ${fg(theme.muted)('Set interval (30m, 1h, 2h30m)')}
+  /heartbeat enable       ${fg(theme.muted)('Enable heartbeat')}
+  /heartbeat disable      ${fg(theme.muted)('Disable heartbeat')}
+  /heartbeat hours 8:00-22:00  ${fg(theme.muted)('Set active hours')}
+  /heartbeat md           ${fg(theme.muted)('Show HEARTBEAT.md content')}
+
+${fg(theme.muted)('  Create a HEARTBEAT.md file to guide the agent during heartbeats.')}
+`;
+    display.append(helpBlock);
 
     return true;
   },

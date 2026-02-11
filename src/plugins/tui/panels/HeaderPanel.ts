@@ -54,9 +54,7 @@ export class HeaderPanel {
     });
 
     // Logo with shadow
-    const logoContent = LOGO_LINES.map(
-      l => l.main + l.shadow,
-    ).join('\n');
+    const logoContent = LOGO_LINES.map(l => l.main + l.shadow).join('\n');
     const logoText = new TextRenderable(renderer, {
       id: 'header-logo',
       content: t`${fg(theme.accent)(logoContent)}`,
@@ -150,8 +148,8 @@ export class HeaderPanel {
       statusBox.add(text);
     };
 
-    // Model line with diamond indicator
-    addLine('model', t`${fg(theme.primary)('◆')} ${fg(theme.white)(data.provider)}: ${data.model}`);
+    // Model config block
+    addLine(`model`, t`${fg(theme.primary)('◆')} ${data.model || '[none]'}`);
 
     // Render all dynamic sidebar items
     for (const item of data.items) {

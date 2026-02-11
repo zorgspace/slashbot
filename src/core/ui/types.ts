@@ -7,6 +7,17 @@ import type { StyledText } from '@opentui/core';
 export interface UIOutput {
   appendChat(content: string): void;
   appendStyledChat(content: StyledText | string): void;
+  appendAssistantChat(content: StyledText | string): void;
+  startAction(content: StyledText | string): void;
+  appendActionContent(content: StyledText | string): void;
+  completeAction(content: StyledText | string): void;
+  startResponse(): void;
+  appendResponse(chunk: string): void;
+  endResponse(): void;
+  startAssistantBlock(): void;
+  appendAssistantBlockLine(content: StyledText | string): void;
+  addAssistantBlockCode(content: string, filetype?: string): void;
+  endAssistantBlock(): void;
   appendCodeBlock(content: string, filetype?: string): void;
   appendDiffBlock(diff: string, filetype?: string): void;
   appendThinking(chunk: string): void;
@@ -37,6 +48,7 @@ export interface SidebarStatusItem {
 export interface SidebarData {
   model: string;
   provider: string;
+  availableModels: string[];
   items: SidebarStatusItem[];
 }
 

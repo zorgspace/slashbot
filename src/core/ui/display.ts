@@ -43,6 +43,7 @@ class DisplayService {
   private tui: UIOutput | null = null;
   private thinkingStartTime = 0;
   private thinkingCallback: ((chunk: string) => void) | null = null;
+  private pendingAction: StyledText | null = null;
 
   bindTUI(tui: UIOutput): void {
     this.tui = tui;
@@ -79,6 +80,26 @@ class DisplayService {
     }
   }
 
+  appendAssistant(text: string): void {
+    if (this.tui) {
+      this.tui.appendAssistantChat(text);
+    } else {
+      console.log(`\x1b[38;2;157;124;216m┃\x1b[0m ${text}`);
+    }
+  }
+
+  appendAssistantStyled(content: StyledText | string): void {
+    if (this.tui) {
+      this.tui.appendAssistantChat(content);
+    } else {
+      const plain =
+        typeof content === 'string'
+          ? this.stripAnsi(content)
+          : content.chunks.map(c => c.text).join('');
+      console.log(`\x1b[38;2;157;124;216m┃\x1b[0m ${plain}`);
+    }
+  }
+
   // === Step methods (replaces step.* from display/step.ts) ===
 
   newline(): void {
@@ -87,15 +108,11 @@ class DisplayService {
 
   message(text: string): void {
     this.appendStyled(t`${fg(theme.primary)('\u25CF')} ${text}`);
-    this.newline();
   }
 
   tool(name: string, args?: string): void {
-    this.newline();
-    this.scrollToBottom();
-    const icon = TOOL_ICONS[name] || '\u25CF';
-    const argsStr = args ? `(${args})` : '';
-    this.appendStyled(t`${fg(theme.primary)(icon)} ${fg(theme.accent)(name)}${argsStr}`);
+    const context = args ? t` ${fg(theme.muted)('-')} ${args}` : t``;
+    this._startAction(this._mergeStyled(t`${bold(fg(theme.accent)(name))}`, context));
   }
 
   result(text: string, isError = false): void {
@@ -107,13 +124,12 @@ class DisplayService {
     const lines = text.split('\n');
     lines.forEach((line, i) => {
       const checkmark = i === 0 && isSuccess && !isError ? '\u2713 ' : '';
-      const prefix = i === 0 ? '\u23BF  ' : '   ';
       if (isError) {
-        this.appendStyled(t`  ${fg(theme.error)(prefix + checkmark + line)}`);
+        this.appendAssistantStyled(t`${fg(theme.error)(checkmark + line)}`);
       } else if (isSuccess) {
-        this.appendStyled(t`  ${fg(theme.success)(prefix + checkmark + line)}`);
+        this.appendAssistantStyled(t`${fg(theme.success)(checkmark + line)}`);
       } else {
-        this.appendStyled(t`  ${fg(theme.white)(prefix + checkmark + line)}`);
+        this.appendAssistantStyled(t`${fg(theme.white)(checkmark + line)}`);
       }
     });
   }
@@ -122,8 +138,10 @@ class DisplayService {
     this._stepAction('Read', path, output);
   }
 
-  readResult(lineCount: number): void {
-    this.appendStyled(t`  ${fg(theme.white)('\u23BF  Read ' + lineCount + ' lines')}`);
+  readResult(path: string, lineCount: number): void {
+    this._endAction(
+      t`${bold(fg(theme.accent)('Read'))} ${fg(theme.muted)('-')} ${path} ${fg(theme.muted)(lineCount + ' lines')}`,
+    );
   }
 
   grep(pattern: string, filePattern?: string, output?: string): void {
@@ -131,46 +149,40 @@ class DisplayService {
     this._stepAction('Grep', args, output);
   }
 
-  grepResult(matches: number, preview?: string): void {
-    if (matches === 0) {
-      this.appendStyled(t`  ${fg(theme.white)('\u23BF  No matches found')}`);
-    } else {
-      this.appendStyled(
-        t`  ${fg(theme.white)('\u23BF  Found ' + matches + ' match' + (matches > 1 ? 'es' : ''))}`,
-      );
-      if (preview) {
-        preview.split('\n').forEach(line => {
-          this.appendStyled(t`     ${fg(theme.white)(line)}`);
-        });
-      }
+  grepResult(
+    pattern: string,
+    filePattern: string | undefined,
+    matches: number,
+    preview?: string,
+  ): void {
+    const args = filePattern ? `"${pattern}", "${filePattern}"` : `"${pattern}"`;
+    const resultText =
+      matches === 0 ? 'No matches' : matches + ' match' + (matches > 1 ? 'es' : '');
+    if (matches > 0 && preview) {
+      preview.split('\n').forEach(line => {
+        this._appendActionContent(t`${fg(theme.muted)(line)}`);
+      });
     }
+    this._endAction(
+      t`${bold(fg(theme.accent)('Grep'))} ${fg(theme.muted)('-')} ${args} ${fg(theme.muted)(resultText)}`,
+    );
   }
 
   bash(command: string, _output?: string): void {
-    this.newline();
-    this.scrollToBottom();
-    this.appendStyled(t`${fg(theme.primary)('$')} ${fg(theme.accent)('Exec')}(${command})`);
+    this._startAction(t`${bold(fg(theme.accent)('Exec'))} ${fg(theme.muted)('-')} ${command}`);
   }
 
   bashResult(_command: string, output: string, exitCode = 0): void {
     const isError = exitCode !== 0 || output.startsWith('Error:');
-    // Route command output through TUI-safe console (intercepted by OutputInterceptor)
-    const lines = output.split('\n').filter(l => l.trim());
-    if (lines.length > 0) {
-      const maxPreview = 10;
-      const preview = lines.slice(0, maxPreview);
-      for (const line of preview) {
-        console.log(line);
-      }
-      if (lines.length > maxPreview) {
-        console.log(`... ${lines.length - maxPreview} more lines`);
-      }
-    }
-    // Status in chat panel
-    if (isError) {
-      this.appendStyled(t`  ${fg(theme.error)('\u23BF  \u2717 Failed (exit ' + exitCode + ')')}`);
+    // Complete the action title with status
+    // Output content is captured by action box redirect from OutputInterceptor
+    const resultStatus = isError
+      ? t`${fg(theme.error)('\u2717 exit ' + exitCode)}`
+      : t`${fg(theme.success)('\u2713')}`;
+    if (this.pendingAction) {
+      this._endAction(this._mergeStyled(this.pendingAction, t` `, resultStatus));
     } else {
-      this.appendStyled(t`  ${fg(theme.success)('\u23BF  \u2713 Done')}`);
+      this._endAction(resultStatus);
     }
   }
 
@@ -178,25 +190,33 @@ class DisplayService {
     this._stepAction('Edit', path, output);
   }
 
-  updateResult(success: boolean, _removed: number, _added: number): void {
-    if (success) {
-      this.appendStyled(t`  ${fg(theme.success)('\u23BF  Updated')}`);
-    } else {
-      this.appendStyled(t`  ${fg(theme.error)('\u23BF  Failed - pattern not found')}`);
-    }
+  updateResult(path: string, success: boolean, _removed: number, _added: number): void {
+    const status = success
+      ? t`${fg(theme.success)('\u2713')}`
+      : t`${fg(theme.error)('\u2717 pattern not found')}`;
+    this._endAction(
+      this._mergeStyled(
+        t`${bold(fg(theme.accent)('Edit'))} ${fg(theme.muted)('-')} ${path} `,
+        status,
+      ),
+    );
   }
 
   write(path: string, output?: string): void {
     this._stepAction('Create', path, output);
   }
 
-  writeResult(success: boolean, lineCount?: number): void {
-    if (success) {
-      const info = lineCount ? ` (${lineCount} lines)` : '';
-      this.appendStyled(t`  ${fg(theme.success)('\u23BF  Created' + info)}`);
-    } else {
-      this.appendStyled(t`  ${fg(theme.error)('\u23BF  Failed to create file')}`);
-    }
+  writeResult(path: string, success: boolean, lineCount?: number): void {
+    const info = lineCount ? ` ${lineCount} lines` : '';
+    const status = success
+      ? t`${fg(theme.success)('\u2713' + info)}`
+      : t`${fg(theme.error)('\u2717 failed')}`;
+    this._endAction(
+      this._mergeStyled(
+        t`${bold(fg(theme.accent)('Create'))} ${fg(theme.muted)('-')} ${path} `,
+        status,
+      ),
+    );
   }
 
   schedule(name: string, cron: string, output?: string): void {
@@ -208,15 +228,15 @@ class DisplayService {
   }
 
   success(msg: string): void {
-    this.appendStyled(t`  ${fg(theme.success)('\u23BF  \u2713 ' + msg)}`);
+    this.appendAssistantStyled(t`${fg(theme.success)('\u2713 ' + msg)}`);
   }
 
   error(msg: string): void {
-    this.appendStyled(t`  ${fg(theme.error)('\u23BF  Error: ' + msg)}`);
+    this.appendAssistantStyled(t`${fg(theme.error)('Error: ' + msg)}`);
   }
 
   warning(msg: string): void {
-    this.appendStyled(t`  ${fg(theme.warning)('\u23BF  \u26A0 ' + msg)}`);
+    this.appendAssistantStyled(t`${fg(theme.warning)('\u26A0 ' + msg)}`);
   }
 
   diff(removed: string[], added: string[], filePath?: string, lineStart = 1): void {
@@ -250,7 +270,7 @@ class DisplayService {
     if (removed.length > 0)
       parts.push(`removed ${removed.length} line${removed.length > 1 ? 's' : ''}`);
     if (parts.length > 0) {
-      this.appendStyled(t`      ${fg(theme.muted)(parts.join(', '))}`);
+      this.appendAssistantStyled(t`${fg(theme.muted)(parts.join(', '))}`);
     }
   }
 
@@ -263,7 +283,12 @@ class DisplayService {
   }
 
   imageResult(): void {
-    this.appendStyled(t`  ${fg(theme.success)('\u23BF  Ready')}`);
+    const result = t`${fg(theme.success)('\u2713 Ready')}`;
+    if (this.pendingAction) {
+      this._endAction(this._mergeStyled(this.pendingAction, t` `, result));
+    } else {
+      this._endAction(result);
+    }
   }
 
   connector(source: string, action: string, output?: string): void {
@@ -272,15 +297,16 @@ class DisplayService {
   }
 
   connectorResult(msg: string): void {
-    this.appendStyled(t`  ${fg(theme.white)('\u23BF  ' + msg)}`);
+    const result = t`${fg(theme.muted)(msg)}`;
+    if (this.pendingAction) {
+      this._endAction(this._mergeStyled(this.pendingAction, t` `, result));
+    } else {
+      this._endAction(result);
+    }
   }
 
   say(msg: string): void {
-    this.appendStyled(t`${fg(theme.white)('\u25CB')} ${fg(theme.white)('Say')}()`);
-    msg.split('\n').forEach((line, i) => {
-      const prefix = i === 0 ? '\u23BF  ' : '   ';
-      this.appendStyled(t`  ${fg(theme.white)(prefix + line)}`);
-    });
+    this.appendAssistantStyled(t`${fg(theme.primary)('\u25CB')} ${fg(theme.accent)('Say')}()`);
   }
 
   heartbeat(mode: string = 'reflection'): void {
@@ -296,10 +322,13 @@ class DisplayService {
   }
 
   heartbeatUpdateResult(success: boolean): void {
-    if (success) {
-      this.appendStyled(t`  ${fg(theme.success)('\u23BF  Updated HEARTBEAT.md')}`);
+    const result = success
+      ? t`${fg(theme.success)('\u2713 Updated HEARTBEAT.md')}`
+      : t`${fg(theme.error)('\u2717 Failed to update HEARTBEAT.md')}`;
+    if (this.pendingAction) {
+      this._endAction(this._mergeStyled(this.pendingAction, t` `, result));
     } else {
-      this.appendStyled(t`  ${fg(theme.error)('\u23BF  Failed to update HEARTBEAT.md')}`);
+      this._endAction(result);
     }
   }
 
@@ -318,7 +347,7 @@ class DisplayService {
   }
 
   muted(text: string): void {
-    this.appendStyled(t`${fg(theme.muted)(text)}`);
+    this.appendAssistantStyled(t`${fg(theme.muted)(text)}`);
   }
 
   info(text: string): void {
@@ -326,7 +355,7 @@ class DisplayService {
   }
 
   errorText(text: string): void {
-    this.appendStyled(t`${fg(theme.error)(text)}`);
+    this.appendAssistantStyled(t`${fg(theme.error)(text)}`);
   }
 
   successText(text: string): void {
@@ -450,27 +479,83 @@ class DisplayService {
 
   // === Markdown rendering (replaces say/executors.ts renderMarkdown) ===
 
-  renderMarkdown(text: string): void {
+  renderMarkdown(text: string, bordered = false): void {
+    // When bordered + TUI: render all lines inside a single bordered block
+    if (bordered && this.tui) {
+      this.tui.startAssistantBlock();
+
+      const lines = text.split('\n');
+      let inCodeBlock = false;
+      let codeBlockLang = '';
+      let codeBlockLines: string[] = [];
+
+      for (const line of lines) {
+        if (line.startsWith('```')) {
+          if (!inCodeBlock) {
+            inCodeBlock = true;
+            codeBlockLang = line.slice(3).trim();
+            codeBlockLines = [];
+          } else {
+            const content = codeBlockLines.join('\n');
+            this.tui.addAssistantBlockCode(content, codeBlockLang || undefined);
+            inCodeBlock = false;
+            codeBlockLang = '';
+            codeBlockLines = [];
+          }
+          continue;
+        }
+
+        if (inCodeBlock) {
+          codeBlockLines.push(line);
+          continue;
+        }
+
+        if (line.startsWith('### ')) {
+          this.tui.appendAssistantBlockLine(t`${bold(fg(theme.accent)(line))}`);
+        } else if (line.startsWith('## ')) {
+          this.tui.appendAssistantBlockLine(t`${bold(fg(theme.primary)(line))}`);
+        } else if (line.startsWith('# ')) {
+          this.tui.appendAssistantBlockLine(t`${bold(fg(theme.accent)(line))}`);
+        } else if (line.startsWith('> ')) {
+          this.tui.appendAssistantBlockLine(t`${fg(theme.muted)('\u2502 ' + line.slice(2))}`);
+        } else if (/^[-*] /.test(line)) {
+          this.tui.appendAssistantBlockLine(t`${fg(theme.primary)('\u2022')} ${line.slice(2)}`);
+        } else {
+          this.tui.appendAssistantBlockLine(t`${fg(theme.white)(line)}`);
+        }
+      }
+
+      if (inCodeBlock && codeBlockLines.length > 0) {
+        const content = codeBlockLines.join('\n');
+        this.tui.addAssistantBlockCode(content, codeBlockLang || undefined);
+      }
+
+      this.tui.endAssistantBlock();
+      return;
+    }
+
+    // Non-bordered or console fallback
+    const appendLine = bordered
+      ? (content: StyledText | string) => this.appendAssistantStyled(content)
+      : (content: StyledText | string) => this.appendStyled(content);
+    const appendPlain = bordered
+      ? (text: string) => this.appendAssistant(text)
+      : (text: string) => this.append(text);
+
     const lines = text.split('\n');
     let inCodeBlock = false;
     let codeBlockLang = '';
     let codeBlockLines: string[] = [];
 
     for (const line of lines) {
-      // Code fence open/close
       if (line.startsWith('```')) {
         if (!inCodeBlock) {
           inCodeBlock = true;
           codeBlockLang = line.slice(3).trim();
           codeBlockLines = [];
         } else {
-          // Close code block - render with CodeRenderable or fallback
           const content = codeBlockLines.join('\n');
-          if (this.tui) {
-            this.tui.appendCodeBlock(content, codeBlockLang || undefined);
-          } else {
-            console.log(content);
-          }
+          console.log(content);
           inCodeBlock = false;
           codeBlockLang = '';
           codeBlockLines = [];
@@ -483,47 +568,36 @@ class DisplayService {
         continue;
       }
 
-      // Headers
       if (line.startsWith('### ')) {
-        this.appendStyled(t`${bold(fg(theme.accent)(line))}`);
+        appendLine(t`${bold(fg(theme.accent)(line))}`);
       } else if (line.startsWith('## ')) {
-        this.appendStyled(t`${bold(fg(theme.primary)(line))}`);
+        appendLine(t`${bold(fg(theme.primary)(line))}`);
       } else if (line.startsWith('# ')) {
-        this.appendStyled(t`${bold(fg(theme.accent)(line))}`);
-      }
-      // Blockquotes
-      else if (line.startsWith('> ')) {
-        this.appendStyled(t`${fg(theme.muted)('\u2502 ' + line.slice(2))}`);
-      }
-      // List items
-      else if (/^[-*] /.test(line)) {
-        this.appendStyled(t`${fg(theme.primary)('\u2022')} ${line.slice(2)}`);
-      }
-      // Regular text
-      else {
-        this.append(line);
+        appendLine(t`${bold(fg(theme.accent)(line))}`);
+      } else if (line.startsWith('> ')) {
+        appendLine(t`${fg(theme.muted)('\u2502 ' + line.slice(2))}`);
+      } else if (/^[-*] /.test(line)) {
+        appendLine(t`${fg(theme.primary)('\u2022')} ${line.slice(2)}`);
+      } else {
+        appendPlain(line);
       }
     }
 
-    // Handle unclosed code block
     if (inCodeBlock && codeBlockLines.length > 0) {
       const content = codeBlockLines.join('\n');
-      if (this.tui) {
-        this.tui.appendCodeBlock(content, codeBlockLang || undefined);
-      } else {
-        console.log(content);
-      }
+      console.log(content);
     }
 
-    this.newline();
+    if (!bordered) {
+      this.newline();
+    }
   }
 
   // === Say result display (replaces process.stdout.write for say actions) ===
 
   sayResult(msg: string): void {
-    this.newline();
     this.scrollToBottom();
-    this.renderMarkdown(msg);
+    this.renderMarkdown(msg, true);
   }
 
   // === Prompt confirmation (y/n) ===
@@ -550,16 +624,43 @@ class DisplayService {
 
   // === Private helpers ===
 
+  private _mergeStyled(...parts: StyledText[]): StyledText {
+    return { chunks: parts.flatMap(p => p.chunks) } as StyledText;
+  }
+
+  private _startAction(content: StyledText): void {
+    this.pendingAction = content;
+    this.tui?.startAction(content);
+  }
+
+  private _endAction(content: StyledText): void {
+    if (this.pendingAction && this.tui) {
+      this.tui.completeAction(content);
+    } else {
+      this.appendAssistantStyled(content);
+    }
+    this.pendingAction = null;
+  }
+
+  private _appendActionContent(content: StyledText): void {
+    if (this.tui) {
+      this.tui.appendActionContent(content);
+    } else {
+      const plain = content.chunks.map(c => c.text).join('');
+      console.log(`  ${plain}`);
+    }
+  }
+
   private _stepAction(name: string, param: string, output?: string): void {
-    this.newline();
-    this.scrollToBottom();
-    const icon = TOOL_ICONS[name] || '\u25CF';
-    this.appendStyled(t`${fg(theme.primary)(icon)} ${fg(theme.accent)(name)}(${param})`);
+    const actionText = t`${bold(fg(theme.accent)(name))} ${fg(theme.muted)('-')} ${param}`;
     if (output !== undefined) {
-      output.split('\n').forEach((line, i) => {
-        const prefix = i === 0 ? '\u23BF  ' : '   ';
-        this.appendStyled(t`  ${fg(theme.white)(prefix + line)}`);
+      this._startAction(actionText);
+      output.split('\n').forEach(line => {
+        this._appendActionContent(t`${fg(theme.muted)(line)}`);
       });
+      this._endAction(actionText);
+    } else {
+      this._startAction(actionText);
     }
   }
 
@@ -602,13 +703,13 @@ export const display = new DisplayService();
 const ESC = '\x1b[';
 const RESET = `${ESC}0m`;
 const ANSI = {
-  primary: `${ESC}38;2;250;178;131m`,   // #fab283 warm amber
-  accent: `${ESC}38;2;157;124;216m`,     // #9d7cd8 violet
-  secondary: `${ESC}38;2;92;156;245m`,   // #5c9cf5 blue
-  green: `${ESC}38;2;127;216;143m`,      // #7fd88f
-  red: `${ESC}38;2;224;108;117m`,        // #e06c75
-  muted: `${ESC}38;2;110;110;110m`,      // #6e6e6e
-  white: `${ESC}38;2;212;212;212m`,      // #d4d4d4
+  primary: `${ESC}38;2;250;178;131m`, // #fab283 warm amber
+  accent: `${ESC}38;2;157;124;216m`, // #9d7cd8 violet
+  secondary: `${ESC}38;2;92;156;245m`, // #5c9cf5 blue
+  green: `${ESC}38;2;127;216;143m`, // #7fd88f
+  red: `${ESC}38;2;224;108;117m`, // #e06c75
+  muted: `${ESC}38;2;110;110;110m`, // #6e6e6e
+  white: `${ESC}38;2;212;212;212m`, // #d4d4d4
   bold: `${ESC}1m`,
   reset: RESET,
 };

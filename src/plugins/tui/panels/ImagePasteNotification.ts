@@ -5,15 +5,7 @@
  * Displays filename/size, 3s countdown to auto-add. Esc to dismiss.
  */
 
-import {
-  BoxRenderable,
-  TextRenderable,
-  t,
-  fg,
-  bold,
-  dim,
-  type CliRenderer,
-} from '@opentui/core';
+import { BoxRenderable, TextRenderable, t, fg, bold, dim, type CliRenderer } from '@opentui/core';
 import { theme } from '../../../core/ui/theme';
 import { TopBorder } from '../borders';
 
@@ -57,7 +49,7 @@ export class ImagePasteNotification {
     this.pendingDataUrl = dataUrl;
     this.onAddCb = onAdd;
 
-    const sizeKB = Math.round((dataUrl.split(',')[1] || '').length * 0.75 / 1024);
+    const sizeKB = Math.round(((dataUrl.split(',')[1] || '').length * 0.75) / 1024);
     const format = filename.split('.').pop()?.toUpperCase() || 'PNG';
 
     this.infoText.content = t`${bold(fg(theme.primary)('Image pasted:'))} ${filename} ${dim(`(${sizeKB}KB ${format})`)}`;

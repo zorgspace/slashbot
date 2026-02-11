@@ -9,7 +9,13 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import type { MCPServerConfig, MCPServerStatus, MCPToolInfo, MCPLocalServerConfig, MCPRemoteServerConfig } from './types';
+import type {
+  MCPServerConfig,
+  MCPServerStatus,
+  MCPToolInfo,
+  MCPLocalServerConfig,
+  MCPRemoteServerConfig,
+} from './types';
 import { HOME_SLASHBOT_DIR } from '../../core/config/constants';
 import * as path from 'path';
 
@@ -19,9 +25,15 @@ const DEFAULT_TOOL_TIMEOUT = 60_000;
 function withTimeout<T>(promise: Promise<T>, ms: number, label?: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
-    promise.then(r => { clearTimeout(timer); return r; }),
+    promise.then(r => {
+      clearTimeout(timer);
+      return r;
+    }),
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label ?? 'Operation'} timed out after ${ms}ms`)), ms);
+      timer = setTimeout(
+        () => reject(new Error(`${label ?? 'Operation'} timed out after ${ms}ms`)),
+        ms,
+      );
     }),
   ]);
 }
@@ -122,7 +134,11 @@ export class MCPManager {
     // Close existing client to prevent memory leak
     const existing = this.connections.get(name);
     if (existing) {
-      try { await existing.client.close(); } catch { /* ignore */ }
+      try {
+        await existing.client.close();
+      } catch {
+        /* ignore */
+      }
       this.connections.delete(name);
     }
 
@@ -190,7 +206,10 @@ export class MCPManager {
       return;
     } catch (error: any) {
       // If it's an auth error, don't fall back to SSE
-      if (error?.constructor?.name === 'UnauthorizedError' || error?.message?.includes('Unauthorized')) {
+      if (
+        error?.constructor?.name === 'UnauthorizedError' ||
+        error?.message?.includes('Unauthorized')
+      ) {
         this.statuses.set(name, { status: 'needs_auth' });
         throw error;
       }
@@ -241,7 +260,11 @@ export class MCPManager {
   /**
    * Discover tools and store connection
    */
-  private async discoverAndStore(name: string, client: Client, transport: Transport): Promise<void> {
+  private async discoverAndStore(
+    name: string,
+    client: Client,
+    transport: Transport,
+  ): Promise<void> {
     const toolsResult = await client.listTools();
     const tools: MCPToolInfo[] = (toolsResult.tools || []).map((tool: any) => ({
       name: tool.name,

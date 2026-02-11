@@ -101,7 +101,14 @@ export class ConfigManager {
       if (await configFile.exists()) {
         const cfg = await configFile.json();
         // Only merge non-secret fields from config.json
-        const { apiKey: _a, openaiApiKey: _o, providers: _p, telegram: _t, discord: _d, ...safeConfig } = cfg;
+        const {
+          apiKey: _a,
+          openaiApiKey: _o,
+          providers: _p,
+          telegram: _t,
+          discord: _d,
+          ...safeConfig
+        } = cfg;
         this.config = { ...this.config, ...safeConfig };
       }
     } catch {

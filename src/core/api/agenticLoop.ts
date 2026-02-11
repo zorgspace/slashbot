@@ -103,9 +103,10 @@ export async function runAgenticLoop(
     }
 
     // Build executable tools (with execute callbacks) for this iteration
-    const toolsParam = (toolCallingEnabled && !useXmlFallback)
-      ? toolRegistry!.buildExecutableTools(execCtx)
-      : undefined;
+    const toolsParam =
+      toolCallingEnabled && !useXmlFallback
+        ? toolRegistry!.buildExecutableTools(execCtx)
+        : undefined;
 
     let responseContent: string;
     let thinkingContent: string;
@@ -537,7 +538,9 @@ export async function runAgenticLoop(
           // thinking tokens when using native tool calling, leaving nothing for the response.
           // XML mode avoids this by letting the model output actions as plain text.
           if (toolCallingEnabled && !useXmlFallback) {
-            display.warningText('[Switching to XML mode - reasoning model may lack output budget for tool calls]');
+            display.warningText(
+              '[Switching to XML mode - reasoning model may lack output budget for tool calls]',
+            );
             useXmlFallback = true;
             emptyResponseRetries = 0;
             ctx.sessionManager.history.push({
@@ -636,7 +639,11 @@ export async function runAgenticLoop(
     const hasErrors = actionResults.some(r => !r.success);
     const failedEditPaths = actionResults
       .filter(r => !r.success && String(r.action ?? '').startsWith('Edit:'))
-      .map(r => String(r.action ?? '').replace(/^Edit:\s*/, '').trim());
+      .map(r =>
+        String(r.action ?? '')
+          .replace(/^Edit:\s*/, '')
+          .trim(),
+      );
 
     const iterationWarning =
       iteration >= 15
@@ -660,7 +667,14 @@ export async function runAgenticLoop(
     ctx.sessionManager.history.push({ role: 'user', content: continuationPrompt });
   }
 
-  return { finalResponse, finalThinking, executedActions, actionsSummary, timedOut: false, endMessage };
+  return {
+    finalResponse,
+    finalThinking,
+    executedActions,
+    actionsSummary,
+    timedOut: false,
+    endMessage,
+  };
 }
 
 // ===== History Helpers =====
@@ -676,7 +690,10 @@ function pushResponseMessages(
 ): void {
   if (!responseMessages || responseMessages.length === 0) {
     // Fallback: just push text
-    ctx.sessionManager.history.push({ role: 'assistant', content: responseContent || '[tool calls]' });
+    ctx.sessionManager.history.push({
+      role: 'assistant',
+      content: responseContent || '[tool calls]',
+    });
     return;
   }
 

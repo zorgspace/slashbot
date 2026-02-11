@@ -3,6 +3,8 @@
  */
 
 import { display } from '../../core/ui';
+import { fg } from '@opentui/core';
+import { theme } from '../../core/ui/theme';
 import type { CommandHandler } from '../../core/commands/registry';
 
 export const telegramCommand: CommandHandler = {
@@ -19,33 +21,29 @@ export const telegramCommand: CommandHandler = {
       const telegramConfig = context.configManager.getTelegramConfig();
       const connector = context.connectors.get('telegram');
 
-      display.append('');
-      display.violet('Telegram Configuration');
-      display.append('');
+      const statusBlock = `${fg(theme.accent)('Telegram Configuration')}
 
-      if (telegramConfig) {
-        display.append(
-          '  Status:  ' + (connector?.isRunning() ? 'Connected' : 'Configured but not running'),
-        );
-        display.muted('  Bot:     ' + telegramConfig.botToken.slice(0, 10) + '...');
-        display.muted('  Chat ID: ' + telegramConfig.chatId + ' (primary)');
-        if (telegramConfig.chatIds && telegramConfig.chatIds.length > 0) {
-          display.muted('  Additional: ' + telegramConfig.chatIds.join(', '));
-        }
-      } else {
-        display.append('  Status:  Not configured');
-      }
+${
+  telegramConfig
+    ? `
+  Status:  ${connector?.isRunning() ? fg(theme.success)('Connected') : fg(theme.warning)('Configured but not running')}
+  Bot:     ${fg(theme.muted)(telegramConfig.botToken.slice(0, 10) + '...')}
+  Chat ID: ${fg(theme.muted)(telegramConfig.chatId + ' (primary)')}
+${telegramConfig.chatIds && telegramConfig.chatIds.length > 0 ? fg(theme.muted)('  Additional: ' + telegramConfig.chatIds.join(', ')) + '\\n' : ''}
+`
+    : fg(theme.muted)('  Status:  Not configured') + '\\n'
+}
 
-      display.append('');
-      display.muted('Usage:');
-      display.append('  /telegram <bot_token> <chat_id> - Configure bot');
-      display.append('  /telegram <bot_token>           - Auto-detect chat_id');
-      display.append('  /telegram add <chat_id>         - Add authorized chat');
-      display.append('  /telegram remove <chat_id>      - Remove authorized chat');
-      display.append('  /telegram clear                 - Remove configuration');
-      display.append('');
-      display.muted('Get bot token from @BotFather on Telegram');
-      display.append('');
+${fg(theme.muted)('Usage:')}
+  /telegram <bot_token> <chat_id> - Configure bot
+  /telegram <bot_token>           - Auto-detect chat_id
+  /telegram add <chat_id>         - Add authorized chat
+  /telegram remove <chat_id>      - Remove authorized chat
+  /telegram clear                 - Remove configuration
+
+${fg(theme.muted)('Get bot token from @BotFather on Telegram')}
+`;
+      display.append(statusBlock);
       return true;
     }
 

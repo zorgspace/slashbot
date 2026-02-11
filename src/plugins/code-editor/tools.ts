@@ -12,9 +12,12 @@ export function getCodeEditorToolContributions(): ToolContribution[] {
       description: 'Find files matching a glob pattern. Returns matching file paths.',
       parameters: z.object({
         pattern: z.string().describe('Glob pattern (e.g. "src/**/*.ts", "*.json")'),
-        path: z.string().optional().describe('Directory to search in (defaults to working directory)'),
+        path: z
+          .string()
+          .optional()
+          .describe('Directory to search in (defaults to working directory)'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'glob',
         pattern: args.pattern as string,
         path: args.path as string | undefined,
@@ -22,18 +25,22 @@ export function getCodeEditorToolContributions(): ToolContribution[] {
     },
     {
       name: 'grep',
-      description: 'Search file contents using regex patterns. Returns matching lines or file paths.',
+      description:
+        'Search file contents using regex patterns. Returns matching lines or file paths.',
       parameters: z.object({
         pattern: z.string().describe('Regex pattern to search for'),
         path: z.string().optional().describe('File or directory to search in'),
         glob: z.string().optional().describe('Glob filter for files (e.g. "*.ts")'),
-        output_mode: z.enum(['content', 'files_with_matches', 'count']).optional().describe('Output format (default: files_with_matches)'),
+        output_mode: z
+          .enum(['content', 'files_with_matches', 'count'])
+          .optional()
+          .describe('Output format (default: files_with_matches)'),
         context: z.number().optional().describe('Lines of context around matches'),
         case_insensitive: z.boolean().optional().describe('Case insensitive search'),
         head_limit: z.number().optional().describe('Limit output to first N results'),
         multiline: z.boolean().optional().describe('Enable multiline matching'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'grep',
         pattern: args.pattern as string,
         path: args.path as string | undefined,
@@ -52,7 +59,7 @@ export function getCodeEditorToolContributions(): ToolContribution[] {
         path: z.string().describe('Directory path to list'),
         ignore: z.array(z.string()).optional().describe('Patterns to ignore'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'ls',
         path: args.path as string,
         ignore: args.ignore as string[] | undefined,

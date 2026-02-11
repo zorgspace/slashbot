@@ -46,10 +46,13 @@ export class HeartbeatPlugin implements Plugin {
     const { createHeartbeatService } = await import('./services/HeartbeatService');
     const { TYPES } = await import('../../core/di/types');
     if (!context.container.isBound(TYPES.HeartbeatService)) {
-      context.container.bind(TYPES.HeartbeatService).toDynamicValue(() => {
-        const eventBus = context.container.get<any>(TYPES.EventBus);
-        return createHeartbeatService(eventBus);
-      }).inSingletonScope();
+      context.container
+        .bind(TYPES.HeartbeatService)
+        .toDynamicValue(() => {
+          const eventBus = context.container.get<any>(TYPES.EventBus);
+          return createHeartbeatService(eventBus);
+        })
+        .inSingletonScope();
     }
 
     this.heartbeatService = context.container.get<HeartbeatService>(TYPES.HeartbeatService);
@@ -70,7 +73,12 @@ export class HeartbeatPlugin implements Plugin {
       }
       const safePrompt = `[HEARTBEAT - REFLECTION MODE]\n${prompt}`;
       const result = await (
-        grokClient as { chat: (p: string, opts?: { saveToHistory?: boolean }) => Promise<{ response?: string; thinking?: string }> }
+        grokClient as {
+          chat: (
+            p: string,
+            opts?: { saveToHistory?: boolean },
+          ) => Promise<{ response?: string; thinking?: string }>;
+        }
       ).chat(safePrompt, { saveToHistory: false });
       return { response: result.response || '', thinking: result.thinking };
     });

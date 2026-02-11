@@ -11,10 +11,7 @@ export const container = new Container({ defaultScope: 'Singleton' });
 
 import { HooksManager } from '../utils/hooks';
 
-container
-  .bind(TYPES.HooksManager)
-  .to(HooksManager)
-  .inSingletonScope();
+container.bind(TYPES.HooksManager).to(HooksManager).inSingletonScope();
 
 /**
  * Initialize the container with all services

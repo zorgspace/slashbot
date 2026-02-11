@@ -43,11 +43,9 @@ export class HeartbeatService {
   private lastTick: Date = new Date();
   private llmHandler: HeartbeatLLMHandler | null = null;
   private grokClient: GrokClient | null = null;
-  private workDir: string = process.cwd()
+  private workDir: string = process.cwd();
 
-  constructor(
-    @inject(TYPES.EventBus) private eventBus: EventBus,
-  ) {}
+  constructor(@inject(TYPES.EventBus) private eventBus: EventBus) {}
 
   setLLMHandler(handler: HeartbeatLLMHandler): void {
     this.llmHandler = handler;
@@ -373,8 +371,6 @@ export class HeartbeatService {
   }
 }
 
-export function createHeartbeatService(
-  eventBus: EventBus,
-): HeartbeatService {
+export function createHeartbeatService(eventBus: EventBus): HeartbeatService {
   return new HeartbeatService(eventBus);
 }

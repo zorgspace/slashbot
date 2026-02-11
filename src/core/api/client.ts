@@ -4,12 +4,22 @@
  */
 
 import { display } from '../ui';
-import { getRecentImages, hasImages as hasImagesInBuffer } from '../../plugins/filesystem/services/ImageBuffer';
+import {
+  getRecentImages,
+  hasImages as hasImagesInBuffer,
+} from '../../plugins/filesystem/services/ImageBuffer';
 import type { ActionHandlers } from '../actions';
 import { cleanXmlTags, cleanSelfDialogue } from '../utils/xml';
 import { GROK_CONFIG, AGENTIC } from '../config/constants';
 
-import type { Message, LLMConfig, GrokConfig, UsageStats, ApiAuthProvider, ClientContext } from './types';
+import type {
+  Message,
+  LLMConfig,
+  GrokConfig,
+  UsageStats,
+  ApiAuthProvider,
+  ClientContext,
+} from './types';
 import { getEnvironmentInfo } from './utils';
 import type { PromptAssembler } from './prompts/assembler';
 import type { ToolRegistry } from './toolRegistry';
@@ -18,7 +28,7 @@ import { DirectAuthProvider, DEFAULT_CONFIG } from '../../plugins/providers/auth
 import { streamResponse } from './streaming';
 import { runAgenticLoop } from './agenticLoop';
 import { ProviderRegistry } from '../../plugins/providers/registry';
-import { PROVIDERS, inferProvider } from '../../plugins/providers/models';
+import { PROVIDERS, inferProvider, MODELS } from '../../plugins/providers/models';
 
 export type { ActionHandlers } from '../actions';
 
@@ -231,6 +241,11 @@ export class LLMClient implements ClientContext {
     if (this.config.model) return this.config.model;
     const providerInfo = PROVIDERS[this.getProvider()];
     return providerInfo?.defaultModel || GROK_CONFIG.MODEL;
+  }
+
+  getAvailableModels(): string[] {
+    const providerId = this.getProvider();
+    return MODELS.filter((m: any) => m.provider === providerId).map((m: any) => m.id);
   }
 
   abort(): void {

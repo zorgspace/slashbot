@@ -233,12 +233,10 @@ const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
     } else {
       const normalizedLine = normalizeWhitespace(line);
       if (normalizedLine.includes(normalizedFind)) {
-        const words = find
-          .trim()
-          .split(/\s+/);
+        const words = find.trim().split(/\s+/);
         if (words.length > 0) {
           const pattern = words
-            .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
             .join('\\s+');
           try {
             const regex = new RegExp(pattern);
@@ -271,17 +269,17 @@ const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
 const IndentationFlexibleReplacer: Replacer = function* (content, find) {
   const removeIndentation = (text: string) => {
     const lines = text.split('\n');
-    const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+    const nonEmptyLines = lines.filter(line => line.trim().length > 0);
     if (nonEmptyLines.length === 0) return text;
 
     const minIndent = Math.min(
-      ...nonEmptyLines.map((line) => {
+      ...nonEmptyLines.map(line => {
         const match = line.match(/^(\s*)/);
         return match ? match[1].length : 0;
       }),
     );
 
-    return lines.map((line) => (line.trim().length === 0 ? line : line.slice(minIndent))).join('\n');
+    return lines.map(line => (line.trim().length === 0 ? line : line.slice(minIndent))).join('\n');
   };
 
   const normalizedFind = removeIndentation(find);

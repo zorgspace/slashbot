@@ -37,7 +37,10 @@ export interface SessionScope {
 export class ScopedSession implements SessionScope {
   private session: ConversationSession;
 
-  constructor(private manager: SessionManager, sessionId: string) {
+  constructor(
+    private manager: SessionManager,
+    sessionId: string,
+  ) {
     this.session = manager.ensureSession(sessionId);
   }
 
@@ -73,7 +76,9 @@ export class ScopedSession implements SessionScope {
     }
     const recentMessages = messages.slice(cutIdx);
     this.history = [systemPrompt, ...recentMessages];
-    display.muted(`[Context] Compressed: ${messages.length} \u2192 ${recentMessages.length} messages`);
+    display.muted(
+      `[Context] Compressed: ${messages.length} \u2192 ${recentMessages.length} messages`,
+    );
   }
 
   condenseHistory(): string {
@@ -94,9 +99,7 @@ export class ScopedSession implements SessionScope {
         }
       } else if (msg.role === 'assistant') {
         const contentStr = typeof msg.content === 'string' ? msg.content : '';
-        const actionMatches = contentStr.match(
-          /<(bash|read|edit|write|grep|explore)\b[^>]*>/g,
-        );
+        const actionMatches = contentStr.match(/<(bash|read|edit|write|grep|explore)\b[^>]*>/g);
         if (actionMatches) {
           actions.push(...actionMatches.slice(0, 3));
         }
@@ -255,7 +258,9 @@ export class SessionManager {
     const recentMessages = messages.slice(cutIdx);
     this.history = [systemPrompt, ...recentMessages];
 
-    display.muted(`[Context] Compressed: ${messages.length} \u2192 ${recentMessages.length} messages`);
+    display.muted(
+      `[Context] Compressed: ${messages.length} \u2192 ${recentMessages.length} messages`,
+    );
   }
 
   condenseHistory(): string {
@@ -279,9 +284,7 @@ export class SessionManager {
       } else if (msg.role === 'assistant') {
         const contentStr = typeof msg.content === 'string' ? msg.content : '';
         // Extract XML action tags
-        const actionMatches = contentStr.match(
-          /<(bash|read|edit|write|grep|explore)\b[^>]*>/g,
-        );
+        const actionMatches = contentStr.match(/<(bash|read|edit|write|grep|explore)\b[^>]*>/g);
         if (actionMatches) {
           actions.push(...actionMatches.slice(0, 3));
         }
@@ -349,8 +352,7 @@ export class SessionManager {
 
     // Count prunable messages (action-output XML and tool-result messages)
     const isToolOutput = (m: Message) =>
-      (typeof m.content === 'string' && m.content.includes('<action-output>')) ||
-      m.role === 'tool';
+      (typeof m.content === 'string' && m.content.includes('<action-output>')) || m.role === 'tool';
     const totalToolOutputs = messages.filter(isToolOutput).length;
 
     // Track which indices are being pruned (tool messages converted to user)
@@ -369,19 +371,25 @@ export class SessionManager {
       // (AI SDK requires tool messages to have structured toolResults, not plain strings)
       if (m.role === 'tool') {
         prunedToolIndices.add(idx);
-        const toolResults = (m as any).toolResults as Array<{ toolName: string; result: string }> | undefined;
+        const toolResults = (m as any).toolResults as
+          | Array<{ toolName: string; result: string }>
+          | undefined;
         const summary = toolResults
           ? `[${toolResults.length} tool results: ${toolResults.map(r => r.toolName).join(', ')}]`
           : '[pruned tool results]';
-        return { role: 'user' as const, content: `<tool-output-summary>${summary}</tool-output-summary>` };
+        return {
+          role: 'user' as const,
+          content: `<tool-output-summary>${summary}</tool-output-summary>`,
+        };
       }
 
       // XML action-output pruning
       const content = typeof m.content === 'string' ? m.content : '';
       const actionMatches = content.match(/\[[\u2713\u2717]\]\s*\w+:/g) || [];
-      const summary = actionMatches.length > 0
-        ? `<action-output>[${actionMatches.length} actions: ${actionMatches.slice(0, 3).join(', ')}...]</action-output>`
-        : '<action-output>[pruned]</action-output>';
+      const summary =
+        actionMatches.length > 0
+          ? `<action-output>[${actionMatches.length} actions: ${actionMatches.slice(0, 3).join(', ')}...]</action-output>`
+          : '<action-output>[pruned]</action-output>';
       return { ...m, content: summary };
     });
 
@@ -446,9 +454,8 @@ export class SessionManager {
 
     for (const msg of oldMessages) {
       const role = msg.role.toUpperCase();
-      const content = typeof msg.content === 'string'
-        ? msg.content.slice(0, 500)
-        : '[multimodal content]';
+      const content =
+        typeof msg.content === 'string' ? msg.content.slice(0, 500) : '[multimodal content]';
       prompt += `${role}: ${content}\n\n`;
     }
 

@@ -2,7 +2,10 @@ import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { GitStatusAction, GitDiffAction, GitLogAction, GitCommitAction } from './types';
 import { display } from '../../core/ui';
 
-async function runGit(args: string[], cwd?: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function runGit(
+  args: string[],
+  cwd?: string,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   try {
     const proc = Bun.spawn(['git', ...args], {
       cwd: cwd || process.cwd(),
@@ -28,16 +31,22 @@ export async function executeGitStatus(
 
   const result = await runGit(['status', '--short', '--branch']);
   if (result.exitCode !== 0) {
-    return { action: 'GitStatus', success: false, result: 'Not a git repository', error: result.stderr };
+    return {
+      action: 'GitStatus',
+      success: false,
+      result: 'Not a git repository',
+      error: result.stderr,
+    };
   }
 
   const output = result.stdout || 'Clean working tree';
   // Truncate to max 10 lines
   const lines = output.split('\n');
-  const truncated = lines.length > 10 
-    ? lines.slice(0, 10).join('\n') + `\n... (truncated ${lines.length - 10} more lines)`
-    : output;
-  
+  const truncated =
+    lines.length > 10
+      ? lines.slice(0, 10).join('\n') + `\n... (truncated ${lines.length - 10} more lines)`
+      : output;
+
   display.result(truncated);
   return { action: 'GitStatus', success: true, result: truncated };
 }
@@ -50,16 +59,20 @@ export async function executeGitDiff(
   if (action.staged) args.push('--staged');
   if (action.ref) args.push(action.ref);
 
-  display.tool('Git', `diff${action.staged ? ' --staged' : ''}${action.ref ? ' ' + action.ref : ''}`);
+  display.tool(
+    'Git',
+    `diff${action.staged ? ' --staged' : ''}${action.ref ? ' ' + action.ref : ''}`,
+  );
 
   const result = await runGit(args);
   const output = result.stdout || 'No differences found';
   // Truncate long diffs
   const lines = output.split('\n');
-  const truncated = lines.length > 50 
-    ? lines.slice(0, 50).join('\n') + `\n... (truncated ${lines.length - 50} more lines)`
-    : output;
-  
+  const truncated =
+    lines.length > 50
+      ? lines.slice(0, 50).join('\n') + `\n... (truncated ${lines.length - 50} more lines)`
+      : output;
+
   display.result(truncated);
   return { action: 'GitDiff', success: true, result: truncated };
 }
@@ -90,7 +103,12 @@ export async function executeGitCommit(
   if (action.files && action.files.length > 0) {
     const addResult = await runGit(['add', ...action.files]);
     if (addResult.exitCode !== 0) {
-      return { action: `GitCommit: ${action.message}`, success: false, result: 'Stage failed', error: addResult.stderr };
+      return {
+        action: `GitCommit: ${action.message}`,
+        success: false,
+        result: 'Stage failed',
+        error: addResult.stderr,
+      };
     }
   } else {
     await runGit(['add', '-A']);
@@ -100,7 +118,12 @@ export async function executeGitCommit(
   const result = await runGit(['commit', '-m', action.message]);
   if (result.exitCode !== 0) {
     display.error('Commit failed: ' + result.stderr);
-    return { action: `GitCommit: ${action.message}`, success: false, result: 'Commit failed', error: result.stderr };
+    return {
+      action: `GitCommit: ${action.message}`,
+      success: false,
+      result: 'Commit failed',
+      error: result.stderr,
+    };
   }
 
   display.result(result.stdout);

@@ -3,6 +3,8 @@
  */
 
 import { display } from '../../core/ui';
+import { fg } from '@opentui/core';
+import { theme } from '../../core/ui/theme';
 import type { CommandHandler } from '../../core/commands/registry';
 
 export const discordCommand: CommandHandler = {
@@ -19,28 +21,26 @@ export const discordCommand: CommandHandler = {
       const discordConfig = context.configManager.getDiscordConfig();
       const connector = context.connectors.get('discord');
 
-      display.append('');
-      display.violet('Discord Configuration');
-      display.append('');
+      const statusBlock = `${fg(theme.accent)('Discord Configuration')}
 
-      if (discordConfig) {
-        display.append(
-          '  Status:     ' + (connector?.isRunning() ? 'Connected' : 'Configured but not running'),
-        );
-        display.muted('  Bot:        ' + discordConfig.botToken.slice(0, 20) + '...');
-        display.muted('  Channel ID: ' + discordConfig.channelId);
-      } else {
-        display.append('  Status:  Not configured');
-      }
+${
+  discordConfig
+    ? `
+  Status:     ${connector?.isRunning() ? fg(theme.success)('Connected') : fg(theme.warning)('Configured but not running')}
+  Bot:        ${fg(theme.muted)(discordConfig.botToken.slice(0, 20) + '...')}
+  Channel ID: ${fg(theme.muted)(discordConfig.channelId)}
+`
+    : fg(theme.muted)('  Status:  Not configured') + '\\n'
+}
 
-      display.append('');
-      display.muted('Usage:');
-      display.append('  /discord <bot_token> <channel_id> - Configure bot');
-      display.append('  /discord clear                    - Remove configuration');
-      display.append('');
-      display.muted('Get bot token from Discord Developer Portal');
-      display.muted('Channel ID: Right-click channel > Copy ID (enable Developer Mode)');
-      display.append('');
+${fg(theme.muted)('Usage:')}
+  /discord <bot_token> <channel_id> - Configure bot
+  /discord clear                    - Remove configuration
+
+${fg(theme.muted)('Get bot token from Discord Developer Portal')}
+${fg(theme.muted)('Channel ID: Right-click channel > Copy ID (enable Developer Mode)')}
+`;
+      display.append(statusBlock);
       return true;
     }
 

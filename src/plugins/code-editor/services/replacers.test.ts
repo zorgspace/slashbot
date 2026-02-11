@@ -50,28 +50,14 @@ describe('SimpleReplacer (exact)', () => {
 
 describe('LineTrimmedReplacer (line-trimmed)', () => {
   it('matches when search lines have different indentation', () => {
-    const content = [
-      'function foo() {',
-      '    const x = 1;',
-      '    return x;',
-      '}',
-    ].join('\n');
-    const search = [
-      'const x = 1;',
-      'return x;',
-    ].join('\n');
-    const repl = [
-      '    const x = 2;',
-      '    return x * 2;',
-    ].join('\n');
+    const content = ['function foo() {', '    const x = 1;', '    return x;', '}'].join('\n');
+    const search = ['const x = 1;', 'return x;'].join('\n');
+    const repl = ['    const x = 2;', '    return x * 2;'].join('\n');
 
     const result = ok(content, search, repl);
-    expect(result).toBe([
-      'function foo() {',
-      '    const x = 2;',
-      '    return x * 2;',
-      '}',
-    ].join('\n'));
+    expect(result).toBe(
+      ['function foo() {', '    const x = 2;', '    return x * 2;', '}'].join('\n'),
+    );
   });
 });
 
@@ -91,12 +77,9 @@ describe('BlockAnchorReplacer (block-anchor)', () => {
       '  return true;',
       '}',
     ].join('\n');
-    const repl = [
-      'function greet() {',
-      '  console.log("goodbye");',
-      '  return false;',
-      '}',
-    ].join('\n');
+    const repl = ['function greet() {', '  console.log("goodbye");', '  return false;', '}'].join(
+      '\n',
+    );
 
     const result = ok(content, search, repl);
     expect(result).toBe(repl);
@@ -107,21 +90,9 @@ describe('BlockAnchorReplacer (block-anchor)', () => {
 
 describe('WhitespaceNormalizedReplacer (whitespace-normalized)', () => {
   it('matches when internal whitespace differs', () => {
-    const content = [
-      'if(x  &&  y) {',
-      '  doSomething(  a,  b  );',
-      '}',
-    ].join('\n');
-    const search = [
-      'if(x && y) {',
-      '  doSomething( a, b );',
-      '}',
-    ].join('\n');
-    const repl = [
-      'if (x && y) {',
-      '  doOther(a, b);',
-      '}',
-    ].join('\n');
+    const content = ['if(x  &&  y) {', '  doSomething(  a,  b  );', '}'].join('\n');
+    const search = ['if(x && y) {', '  doSomething( a, b );', '}'].join('\n');
+    const repl = ['if (x && y) {', '  doOther(a, b);', '}'].join('\n');
 
     const result = ok(content, search, repl);
     expect(result).toBe(repl);
@@ -132,18 +103,9 @@ describe('WhitespaceNormalizedReplacer (whitespace-normalized)', () => {
 
 describe('IndentationFlexibleReplacer (indentation-flexible)', () => {
   it('matches when search has different base indentation', () => {
-    const content = [
-      '    foo();',
-      '    bar();',
-    ].join('\n');
-    const search = [
-      'foo();',
-      'bar();',
-    ].join('\n');
-    const repl = [
-      '    baz();',
-      '    qux();',
-    ].join('\n');
+    const content = ['    foo();', '    bar();'].join('\n');
+    const search = ['foo();', 'bar();'].join('\n');
+    const repl = ['    baz();', '    qux();'].join('\n');
 
     const result = ok(content, search, repl);
     expect(result).toBe(repl);
@@ -212,11 +174,7 @@ describe('ContextAwareReplacer (context-aware)', () => {
       '  return el;',
       '}',
     ].join('\n');
-    const repl = [
-      'function render() {',
-      '  return null;',
-      '}',
-    ].join('\n');
+    const repl = ['function render() {', '  return null;', '}'].join('\n');
 
     const result = ok(content, search, repl);
     expect(result).toBe(repl);
@@ -227,7 +185,12 @@ describe('ContextAwareReplacer (context-aware)', () => {
 
 describe('failure cases', () => {
   it('throws when no strategy matches', () => {
-    shouldThrow('hello world', 'completely different text that does not exist', 'whatever', 'not found');
+    shouldThrow(
+      'hello world',
+      'completely different text that does not exist',
+      'whatever',
+      'not found',
+    );
   });
 
   it('throws for empty content with non-empty search', () => {
@@ -261,16 +224,8 @@ describe('real-world scenarios', () => {
       '}',
     ].join('\n');
 
-    const search = [
-      'getValue(): number {',
-      '  return this.value;',
-      '}',
-    ].join('\n');
-    const repl = [
-      '  getValue(): number {',
-      '    return this.value * 2;',
-      '  }',
-    ].join('\n');
+    const search = ['getValue(): number {', '  return this.value;', '}'].join('\n');
+    const repl = ['  getValue(): number {', '    return this.value * 2;', '  }'].join('\n');
 
     const result = ok(content, search, repl);
     expect(result).toContain('return this.value * 2');
@@ -295,11 +250,13 @@ describe('real-world scenarios', () => {
     content = ok(content, 'function a() { return 1; }', 'function a() { return 10; }');
     content = ok(content, 'function c() { return 3; }', 'function c() { return 30; }');
 
-    expect(content).toBe([
-      'function a() { return 10; }',
-      'function b() { return 2; }',
-      'function c() { return 30; }',
-    ].join('\n'));
+    expect(content).toBe(
+      [
+        'function a() { return 10; }',
+        'function b() { return 2; }',
+        'function c() { return 30; }',
+      ].join('\n'),
+    );
   });
 
   it('handles TypeScript with complex indentation', () => {

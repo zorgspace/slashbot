@@ -15,7 +15,7 @@ export function getFilesystemToolContributions(): ToolContribution[] {
         offset: z.number().optional().describe('Start reading from this line number (1-based)'),
         limit: z.number().optional().describe('Maximum number of lines to read'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'read',
         path: args.path as string,
         offset: args.offset as number | undefined,
@@ -30,12 +30,9 @@ export function getFilesystemToolContributions(): ToolContribution[] {
         filePath: z.string().describe('File path to edit'),
         oldString: z.string().describe('The exact text to find and replace'),
         newString: z.string().describe('The replacement text (must differ from oldString)'),
-        replaceAll: z
-          .boolean()
-          .optional()
-          .describe('Replace all occurrences (default false)'),
+        replaceAll: z.boolean().optional().describe('Replace all occurrences (default false)'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'edit',
         path: args.filePath as string,
         oldString: args.oldString as string,
@@ -51,7 +48,7 @@ export function getFilesystemToolContributions(): ToolContribution[] {
         path: z.string().describe('File path to write'),
         content: z.string().describe('Complete file content'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'write',
         path: args.path as string,
         content: args.content as string,

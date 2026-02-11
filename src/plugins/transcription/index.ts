@@ -25,8 +25,7 @@ export class TranscriptionPlugin implements Plugin {
       const { TYPES } = await import('../../core/di/types');
       const configManager = context.container.get<any>(TYPES.ConfigManager);
       const config = configManager.getConfig();
-      const openaiKey =
-        config.providers?.openai?.apiKey || process.env.OPENAI_API_KEY;
+      const openaiKey = config.providers?.openai?.apiKey || process.env.OPENAI_API_KEY;
 
       if (openaiKey) {
         const { initTranscription } = await import('./services/TranscriptionService');

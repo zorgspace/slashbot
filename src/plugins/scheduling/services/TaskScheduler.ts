@@ -15,7 +15,11 @@ import {
   isValidCron,
   type ParsedCron,
 } from './cron';
-import { getLocalSlashbotDir, getLocalTasksFile, DANGEROUS_PATTERNS } from '../../../core/config/constants';
+import {
+  getLocalSlashbotDir,
+  getLocalTasksFile,
+  DANGEROUS_PATTERNS,
+} from '../../../core/config/constants';
 import type { EventBus } from '../../../core/events/EventBus';
 
 const SLASHBOT_DIR = getLocalSlashbotDir();
@@ -437,7 +441,6 @@ export class TaskScheduler {
     }
 
     // Display task start
-    display.newline();
     display.schedule(task.name, describeCron(task.cron));
 
     let success = false;

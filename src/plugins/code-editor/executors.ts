@@ -81,7 +81,7 @@ export async function executeGrep(
   const grepResults = await handlers.onGrep(action.pattern, grepOptions);
   const lines = grepResults ? grepResults.split('\n').filter(l => l.trim()) : [];
 
-  display.grepResult(lines.length, grepResults || undefined);
+  display.grepResult(action.pattern, action.glob, lines.length, grepResults || undefined);
 
   return {
     action: `Grep: ${action.pattern}`,
@@ -119,7 +119,7 @@ export async function executeLS(
     const errorMsg = error instanceof Error ? error.message : String(error);
     display.error(`LS failed: ${errorMsg}`);
     return {
-      action: `LS: ${action.path}`,
+      action: `ls: ${action.path}`,
       success: false,
       result: 'Failed',
       error: errorMsg,

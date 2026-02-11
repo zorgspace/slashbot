@@ -76,9 +76,7 @@ export class MCPAuthStorage {
     if (!this.store.entries[name]) {
       this.store.entries[name] = { serverUrl: '' };
     }
-    this.store.entries[name].tokens = tokens
-      ? { ...tokens, obtained_at: Date.now() }
-      : undefined;
+    this.store.entries[name].tokens = tokens ? { ...tokens, obtained_at: Date.now() } : undefined;
     await this.save();
   }
 

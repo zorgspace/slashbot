@@ -6,15 +6,7 @@
  * Briefly flashes green border on completion.
  */
 
-import {
-  BoxRenderable,
-  TextRenderable,
-  t,
-  fg,
-  bold,
-  dim,
-  type CliRenderer,
-} from '@opentui/core';
+import { BoxRenderable, TextRenderable, t, fg, bold, dim, type CliRenderer } from '@opentui/core';
 import { theme } from '../../../core/ui/theme';
 import { TopBorder } from '../borders';
 
@@ -25,9 +17,9 @@ export interface NotificationItem {
 }
 
 const STATUS_ICON: Record<string, string> = {
-  pending: '\u25CB',       // ○
-  in_progress: '\u25B6',   // ▶
-  completed: '\u2713',     // ✓
+  pending: '\u25CB', // ○
+  in_progress: '\u25B6', // ▶
+  completed: '\u2713', // ✓
 };
 
 const STATUS_LABEL: Record<string, string> = {

@@ -4,6 +4,7 @@
 
 import { display } from '../../core/ui';
 import type { GrokClient } from '../../core/api';
+import { GROK_CONFIG } from '../../core/config/constants';
 
 export async function webSearch(
   grokClient: GrokClient,
@@ -48,7 +49,11 @@ export async function webSearch(
     tools,
   };
 
-  const { apiKey, baseUrl } = grokClient.getApiConfig();
+  // Search always uses the xAI Grok API, so get the xAI key specifically
+  // (the main client may be using a different provider like Anthropic)
+  const xaiConfig = grokClient.providerRegistry.getConfig('xai');
+  const apiKey = xaiConfig?.apiKey || grokClient.getApiConfig().apiKey;
+  const baseUrl = xaiConfig?.baseUrl || GROK_CONFIG.API_BASE_URL;
 
   display.startThinking('Searching...');
 

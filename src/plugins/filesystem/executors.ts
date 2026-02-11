@@ -27,7 +27,7 @@ export async function executeRead(
   if (fileContent) {
     const lines = fileContent.split('\n');
     const lineCount = lines.length;
-    display.readResult(lineCount);
+    display.readResult(action.path + rangeInfo, lineCount);
     // Detect language from file extension so the LLM knows the syntax
     const ext = action.path.split('.').pop()?.toLowerCase() || '';
     const langMap: Record<string, string> = {
@@ -112,24 +112,29 @@ export async function executeEdit(
 
   display.update(action.path);
 
-  const result = await handlers.onEdit(action.path, action.oldString, action.newString, action.replaceAll);
+  const result = await handlers.onEdit(
+    action.path,
+    action.oldString,
+    action.newString,
+    action.replaceAll,
+  );
 
   if (result.status === 'applied') {
-    display.updateResult(true, 0, 0);
+    display.updateResult(action.path, true, 0, 0);
   } else if (result.status === 'already_applied') {
     display.success('Already applied (skipped)');
   } else if (result.status === 'not_found') {
-    display.updateResult(false, 0, 0);
+    display.updateResult(action.path, false, 0, 0);
     display.error(
       result.message?.includes('File not found')
         ? `File not found: ${action.path}. Use read_file to check if file exists, or write_file to make a new file.`
         : `${result.message}`,
     );
   } else if (result.status === 'no_match') {
-    display.updateResult(false, 0, 0);
+    display.updateResult(action.path, false, 0, 0);
     display.error(`Search string not found in ${action.path} — re-read and retry.`);
   } else {
-    display.updateResult(false, 0, 0);
+    display.updateResult(action.path, false, 0, 0);
   }
 
   let errorMsg = result.message;
@@ -168,7 +173,7 @@ export async function executeWrite(
   const success = await handler(action.path, action.content);
   const lineCount = action.content.split('\n').length;
 
-  display.writeResult(success, lineCount);
+  display.writeResult(action.path, success, lineCount);
 
   return {
     action: `Write: ${action.path}`,
@@ -190,7 +195,7 @@ export async function executeCreate(
   const success = await handler(action.path, action.content);
   const lineCount = action.content.split('\n').length;
 
-  display.writeResult(success, lineCount);
+  display.writeResult(action.path, success, lineCount);
 
   return {
     action: `Write: ${action.path}`,

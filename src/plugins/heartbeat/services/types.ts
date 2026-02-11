@@ -14,8 +14,6 @@ export interface ActiveHours {
   timezone?: string; // IANA timezone, defaults to local
 }
 
-
-
 /**
  * Heartbeat visibility settings
  */

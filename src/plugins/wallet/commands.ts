@@ -7,6 +7,8 @@ import type { CommandHandler, CommandContext } from '../../core/commands/registr
 import type { TUIApp } from '../tui/TUIApp';
 import { PROXY_CONFIG } from '../../core/config/constants';
 import { display } from '../../core/ui';
+import { fg, bold } from '@opentui/core';
+import { theme } from '../../core/ui/theme';
 import { container } from '../../core/di/container';
 import { TYPES } from '../../core/di/types';
 import type { EventBus } from '../../core/events/EventBus';
@@ -278,19 +280,25 @@ export const walletCommands: CommandHandler[] = [
 
         try {
           const { publicKey, seedPhrase } = createWallet(password);
-          display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          display.append('Wallet Created');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-          display.append(`Address: ${publicKey}`);
-          display.append(`File:    ${WALLET_PATH}\n`);
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          display.append('SEED PHRASE - BACKUP NOW!');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-          display.append(seedPhrase);
-          display.append('\nWARNING: Write this down and store it securely!');
-          display.append('Anyone with this phrase can access your funds.');
-          display.append('You can export it later with: /wallet export seed\n');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          const createBlock = `\n Wallet Created 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Address: ${fg(theme.success)(publicKey)}
+File:    ${fg(theme.muted)(WALLET_PATH)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SEED PHRASE - BACKUP NOW!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${fg(theme.danger)(seedPhrase)}
+
+${fg(bold(theme.warning))('WARNING: Write this down and store it securely!')}
+${fg(theme.warning)('Anyone with this phrase can access your funds.')}
+${fg(theme.muted)('You can export it later with: /wallet export seed')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+          display.append(createBlock);
           return true;
         } catch (error) {
           display.errorText(
@@ -329,12 +337,15 @@ export const walletCommands: CommandHandler[] = [
 
           try {
             const { publicKey } = importWalletFromSeed(seedPhrase, password);
-            display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-            display.append('Wallet Imported from Seed');
-            display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-            display.append(`Address: ${publicKey}`);
-            display.append(`Path:    m/44'/501'/0'/0'\n`);
-            display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            const importSeedBlock = `\n Wallet Imported from Seed 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Address: ${fg(theme.success)(publicKey)}
+Path:    ${fg(theme.muted)('m/44\'/501\'/0\'/0\'')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+            display.append(importSeedBlock);
             return true;
           } catch (error) {
             display.errorText('\nFailed to import wallet from seed phrase.\n');
@@ -358,11 +369,14 @@ export const walletCommands: CommandHandler[] = [
 
         try {
           const { publicKey } = importWallet(importType, password);
-          display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          display.append('Wallet Imported');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-          display.append(`Address: ${publicKey}\n`);
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            const importPrivateBlock = `\n Wallet Imported 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Address: ${fg(theme.success)(publicKey)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+            display.append(importPrivateBlock);
           return true;
         } catch (error) {
           display.errorText('\nFailed to import wallet. Check your private key.\n');
@@ -395,12 +409,16 @@ export const walletCommands: CommandHandler[] = [
             return false;
           }
 
-          display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          display.append('Seed Phrase Export');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-          display.append('WARNING: Never share your seed phrase!\n');
-          display.append(seedPhrase);
-          display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          const exportSeedBlock = `\n Seed Phrase Export 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${fg(bold(theme.warning))('WARNING: Never share your seed phrase!')}
+
+${fg(theme.danger)(seedPhrase)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+          display.append(exportSeedBlock);
           return true;
         }
 
@@ -413,12 +431,16 @@ export const walletCommands: CommandHandler[] = [
           return false;
         }
 
-        display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        display.append('Private Key Export');
-        display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-        display.append('WARNING: Never share your private key!\n');
-        display.append(privateKey);
-        display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        const exportPrivateBlock = `\n Private Key Export 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${fg(bold(theme.warning))('WARNING: Never share your private key!')}
+
+${fg(theme.danger)(privateKey)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+        display.append(exportPrivateBlock);
         return true;
       }
 
@@ -433,25 +455,23 @@ export const walletCommands: CommandHandler[] = [
 
         const [balances, credits] = await Promise.all([getBalances(), getCreditBalance()]);
 
-        display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        display.append('Wallet Balance');
-        display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-        display.append(`Address:  ${getPublicKey()}\n`);
+        const balanceBlock = ` Wallet Balance 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        if (balances) {
-          display.append(`SOL:      ${formatNumber(balances.sol, 9)} SOL`);
-          display.append(`SLASHBOT: ${formatNumber(balances.slashbot, 4)} tokens`);
-        } else {
-          display.append('Unable to fetch on-chain balances');
-        }
+Address:  ${fg(theme.muted)(getPublicKey())}
 
-        if (credits !== null) {
-          display.append(`Credits:  ${credits.toLocaleString()}`);
-        } else {
-          display.append('Credits:  (proxy offline)');
-        }
+${balances ? `
+SOL:      ${fg(theme.accent)(formatNumber(balances.sol, 9) + ' SOL')}
+SLASHBOT: ${fg(theme.accent)(formatNumber(balances.slashbot, 4) + ' tokens')}
+` : fg(theme.warning)('Unable to fetch on-chain balances')}
 
-        display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+${credits !== null ? `
+Credits:  ${fg(theme.success)(credits.toLocaleString())}
+` : fg(theme.muted)('Credits:  (proxy offline)')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+        display.append(balanceBlock);
         return true;
       }
 
@@ -462,12 +482,15 @@ export const walletCommands: CommandHandler[] = [
         const amountArg = args[3]?.toLowerCase();
 
         if (!tokenType || !toAddress || !amountArg) {
-          display.append('\nUsage: /wallet send <sol|slashbot> <address> <amount|all|max>\n');
-          display.append('Examples:');
-          display.append('  /wallet send sol 7xKX...abc 0.1');
-          display.append('  /wallet send sol 7xKX...abc all    # Send all SOL minus fees');
-          display.append('  /wallet send slashbot 7xKX...abc 1000');
-          display.append('  /wallet send slashbot 7xKX...abc all\n');
+          const sendUsageBlock = `\n${fg(theme.muted)('Usage: /wallet send <sol|slashbot> <address> <amount|all|max>')}
+
+${fg(theme.muted)('Examples:')}
+  ${fg(theme.muted)('/wallet send sol 7xKX...abc 0.1')}
+  ${fg(theme.muted)('/wallet send sol 7xKX...abc all    # Send all SOL minus fees')}
+  ${fg(theme.muted)('/wallet send slashbot 7xKX...abc 1000')}
+  ${fg(theme.muted)('/wallet send slashbot 7xKX...abc all')}
+`;
+          display.append(sendUsageBlock);
           return false;
         }
 
@@ -530,13 +553,16 @@ export const walletCommands: CommandHandler[] = [
             : await sendSlashbot(password, toAddress, amount);
 
         if (result.success) {
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          display.append('Transaction Sent');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-          display.append(`Amount:    ${formatNumber(amount, 9)} ${tokenType.toUpperCase()}`);
-          display.append(`Signature: ${result.signature}`);
-          display.append(`Explorer:  https://solscan.io/tx/${result.signature}\n`);
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          const txBlock = ` Transaction Sent 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Amount:    ${fg(theme.success)(formatNumber(amount, 9) + ' ' + tokenType.toUpperCase())}
+Signature: ${fg(theme.muted)(result.signature)}
+Explorer:  ${fg(theme.accent)('https://solscan.io/tx/' + result.signature)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+          display.append(txBlock);
           return true;
         } else {
           display.append(`\nTransaction failed: ${result.error}\n`);
@@ -549,11 +575,13 @@ export const walletCommands: CommandHandler[] = [
         const amountArg = args[1]?.toLowerCase();
 
         if (!amountArg) {
-          display.append('\nUsage: /wallet redeem <amount|all>\n');
-          display.append('Sends SLASHBOT tokens to treasury and credits your account instantly.\n');
-          display.append('Examples:');
-          display.append('  /wallet redeem 1000');
-          display.append('  /wallet redeem all    # Redeem all SLASHBOT tokens\n');
+          const redeemUsageBlock = `\n${fg(theme.muted)('Usage: /wallet redeem <amount|all>')}
+${fg(theme.muted)('Sends SLASHBOT tokens to treasury and credits your account instantly.')}
+${fg(theme.muted)('Examples:')}
+  ${fg(theme.muted)('/wallet redeem 1000')}
+  ${fg(theme.muted)('/wallet redeem all    # Redeem all SLASHBOT tokens')}
+`;
+          display.append(redeemUsageBlock);
           return false;
         }
 
@@ -594,9 +622,16 @@ export const walletCommands: CommandHandler[] = [
         const result = await redeemCredits(password, amount);
 
         if (result.success) {
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          display.append('Credits Redeemed');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          const redeemBlock = ` Credits Redeemed 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Tokens sent:     ${fg(theme.success)(formatNumber(amount, 4) + ' SLASHBOT')}
+Credits awarded: ${fg(theme.success)(result.creditsAwarded?.toLocaleString() || '0')}
+New balance:     ${fg(theme.success)(result.newBalance?.toLocaleString() || '0') + ' credits'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+          display.append(redeemBlock);
           display.append(`Tokens sent:     ${formatNumber(amount, 4)} SLASHBOT`);
           display.append(`Credits awarded: ${result.creditsAwarded?.toLocaleString()}`);
           display.append(`New balance:     ${result.newBalance?.toLocaleString()} credits\n`);
@@ -612,23 +647,22 @@ export const walletCommands: CommandHandler[] = [
       if (subcommand === 'deposit') {
         const publicKey = getPublicKey();
 
-        display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        display.append('Deposit Instructions');
-        display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        const depositBlock = ` Deposit Instructions 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        if (publicKey) {
-          display.append('Your wallet address:');
-          display.append(`  ${publicKey}\n`);
-        }
+${publicKey ? `Your wallet address:
+  ${fg(theme.muted)(publicKey)}
 
-        display.append('Treasury address (for credit redemption):');
-        display.append(`  ${TREASURY_ADDRESS}\n`);
+` : ''}Treasury address (for credit redemption):
+  ${fg(theme.muted)(TREASURY_ADDRESS)}
 
-        display.append('To add credits:');
-        display.append('1. Send SLASHBOT tokens to your wallet');
-        display.append('2. Run: /wallet redeem <amount>\n');
+To add credits:
+${fg(theme.muted)('1. Send SLASHBOT tokens to your wallet')}
+${fg(theme.muted)('2. Run: /wallet redeem <amount>')}
 
-        display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+        display.append(depositBlock);
         return true;
       }
 
@@ -939,10 +973,10 @@ export const walletCommands: CommandHandler[] = [
           }
 
           // Default: /wallet usage - Show summary
-          display.append('\nFetching usage summary...\n');
+          ('\nFetching usage summary...\n');
           const data = await fetchUsage('summary');
 
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          ('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
           display.append('Usage Summary');
           display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
@@ -995,12 +1029,15 @@ export const walletCommands: CommandHandler[] = [
         const success = unlockSession(password);
 
         if (success) {
-          display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          display.append('Wallet Unlocked');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-          display.append('Session active for 30 minutes (auto-extends on activity)');
-          display.append('API requests will be authenticated with your wallet.\n');
-          display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+          const unlockBlock = ` Wallet Unlocked 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${fg(theme.success)('Session active for 30 minutes (auto-extends on activity)')}
+${fg(theme.success)('API requests will be authenticated with your wallet.')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+          display.append(unlockBlock);
           try {
             container.get<EventBus>(TYPES.EventBus).emit({ type: 'wallet:unlocked' });
           } catch {}
@@ -1027,32 +1064,69 @@ export const walletCommands: CommandHandler[] = [
         const sessionActive = isSessionActive();
         const proxyConfigured = !!(PROXY_CONFIG.BASE_URL && publicKey);
 
-        display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        display.append('Proxy Mode Status');
-        display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        const statusBlock = ` Proxy Mode Status 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        display.append(`Wallet:      ${publicKey || 'Not configured'}`);
-        display.append(`Proxy URL:   ${PROXY_CONFIG.BASE_URL || 'Not configured'}`);
-        display.append(`Session:     ${sessionActive ? 'Active (unlocked)' : 'Inactive (locked)'}`);
-        display.append(
-          `Mode:        ${proxyConfigured ? (sessionActive ? 'Proxy (authenticated)' : 'Proxy (needs unlock)') : 'Direct API'}`,
-        );
+Wallet:      ${fg(theme.muted)(publicKey || 'Not configured')}
+Proxy URL:   ${fg(theme.muted)(PROXY_CONFIG.BASE_URL || 'Not configured')}
+Session:     ${fg(sessionActive ? theme.success : theme.warning)(sessionActive ? 'Active (unlocked)' : 'Inactive (locked)')}
+Mode:        ${fg(proxyConfigured ? theme.success : theme.muted)(proxyConfigured ? (sessionActive ? 'Proxy (authenticated)' : 'Proxy (needs unlock)') : 'Direct API')}
 
-        if (!proxyConfigured && !process.env.GROK_API_KEY && !process.env.XAI_API_KEY) {
-          display.append('\nWARNING: No API key or proxy configured!');
-          display.append('Set GROK_API_KEY or configure wallet for proxy mode.');
-        }
+${!proxyConfigured && !process.env.GROK_API_KEY && !process.env.XAI_API_KEY ? `
+${fg(theme.warning)('WARNING: No API key or proxy configured!')}
+${fg(theme.warning)('Set GROK_API_KEY or configure wallet for proxy mode.')}
+` : ''}
 
-        display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+        display.append(statusBlock);
         return true;
       }
 
       // Default: /wallet - Show overview
       const publicKey = getPublicKey();
 
-      display.append('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      display.append('Wallet');
-      display.append('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      let balances: any = null;
+      let credits: number | null = null;
+      if (publicKey) {
+        [balances, credits] = await Promise.all([getBalances(), getCreditBalance()]);
+      }
+
+      const overviewBlock = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${fg(bold(theme.accent)('Wallet'))}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${publicKey ? fg(theme.muted)('Address: ' + publicKey) + '\n' : ''}${balances ? `
+SOL:     ${fg(theme.accent)(formatNumber(balances.sol, 9) + ' SOL')}
+SLASHBOT: ${fg(theme.accent)(formatNumber(balances.slashbot, 4) + ' tokens')}
+` : ''}${credits !== null ? fg(theme.success)('Credits: ' + credits.toLocaleString()) + '\n' : publicKey ? fg(theme.muted)('Credits: (proxy offline)') + '\n' : ''}${!publicKey ? `
+${fg(theme.muted)('No wallet configured.')}
+${fg(theme.muted)('Run /wallet create to create a new wallet')}
+${fg(theme.muted)('Or /wallet import <key> to import existing')}
+` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${fg(bold(theme.primary)('Commands:'))}
+  /wallet create              ${fg(theme.muted)('- Create new wallet')}
+  /wallet import <key>        ${fg(theme.muted)('- Import private key')}
+  /wallet import seed         ${fg(theme.muted)('- Import from seed phrase')}
+  /wallet export              ${fg(theme.muted)('- Export private key')}
+  /wallet export seed         ${fg(theme.muted)('- Export seed phrase')}
+  /wallet balance             ${fg(theme.muted)('- Show balances')}
+  /wallet send <type> <to> <amt> ${fg(theme.muted)('- Send tokens')}
+  /wallet redeem <amount>     ${fg(theme.muted)('- Redeem for credits')}
+  /wallet unlock              ${fg(theme.muted)('- Unlock for proxy mode')}
+  /wallet lock                ${fg(theme.muted)('- Lock wallet session')}
+  /wallet status              ${fg(theme.muted)('- Show proxy status')}
+  /wallet pricing [model]     ${fg(theme.muted)('- Show pricing')}
+  /wallet mode [apikey|token] ${fg(theme.muted)('- Switch payment mode')}
+  /wallet usage [...]         ${fg(theme.muted)('- Usage tracking')}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+      display.append(overviewBlock);
 
       if (publicKey) {
         display.append(`Address: ${publicKey}`);

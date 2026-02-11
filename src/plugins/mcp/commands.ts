@@ -16,22 +16,33 @@ export function setMCPManagerForCommands(manager: MCPManager): void {
 
 function statusIcon(s: MCPServerStatus): string {
   switch (s.status) {
-    case 'connected': return '[*]';
-    case 'disabled': return '[-]';
-    case 'needs_auth': return '[!]';
-    case 'needs_client_registration': return '[!]';
-    default: return '[ ]';
+    case 'connected':
+      return '[*]';
+    case 'disabled':
+      return '[-]';
+    case 'needs_auth':
+      return '[!]';
+    case 'needs_client_registration':
+      return '[!]';
+    default:
+      return '[ ]';
   }
 }
 
 function statusText(s: MCPServerStatus): string {
   switch (s.status) {
-    case 'connected': return `connected (${s.toolCount} tools)`;
-    case 'disabled': return 'disabled';
-    case 'disconnected': return 'disconnected';
-    case 'failed': return `failed: ${s.error}`;
-    case 'needs_auth': return 'needs auth (/mcp auth <name>)';
-    case 'needs_client_registration': return `needs registration: ${s.error}`;
+    case 'connected':
+      return `connected (${s.toolCount} tools)`;
+    case 'disabled':
+      return 'disabled';
+    case 'disconnected':
+      return 'disconnected';
+    case 'failed':
+      return `failed: ${s.error}`;
+    case 'needs_auth':
+      return 'needs auth (/mcp auth <name>)';
+    case 'needs_client_registration':
+      return `needs registration: ${s.error}`;
   }
 }
 
@@ -79,7 +90,7 @@ export const mcpListCommand: CommandHandler = {
   usage: '/mcp [list|add|remove|restart|auth|logout]',
   group: 'MCP',
   subcommands: ['list', 'add', 'remove', 'restart', 'auth', 'logout', 'call'],
-  execute: async (args) => {
+  execute: async args => {
     if (!mcpManagerRef) {
       display.errorText('MCP not initialized.');
       return true;
@@ -280,8 +291,11 @@ export const mcpListCommand: CommandHandler = {
       if (config && 'url' in config) {
         const remoteConfig = config as MCPRemoteServerConfig;
         if (remoteConfig.headers) {
-          const { 'PRIVATE-TOKEN': _, 'Authorization': __, ...rest } = remoteConfig.headers;
-          const newConfig: MCPRemoteServerConfig = { ...remoteConfig, headers: Object.keys(rest).length > 0 ? rest : undefined };
+          const { 'PRIVATE-TOKEN': _, Authorization: __, ...rest } = remoteConfig.headers;
+          const newConfig: MCPRemoteServerConfig = {
+            ...remoteConfig,
+            headers: Object.keys(rest).length > 0 ? rest : undefined,
+          };
           await mcpManagerRef.addServer(name, newConfig);
         }
       }

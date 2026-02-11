@@ -20,13 +20,14 @@ export async function executeTodoWrite(
   const statuses = {
     pending: summary.pending,
     in_progress: summary.inProgress,
-    completed: summary.completed
+    completed: summary.completed,
   } as const;
 
   const statusLines = Object.entries(statuses)
     .filter(([, count]: [string, number]) => count > 0)
     .map(([status, count]: [string, number]) => {
-      const icon = status === 'completed' ? '\u2713' : status === 'in_progress' ? '\u25B6' : '\u25CB';
+      const icon =
+        status === 'completed' ? '\u2713' : status === 'in_progress' ? '\u25B6' : '\u25CB';
       return `[${icon} ${status.replace('_', ' ').toLowerCase()}] ${count}`;
     })
     .join('\n');
@@ -47,7 +48,8 @@ export async function executeTodoWrite(
 
   const formatted = action.todos
     .map(t => {
-      const icon = t.status === 'completed' ? '\u2713' : t.status === 'in_progress' ? '\u25B6' : '\u25CB';
+      const icon =
+        t.status === 'completed' ? '\u2713' : t.status === 'in_progress' ? '\u25B6' : '\u25CB';
       return `${icon} [${t.id}] ${t.content}`;
     })
     .join('\n');
@@ -77,7 +79,8 @@ export async function executeTodoRead(
 
   const formatted = todos
     .map(t => {
-      const icon = t.status === 'completed' ? '\u2713' : t.status === 'in_progress' ? '\u25B6' : '\u25CB';
+      const icon =
+        t.status === 'completed' ? '\u2713' : t.status === 'in_progress' ? '\u25B6' : '\u25CB';
       return `${icon} [${t.id}] (${t.status}) ${t.content}`;
     })
     .join('\n');

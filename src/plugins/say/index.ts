@@ -65,7 +65,7 @@ export class SayPlugin implements Plugin {
         priority: 80,
         content: [
           '## say_message — Mid-task communication',
-          '- Use for progress updates, questions, interim findings, or important discoveries.',
+          '- Use for progress updates, questions, interim findings, or important discoveries. It can be in Mardown if important.',
           '- Keep messages short (1-3 sentences). Never dump code or full file contents.',
           '',
           '## end_task — Signal task completion',

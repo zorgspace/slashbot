@@ -6,7 +6,7 @@ export const gitStatusCommand: CommandHandler = {
   description: 'Git operations',
   usage: '/git [status|log|diff]',
   group: 'Git',
-  execute: async (args) => {
+  execute: async args => {
     const subcommand = args[0] || 'status';
 
     const proc = Bun.spawn(['git', subcommand, ...args.slice(1)], {

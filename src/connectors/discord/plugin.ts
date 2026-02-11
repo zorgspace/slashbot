@@ -56,9 +56,9 @@ export class DiscordPlugin implements ConnectorPlugin {
           '4. Invite the bot to your server with appropriate permissions.',
           '5. Get the channel ID by right-clicking the channel > Copy ID (enable Developer Mode in User Settings > App Settings > Advanced).',
           '6. In Slashbot, run /discord <bot_token> <channel_id>',
-          '7. The bot will connect and respond to messages in that channel.'
-        ]
-      }
+          '7. The bot will connect and respond to messages in that channel.',
+        ],
+      },
     ];
   }
 }

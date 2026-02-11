@@ -41,10 +41,7 @@ export async function executeTask(
 /**
  * Run an explore-type subagent that uses grep/glob to search the codebase
  */
-async function runExploreAgent(
-  prompt: string,
-  handlers: ActionHandlers,
-): Promise<ActionResult> {
+async function runExploreAgent(prompt: string, handlers: ActionHandlers): Promise<ActionResult> {
   const results: string[] = [];
 
   // Extract search patterns from the prompt
@@ -76,9 +73,8 @@ async function runExploreAgent(
     }
   }
 
-  const output = results.length > 0
-    ? results.join('\n\n')
-    : 'No results found for the given search terms.';
+  const output =
+    results.length > 0 ? results.join('\n\n') : 'No results found for the given search terms.';
 
   display.result(`${results.length} search results`);
 
@@ -118,8 +114,33 @@ function extractSearchTerms(prompt: string): string[] {
 
   // If no terms extracted, use key words from the prompt
   if (terms.length === 0) {
-    const stopWords = new Set(['the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or', 'is', 'are', 'was', 'be', 'how', 'what', 'where', 'find', 'search', 'look']);
-    const words = prompt.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
+    const stopWords = new Set([
+      'the',
+      'a',
+      'an',
+      'in',
+      'on',
+      'at',
+      'to',
+      'for',
+      'of',
+      'and',
+      'or',
+      'is',
+      'are',
+      'was',
+      'be',
+      'how',
+      'what',
+      'where',
+      'find',
+      'search',
+      'look',
+    ]);
+    const words = prompt
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !stopWords.has(w));
     terms.push(...words.slice(0, 3));
   }
 

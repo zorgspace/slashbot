@@ -29,16 +29,29 @@ export async function executeShellCommand(
       })
     : handlers.onExec!(command));
 
-  const isError = output?.startsWith('Error:') || output?.includes('Command blocked');
+  // Process output: add title and limit to 5 lines
+  let processedOutput = output || '';
+  if (processedOutput) {
+    const lines = processedOutput.split('\n').filter(line => line.trim());
+    const title = command.trim().startsWith('ls') ? 'Directory Contents:' : 'Command Output:';
+    const limitedLines = lines.slice(0, 5);
+    processedOutput = `${title}\n${limitedLines.join('\n')}`;
+    if (lines.length > 5) {
+      processedOutput += '\n... (truncated)';
+    }
+  }
+
+  const isError =
+    processedOutput?.startsWith('Error:') || processedOutput?.includes('Command blocked');
 
   // Display result
-  display.bashResult(command, output || '', isError ? 1 : 0);
+  display.bashResult(command, processedOutput, isError ? 1 : 0);
 
   return {
     action: `Bash: ${command}`,
     success: !isError,
-    result: output || 'OK',
-    error: isError ? output : undefined,
+    result: processedOutput || 'OK',
+    error: isError ? processedOutput : undefined,
   };
 }
 

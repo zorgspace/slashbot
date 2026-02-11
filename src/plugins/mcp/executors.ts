@@ -39,7 +39,8 @@ export async function executeMCPTool(
           output += `[Audio: ${item.mimeType}, ${item.data?.length ?? 0} bytes]\n`;
         } else if (item.type === 'resource') {
           if (item.resource?.text) output += item.resource.text + '\n';
-          else if (item.resource?.blob) output += `[Resource: ${item.resource.uri}, ${item.resource.mimeType}]\n`;
+          else if (item.resource?.blob)
+            output += `[Resource: ${item.resource.uri}, ${item.resource.mimeType}]\n`;
         } else if (item.type === 'resource_link') {
           output += `[Resource: ${item.name} - ${item.uri}]\n`;
         }

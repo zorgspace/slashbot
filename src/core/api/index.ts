@@ -36,4 +36,10 @@ export type { ActionHandlers } from './client';
 export { ProviderRegistry } from '../../plugins/providers/registry';
 export type { ProviderConfig } from '../../plugins/providers/registry';
 export type { ProviderInfo, ModelInfo, ProviderCapabilities } from '../../plugins/providers/types';
-export { PROVIDERS, MODELS as MODEL_CATALOG, getModelsForProvider, getModelInfo, inferProvider } from '../../plugins/providers/models';
+export {
+  PROVIDERS,
+  MODELS as MODEL_CATALOG,
+  getModelsForProvider,
+  getModelInfo,
+  inferProvider,
+} from '../../plugins/providers/models';

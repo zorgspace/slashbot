@@ -58,7 +58,8 @@ export class PromptAssembler {
       if (content) {
         if (prompt.length === 0) {
           // First contribution (core prompt) - no header prefix
-          prompt = typeof content === 'string' ? content : (content as readonly string[]).join('\n');
+          prompt =
+            typeof content === 'string' ? content : (content as readonly string[]).join('\n');
         } else {
           prompt += `\n\n# ${contribution.title}\n${content}`;
         }

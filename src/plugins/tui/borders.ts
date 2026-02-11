@@ -26,6 +26,11 @@ export const SplitBorder = {
   customBorderChars: { ...EmptyBorderChars, vertical: '┃' },
 };
 
+export const LeftBorder = {
+  border: ['left'] as BorderSides[],
+  customBorderChars: { ...EmptyBorderChars, vertical: '┃' },
+};
+
 export const TopBorder = {
   border: ['top'] as BorderSides[],
   customBorderChars: { ...EmptyBorderChars, horizontal: '─' },

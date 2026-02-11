@@ -124,7 +124,9 @@ export class CommPanel {
     }
 
     if (this.responseBuffer) {
-      this.addEntry(t`${fg(theme.muted)('\u2190')} ${dim(fg(theme.white)(this.responseBuffer.trim()))}`);
+      this.addEntry(
+        t`${fg(theme.muted)('\u2190')} ${dim(fg(theme.white)(this.responseBuffer.trim()))}`,
+      );
       this.responseBuffer = '';
     }
   }

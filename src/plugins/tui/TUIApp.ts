@@ -23,7 +23,7 @@ import { DiffPanel } from './panels/DiffPanel';
 import { CommandPalettePanel } from './panels/CommandPalettePanel';
 import { InputPanel } from './panels/InputPanel';
 import { ThinkingPanel } from './panels/ThinkingPanel';
-import { ModelSelectModal } from './panels/ModelSelectModal';
+
 import { NotificationPanel } from './panels/TodoNotification';
 import {
   enableBracketedPaste,
@@ -69,7 +69,7 @@ export class TUIApp implements UIOutput {
   private commandPalette!: CommandPalettePanel;
   private inputPanel!: InputPanel;
   private thinkingPanel!: ThinkingPanel;
-  private modelSelectModal!: ModelSelectModal;
+
   private callbacks: TUIAppCallbacks;
   private completer?: (line: string) => [string[], string];
   private history: string[];
@@ -168,9 +168,6 @@ export class TUIApp implements UIOutput {
     });
     root.add(this.inputPanel.getRenderable());
 
-    this.modelSelectModal = new ModelSelectModal(this.renderer);
-    root.add(this.modelSelectModal.getRenderable());
-
     this.renderer.root.add(root);
 
     // Track selected text for middle-click paste (copy handled by terminal's native right-click menu)
@@ -257,7 +254,9 @@ export class TUIApp implements UIOutput {
         key.preventDefault();
         // Ignore any bracketed paste event that may follow from the terminal
         this.ignoreNextPaste = true;
-        setTimeout(() => { this.ignoreNextPaste = false; }, 200);
+        setTimeout(() => {
+          this.ignoreNextPaste = false;
+        }, 200);
         readImageFromClipboard()
           .then(dataUrl => {
             if (dataUrl) {
@@ -331,15 +330,6 @@ export class TUIApp implements UIOutput {
           this.commandPalette.hide();
         }
 
-        // Handle model select modal keys
-        if (this.modelSelectModal.isVisible()) {
-          if (this.modelSelectModal.handleKey(key)) {
-            key.stopPropagation();
-            key.preventDefault();
-            return;
-          }
-        }
-
         // Up arrow - history navigation
         if (key.name === 'up') {
           key.stopPropagation();
@@ -386,6 +376,46 @@ export class TUIApp implements UIOutput {
 
   appendStyledChat(content: StyledText | string): void {
     this.chatPanel.appendStyled(content);
+  }
+
+  appendAssistantChat(content: StyledText | string): void {
+    this.chatPanel.appendAssistantMessage(content);
+  }
+
+  startAction(content: StyledText | string): void {
+    this.chatPanel.startAction(content, theme.accent);
+  }
+
+  appendActionContent(content: StyledText | string): void {
+    this.chatPanel.appendActionContent(content);
+  }
+
+  completeAction(content: StyledText | string): void {
+    this.chatPanel.completeAction(content);
+  }
+
+  startResponse(): void {
+    this.chatPanel.startResponse();
+  }
+
+  appendResponse(chunk: string): void {
+    this.chatPanel.appendResponse(chunk);
+  }
+
+  startAssistantBlock(): void {
+    this.chatPanel.startAssistantBlock();
+  }
+
+  appendAssistantBlockLine(content: StyledText | string): void {
+    this.chatPanel.appendAssistantBlockLine(content);
+  }
+
+  addAssistantBlockCode(content: string, filetype?: string): void {
+    this.chatPanel.addAssistantBlockCode(content, filetype);
+  }
+
+  endAssistantBlock(): void {
+    this.chatPanel.endAssistantBlock();
   }
 
   appendCodeBlock(content: string, filetype?: string): void {
@@ -466,23 +496,6 @@ export class TUIApp implements UIOutput {
 
   async promptInput(label: string, options?: { masked?: boolean }): Promise<string> {
     return this.inputPanel.promptInput(label, options);
-  }
-
-  setModelSelectModels(current: string, available: any[]): void {
-    this.modelSelectModal.setModels(current, available);
-  }
-
-  showModelSelectModal(onSelect: (model: string) => void, onCancel?: () => void): void {
-    this.modelSelectModal.show(
-      (model: string) => {
-        onSelect(model);
-        this.inputPanel.focus();
-      },
-      () => {
-        onCancel?.();
-        this.inputPanel.focus();
-      },
-    );
   }
 
   // --- Diff panel methods ---

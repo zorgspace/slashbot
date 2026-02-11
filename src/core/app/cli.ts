@@ -4,6 +4,8 @@
 
 import { display } from '../ui';
 import { createConfigManager } from '../config/config';
+import { fg, bold } from '@opentui/core';
+import { theme } from '../ui/theme';
 
 export async function handleUpdateCommands(): Promise<boolean> {
   // Handle update commands before anything else
@@ -53,24 +55,25 @@ export async function handleCliArgs(version: string): Promise<boolean> {
   // Handle --help
   if (args.includes('--help') || args.includes('-h')) {
     display.violet('Slashbot - CLI Assistant powered by Grok');
-    display.append('');
-    display.boldText('Usage:');
-    display.append('  slashbot [options]');
-    display.append('  slashbot login              Enter API key');
-    display.append('  slashbot -m "message"       Send a message and exit');
-    display.append('');
-    display.boldText('Options:');
-    display.append('  -h, --help           Show this help');
-    display.append('  -v, --version        Show version');
-    display.append('  -m, --message MSG    Send message non-interactively');
-    display.append('');
-    display.boldText('Commands:');
-    display.append('  /login          Enter Grok API key');
-    display.append('  /logout         Log out');
-    display.append('  /task           Manage scheduled tasks');
-    display.append('  /notify         Configure notifications');
-    display.append('  /help           Show all commands');
-    display.append('  /exit           Quit');
+    const helpContent = `${bold(fg(theme.primary)('Usage:'))}
+  slashbot [options]
+  slashbot login              Enter API key
+  slashbot -m "message"       Send a message and exit
+
+${bold(fg(theme.primary)('Options:'))}
+  -h, --help           Show this help
+  -v, --version        Show version
+  -m, --message MSG    Send message non-interactively
+
+${bold(fg(theme.primary)('Commands:'))}
+  /login          Enter Grok API key
+  /logout         Log out
+  /task           Manage scheduled tasks
+  /notify         Configure notifications
+  /help           Show all commands
+  /exit           Quit
+`;
+    display.append(helpContent);
     return true;
   }
 
@@ -100,12 +103,14 @@ export async function handleCliArgs(version: string): Promise<boolean> {
       display.successText('API key saved!');
       display.muted('Run slashbot to start.');
     } else {
-      display.violet('Slashbot Login');
-      display.append('');
-      display.muted('Usage: slashbot login <api_key>');
-      display.muted('Or run slashbot and use /login');
-      display.append('');
-      display.muted('Get your key at https://console.x.ai/');
+      const loginBlock = `${fg(theme.accent)('Slashbot Login')}
+
+${fg(theme.muted)('Usage: slashbot login <api_key>')}
+${fg(theme.muted)('Or run slashbot and use /login')}
+
+${fg(theme.muted)('Get your key at https://console.x.ai/')}
+`;
+      display.append(loginBlock);
     }
     return true;
   }

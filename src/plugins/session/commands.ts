@@ -4,7 +4,9 @@
  * Commands: login, logout, config, model, provider
  */
 
+import { t, fg, bold } from '@opentui/core';
 import { display } from '../../core/ui';
+import { theme } from '../../core/ui/theme';
 import type { CommandHandler, CommandContext } from '../../core/commands/registry';
 import { PROVIDERS, getModelsForProviders } from '../providers/models';
 
@@ -17,18 +19,18 @@ export const loginCommand: CommandHandler = {
     const apiKey = args.join('');
 
     if (!apiKey) {
-      display.append('');
-      display.violet('Connect to an AI provider');
-      display.muted('Get your API key from:');
-      display.muted('  xAI (Grok):    https://console.x.ai/');
-      display.muted('  Anthropic:     https://console.anthropic.com/');
-      display.muted('  OpenAI:        https://platform.openai.com/');
-      display.muted('  Google:        https://aistudio.google.com/');
-      display.append('');
-      display.muted('Usage: /login <your_api_key>');
-      display.muted('Example: /login xai-xxxxxxxxxxxx');
-      display.muted('Example: /login sk-ant-xxxxxxxxxxxx');
-      display.append('');
+      display.appendAssistantStyled(t`
+${bold(fg(theme.accent)('Connect to an AI provider'))}
+${fg(theme.muted)('Get your API key from:')}
+${fg(theme.muted)('  xAI (Grok):    https://console.x.ai/')}
+${fg(theme.muted)('  Anthropic:     https://console.anthropic.com/')}
+${fg(theme.muted)('  OpenAI:        https://platform.openai.com/')}
+${fg(theme.muted)('  Google:        https://aistudio.google.com/')}
+
+${fg(theme.muted)('Usage: /login <your_api_key>')}
+${fg(theme.muted)('Example: /login xai-xxxxxxxxxxxx')}
+${fg(theme.muted)('Example: /login sk-ant-xxxxxxxxxxxx')}
+`);
       return true;
     }
 
@@ -87,31 +89,32 @@ export const configCommand: CommandHandler = {
     const currentProvider = context.configManager.getProvider();
     const providerName = PROVIDERS[currentProvider]?.name || currentProvider;
 
-    display.append('');
-    display.violet('Slashbot Configuration');
-    display.append('');
-    display.append('  Status:     ' + (isAuth ? 'Connected' : 'Not connected'));
-    display.append('  Provider:   ' + providerName);
-    display.append('  Model:      ' + currentModel);
-    display.append('  Config:     ' + configDir);
-
-    // Show configured providers
     const allCreds = context.configManager.getAllProviderCredentials();
     const configuredProviders = Object.keys(allCreds);
-    if (configuredProviders.length > 0) {
-      display.append('');
-      display.append('  Providers:  ' + configuredProviders.map(p => {
-        const info = PROVIDERS[p];
-        const marker = p === currentProvider ? '[*]' : '[ ]';
-        return `${marker} ${info?.name || p}`;
-      }).join(', '));
-    }
+    const providersList =
+      configuredProviders.length > 0
+        ? '\n  Providers:  ' +
+          configuredProviders
+            .map(p => {
+              const info = PROVIDERS[p];
+              const marker = p === currentProvider ? '[*]' : '[ ]';
+              return `${marker} ${info?.name || p}`;
+            })
+            .join(', ')
+        : '';
 
     const tasks = context.scheduler?.listTasks() || [];
-    display.append('');
-    display.append('  Tasks:      ' + tasks.length + ' scheduled');
 
-    display.append('');
+    display.appendAssistantStyled(t`
+${bold(fg(theme.accent)('Slashbot Configuration'))}
+
+  Status:     ${isAuth ? 'Connected' : 'Not connected'}
+  Provider:   ${providerName}
+  Model:      ${currentModel}
+  Config:     ${configDir}${providersList}
+
+  Tasks:      ${tasks.length} scheduled
+`);
     return true;
   },
 };
@@ -133,36 +136,26 @@ export const modelCommand: CommandHandler = {
     const entries = getModelsForProviders([currentProvider]);
 
     if (!modelArg) {
-      if (context.tuiApp) {
-        context.tuiApp.setModelSelectModels(currentModel, entries);
-        context.tuiApp.showModelSelectModal(
-          async (model: string) => {
-            if (!context.grokClient) return;
-            context.grokClient.setModel(model);
-            await context.configManager.saveConfig({ model });
-            display.successText('Model changed to ' + model);
-          },
-          () => { /* cancel */ },
-        );
-        return true;
-      } else {
-        display.append('');
-        display.violet('Model Configuration');
-        display.append('');
-        display.append('  Provider: ' + (PROVIDERS[currentProvider]?.name || currentProvider));
-        display.append('  Current:  ' + currentModel);
-        display.append('');
-        display.muted('  Available models:');
-        for (const entry of entries) {
-          const marker = entry.id === currentModel ? '[*]' : '[ ]';
-          display.append('    ' + marker + ' ' + entry.name + '  (' + entry.id + ')');
-        }
-        display.append('');
-        display.muted('  Usage: /model <model_name>');
-        display.muted('  Tip: Use /provider to switch providers');
-        display.append('');
-        return true;
-      }
+      const providerName = PROVIDERS[currentProvider]?.name || currentProvider;
+      const modelList = entries
+        .map(
+          entry => `    ${entry.id === currentModel ? '[*]' : '[ ]'} ${entry.name} (${entry.id})`,
+        )
+        .join('\n');
+
+      display.appendAssistantStyled(t`
+${bold(fg(theme.accent)('Model Configuration'))}
+
+  Provider: ${providerName}
+  Current:  ${currentModel}
+
+${fg(theme.muted)('  Available models:')}
+${fg(theme.muted)(modelList)}
+
+${fg(theme.muted)('  Usage: /model <model_name>')}
+${fg(theme.muted)('  Tip: Use /provider to switch providers')}
+`);
+      return true;
     }
 
     context.grokClient.setModel(modelArg);
@@ -187,38 +180,42 @@ export const providerCommand: CommandHandler = {
     const currentProvider = context.configManager.getProvider();
 
     if (!providerArg) {
-      display.append('');
-      display.violet('Provider Configuration');
-      display.append('');
       const allCreds = context.configManager.getAllProviderCredentials();
-      for (const [id, info] of Object.entries(PROVIDERS)) {
-        const isConfigured = !!allCreds[id];
-        const isCurrent = id === currentProvider;
-        const marker = isCurrent ? '[*]' : isConfigured ? '[+]' : '[ ]';
-        const status = isCurrent ? ' (active)' : isConfigured ? ' (configured)' : '';
-        display.append(`  ${marker} ${info.name}${status}`);
-      }
-      display.append('');
-      display.muted('  [*] = active  [+] = configured  [ ] = not configured');
-      display.muted('  Usage: /provider <name>');
-      display.muted('  Example: /provider anthropic');
-      display.append('');
+      const providerLines = Object.entries(PROVIDERS)
+        .map(([id, info]) => {
+          const isConfigured = !!allCreds[id];
+          const isCurrent = id === currentProvider;
+          const marker = isCurrent ? '[*]' : isConfigured ? '[+]' : '[ ]';
+          const status = isCurrent ? ' (active)' : isConfigured ? ' (configured)' : '';
+          return `  ${marker} ${info.name}${status}`;
+        })
+        .join('\n');
+
+      display.appendAssistantStyled(t`
+${bold(fg(theme.accent)('Provider Configuration'))}
+
+${providerLines}
+
+${fg(theme.muted)('  [*] = active  [+] = configured  [ ] = not configured')}
+${fg(theme.muted)('  Usage: /provider <name>')}
+${fg(theme.muted)('  Example: /provider anthropic')}
+`);
       return true;
     }
 
     // Check if provider exists
     const providerInfo = PROVIDERS[providerArg];
     if (!providerInfo) {
-      display.errorText('Unknown provider: ' + providerArg);
-      display.muted('Available: ' + Object.keys(PROVIDERS).join(', '));
+      display.appendAssistantStyled(t`${fg(theme.error)('Unknown provider: ' + providerArg)}
+${fg(theme.muted)('Available: ' + Object.keys(PROVIDERS).join(', '))}`);
       return true;
     }
 
     // Check if provider is configured
     const creds = context.configManager.getProviderCredentials(providerArg);
     if (!creds) {
-      display.errorText(`Provider '${providerArg}' not configured.`);
-      display.muted(`Set ${providerInfo.envVars[0]} environment variable, or /login with the API key.`);
+      display.appendAssistantStyled(t`${fg(theme.error)("Provider '" + providerArg + "' not configured.")}
+${fg(theme.muted)('Set ' + providerInfo.envVars[0] + ' environment variable, or /login with the API key.')}`);
       return true;
     }
 

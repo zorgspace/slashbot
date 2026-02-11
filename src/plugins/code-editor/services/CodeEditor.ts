@@ -18,13 +18,7 @@ import type { EventBus } from '../../../core/events/EventBus';
  * This catches corruption that slipped past the parser (defense in depth).
  */
 function hasActionTagCorruption(content: string): boolean {
-  const patterns = [
-    /<edit\s+path\s*=/i,
-    /<\/edit>/i,
-    /<end>/i,
-    /<bash>/i,
-    /<say>/i,
-  ];
+  const patterns = [/<edit\s+path\s*=/i, /<\/edit>/i, /<end>/i, /<bash>/i, /<say>/i];
   let count = 0;
   for (const p of patterns) {
     if (p.test(content)) count++;
@@ -211,7 +205,9 @@ export class CodeEditor {
 
       // Safety net: reject newString corrupted with raw action tags
       if (hasActionTagCorruption(newString)) {
-        display.errorText(`Blocked corrupted edit to ${filePath}: content contains raw action tags`);
+        display.errorText(
+          `Blocked corrupted edit to ${filePath}: content contains raw action tags`,
+        );
         return {
           success: false,
           status: 'error',
@@ -280,7 +276,9 @@ export class CodeEditor {
   async createFile(filePath: string, content: string): Promise<boolean> {
     // Safety net: reject content corrupted with raw action tags
     if (hasActionTagCorruption(content)) {
-      display.errorText(`Blocked corrupted create for ${filePath}: content contains raw action tags`);
+      display.errorText(
+        `Blocked corrupted create for ${filePath}: content contains raw action tags`,
+      );
       return false;
     }
 

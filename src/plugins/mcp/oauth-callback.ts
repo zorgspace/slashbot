@@ -19,7 +19,9 @@ let pendingAuth: PendingAuth | null = null;
 const HTML_SUCCESS = `<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px">
 <h1>Authorization Successful</h1><p>You can close this window and return to slashbot.</p></body></html>`;
 
-const HTML_ERROR = (msg: string) => `<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px">
+const HTML_ERROR = (
+  msg: string,
+) => `<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px">
 <h1>Authorization Failed</h1><p>${msg}</p></body></html>`;
 
 function handleCallback(req: Request): Response {

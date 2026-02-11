@@ -30,7 +30,7 @@ export async function streamResponse(
   }
 
   if (displayStream) {
-    display.newline();
+    display.scrollToBottom();
   }
 
   let responseContent = '';
@@ -203,7 +203,9 @@ export async function streamResponse(
           display.streamThinkingChunk(reasoning);
         }
       }
-    } catch { /* provider doesn't support reasoning */ }
+    } catch {
+      /* provider doesn't support reasoning */
+    }
 
     // Response messages for history reconstruction
     const response = await stream.response;
@@ -240,7 +242,7 @@ export async function streamResponse(
       cleaned = cleaned.replace(/^Assistant:\s*/gim, '');
       const normalized = cleaned.replace(/\n{3,}/g, '\n\n');
       if (normalized.trim()) {
-        display.append(normalized);
+        display.renderMarkdown(normalized, true);
         ctx.sessionManager.displayedContent = normalized;
       }
     }
@@ -281,7 +283,9 @@ export async function streamResponse(
   }
 
   if (thinkingContent && !responseContent.trim() && !hasToolCalls) {
-    display.warningText(`[Model produced thinking but no response (finish: ${finishReason}) - may need to retry]`);
+    display.warningText(
+      `[Model produced thinking but no response (finish: ${finishReason}) - may need to retry]`,
+    );
   }
 
   return {

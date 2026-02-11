@@ -3,6 +3,8 @@
  */
 
 import { display } from '../../../core/ui';
+import { fg, bold } from '@opentui/core';
+import { theme } from '../../../core/ui/theme';
 import { getLocalHistoryFile } from '../../../core/config/constants';
 import { isSessionActive } from '../../wallet/services';
 import type { CommandHandler } from '../../../core/commands/registry';
@@ -37,15 +39,10 @@ export const helpCommand: CommandHandler = {
       return true;
     }
 
-    display.append('');
-    display.violet('Keyboard shortcuts:', { bold: true });
-    display.append('');
-    display.append('  ?           Show this help');
-    display.append('  Ctrl+C      Cancel / Quit');
-
-    display.append('');
-    display.violet('Commands:', { bold: true });
-    display.append('');
+    display.append(
+      `${fg(theme.accent)(bold('Keyboard shortcuts:'))}\n\n  ?           Show this help\n  Ctrl+C      Cancel / Quit\n\n`,
+    );
+    display.append(`${fg(theme.accent)(bold('Commands:'))}\n\n`);
 
     const groupMap = new Map<string, CommandHandler[]>();
     const seen = new Set<string>();
@@ -57,15 +54,19 @@ export const helpCommand: CommandHandler = {
       groupMap.get(group)!.push(handler);
     }
 
+    let commandsText = '';
     for (const [groupTitle, handlers] of groupMap) {
-      for (const cmd of handlers) {
-        display.append('  /' + cmd.name.padEnd(10) + ' ' + cmd.description);
+      if (groupTitle !== 'Other') {
+        commandsText += `${fg(theme.primary)(groupTitle)}\n`;
       }
+      for (const cmd of handlers) {
+        commandsText += `  /${cmd.name.padEnd(10)} ${cmd.description}\n`;
+      }
+      commandsText += '\n';
     }
 
-    display.append('');
-    display.muted('Use /help <command> for more details');
-    display.append('');
+    display.append(commandsText);
+    display.append(`${fg(theme.muted)('Use /help <command> for more details')}\n\n`);
     return true;
   },
 };
@@ -109,16 +110,10 @@ export const historyCommand: CommandHandler = {
       const lines = content.split('\n').filter(l => l.trim());
       const recent = lines.slice(-limit);
 
-      display.append('');
-      display.violet('Command history:');
-      display.append('');
-      recent.forEach((line, i) => {
-        const num = lines.length - recent.length + i + 1;
-        display.muted('  ' + String(num).padStart(4) + '  ' + line);
-      });
-      display.append('');
+      const historyBlock = `${fg(theme.accent)('Command history:')}\n\n${recent.map((line, i) => fg(theme.muted)('  ' + String(lines.length - recent.length + i + 1).padStart(4) + '  ' + line)).join('\n')}\n`;
+      display.append(historyBlock);
     } catch {
-      display.muted('Could not read history');
+      display.append(fg(theme.muted)('Could not read history'));
     }
 
     return true;
@@ -131,9 +126,7 @@ export const exitCommand: CommandHandler = {
   usage: '/exit',
   group: 'System',
   execute: async (_, context) => {
-    display.append('');
-    display.violet('Goodbye!');
-    display.append('');
+    display.append(`${fg(theme.accent)('Goodbye!')}\n\n`);
     context.scheduler.stop();
     process.exit(0);
   },
@@ -159,16 +152,16 @@ export const bannerCommand: CommandHandler = {
     const walletUnlocked = isSessionActive();
 
     const pkg = await import('../../../../package.json');
-    display.append('Slashbot v' + pkg.version);
-    display.muted('Working directory: ' + context.codeEditor.getWorkDir());
-    display.muted('Tasks: ' + tasks.length);
-    display.muted('Telegram: ' + (context.connectors.has('telegram') ? 'connected' : 'off'));
-    display.muted('Discord: ' + (context.connectors.has('discord') ? 'connected' : 'off'));
-    display.muted('Voice: ' + (voiceEnabled ? 'enabled' : 'off'));
-    display.muted(
-      'Heartbeat: ' + (heartbeatStatus?.running && heartbeatStatus.enabled ? 'active' : 'off'),
-    );
-    display.muted('Wallet: ' + (walletUnlocked ? 'unlocked' : 'locked'));
+    const bannerText = `${fg(theme.primary)('Slashbot v' + pkg.version)}
+${fg(theme.muted)('Working directory: ' + context.codeEditor.getWorkDir())}
+${fg(theme.muted)('Tasks: ' + tasks.length)}
+${fg(theme.muted)('Telegram: ' + (context.connectors.has('telegram') ? fg(theme.success)('connected') : 'off'))}
+${fg(theme.muted)('Discord: ' + (context.connectors.has('discord') ? fg(theme.success)('connected') : 'off'))}
+${fg(theme.muted)('Voice: ' + (voiceEnabled ? fg(theme.success)('enabled') : 'off'))}
+${fg(theme.muted)('Heartbeat: ' + (heartbeatStatus?.running && heartbeatStatus.enabled ? fg(theme.success)('active') : 'off'))}
+${fg(theme.muted)('Wallet: ' + (walletUnlocked ? fg(theme.success)('unlocked') : 'locked'))}
+`;
+    display.append(bannerText);
 
     return true;
   },

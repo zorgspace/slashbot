@@ -252,7 +252,9 @@ export class ToolRegistry {
         if (newContent && newContent.length < 50000) {
           ctx.fileContextCache.set(filePath, newContent);
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     if (actionStr.startsWith('Write:') && result.success && ctx.onRead) {
       const filePath = actionStr.replace('Write: ', '').trim();
@@ -261,7 +263,9 @@ export class ToolRegistry {
         if (newContent && newContent.length < 50000) {
           ctx.fileContextCache.set(filePath, newContent);
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     if (actionStr.startsWith('Grep:') && result.success && result.result) {
       const grepKey = `grep:${actionStr}`;

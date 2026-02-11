@@ -22,7 +22,7 @@ export function getGitToolContributions(): ToolContribution[] {
         ref: z.string().optional().describe('Git ref to diff against (e.g. "HEAD~1", "main")'),
         staged: z.boolean().optional().describe('Show staged changes only'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'git-diff',
         ref: args.ref as string | undefined,
         staged: args.staged as boolean | undefined,
@@ -34,7 +34,7 @@ export function getGitToolContributions(): ToolContribution[] {
       parameters: z.object({
         count: z.number().optional().describe('Number of commits to show (default: 10)'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'git-log',
         count: args.count as number | undefined,
       }),
@@ -44,9 +44,12 @@ export function getGitToolContributions(): ToolContribution[] {
       description: 'Create a git commit with the specified message and optional file list.',
       parameters: z.object({
         message: z.string().describe('Commit message'),
-        files: z.array(z.string()).optional().describe('Specific files to stage and commit (default: all staged)'),
+        files: z
+          .array(z.string())
+          .optional()
+          .describe('Specific files to stage and commit (default: all staged)'),
       }),
-      toAction: (args) => ({
+      toAction: args => ({
         type: 'git-commit',
         message: args.message as string,
         files: args.files as string[] | undefined,
