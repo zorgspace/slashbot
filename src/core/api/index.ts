@@ -26,7 +26,7 @@ export { LRUCache } from './utils';
 
 // Sessions
 export { SessionManager } from './sessions';
-export type { ConversationSession } from './sessions';
+export type { ConversationSession, SessionUsageStats, SessionCompactionStats } from './sessions';
 
 // Client
 export { LLMClient, GrokClient, createGrokClient, createLLMClient } from './client';

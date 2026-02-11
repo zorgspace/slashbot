@@ -241,6 +241,20 @@ All user configuration is stored in `~/.slashbot/`:
   history               # Command history
 ```
 
+### Plugin Settings (Dynamic)
+
+Plugins/connectors are now discovered dynamically from local `settings.json` manifests:
+
+- `src/plugins/*/settings.json`
+- `src/connectors/*/settings.json`
+
+Runtime overrides can be loaded from:
+
+- `./settings.json` under `"plugins"`
+- `./.slashbot/plugins.settings.json`
+
+Example override file: `docs/plugins.settings.example.json`
+
 ## $SLASHBOT Token
 
 | Property     | Value                                             |

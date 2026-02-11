@@ -59,8 +59,6 @@ export const initCommand: CommandHandler = {
     const contextFile = path.join(workDir, 'GROK.md');
 
     display.muted('Gathering codebase context...');
-    const { gatherCodebaseContext } = await import('../../explore/codebaseContext');
-    const codebaseContext = await gatherCodebaseContext();
 
     const generatePrompt = `You are analyzing a codebase to generate comprehensive documentation.
 
@@ -164,88 +162,26 @@ Be PROLIFIC. Write DETAILED explanations. Include CODE EXAMPLES where helpful.
 This document should allow any AI or developer to immediately understand and work on the project.
 
 DO NOT include any XML tags or action syntax.
-Output ONLY clean markdown.
+Output ONLY clean markdown.`;
 
-${codebaseContext}`;
-
-    display.muted('Asking Grok to analyze and generate GROK.md...');
+    display.muted('Asking AI to analyze and generate GROK.md...');
 
     display.startThinking('Generating GROK.md...');
 
     try {
-      const apiKey =
-        context.configManager?.getApiKey() || process.env.GROK_API_KEY || process.env.XAI_API_KEY;
-      if (!apiKey) {
-        display.stopThinking();
-        display.errorText(
-          'Grok API key not configured. Use /login or set GROK_API_KEY environment variable.',
-        );
-        return true;
-      }
-      const baseUrl = 'https://api.x.ai/v1';
-
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: 'grok-4-1-fast-reasoning',
-          messages: [
-            {
-              role: 'system',
-              content: `You are an expert code analyst and technical writer. Your task is to:
-1. FIRST: Deeply analyze the provided codebase - understand the architecture, patterns, file relationships, and conventions
-2. THEN: Generate comprehensive documentation that allows developers and AI assistants to immediately understand and work with the project
-
-Be thorough in your analysis. Read every file provided. Understand how they connect. Only then write the documentation.
-Include real code examples from the actual codebase. Explain the "why" behind patterns.
-Write in clear markdown with proper formatting.`,
-            },
-            { role: 'user', content: generatePrompt },
-          ],
-          max_tokens: 16384,
-          temperature: 0.5,
-        }),
-      });
-
-      if (!response.ok) {
-        display.stopThinking();
-        const errorText = await response.text();
-        display.errorText('Grok API Error: ' + response.status + ' - ' + errorText);
-        return true;
-      }
-
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let generatedContent = '';
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            const content = parsed.choices?.[0]?.delta?.content;
-            if (content) {
-              generatedContent += content;
-            }
-          } catch {
-            // Skip invalid JSON
-          }
-        }
-      }
+      const generationSessionId = `system:init:${Date.now()}`;
+      const generatedContent = await context.grokClient.chatWithResponse(
+        [
+          'You are an expert code analyst and technical writer.',
+          'Analyze the current workspace deeply, then produce only the final GROK.md content in markdown.',
+          '',
+          generatePrompt,
+        ].join('\n'),
+        undefined,
+        300000,
+        generationSessionId,
+        { displayResult: false },
+      );
 
       const duration = display.stopThinking();
 

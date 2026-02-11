@@ -10,9 +10,12 @@ import { display } from '../ui';
 import { parseActions, executeActions, type ActionResult } from '../actions';
 import { compressActionResults } from './utils';
 import { streamResponse } from './streaming';
-import type { ClientContext, AgenticLoopOptions, AgenticLoopResult } from './types';
+import type { ClientContext, AgenticLoopOptions, AgenticLoopResult, Message } from './types';
 import type { ToolExecContext } from './toolRegistry';
 import { getModelInfo } from '../../plugins/providers/models';
+
+const MAX_RALPH_RETRIES = 3;
+const RALPH_TAG = '[ralph-nudge]';
 
 /**
  * Run the agentic loop: stream LLM response, parse actions, execute, feed results back.
@@ -40,12 +43,9 @@ export async function runAgenticLoop(
   let truncatedContent = '';
   const startTime = Date.now();
 
-  // Ralph loop: retry-continuation guard to prevent premature stops
-  // On each ralph retry we strip previous ralph noise and re-inject a clean
-  // task-focused prompt so the model starts fresh instead of drowning in nudges.
   let ralphRetries = 0;
-  const MAX_RALPH_RETRIES = 3;
-  const RALPH_TAG = '[ralph-nudge]';
+  let lastRalphFingerprint = '';
+  let sameRalphFingerprintStreak = 0;
 
   // Capture the original user task from the last user message in history
   const originalUserTask = (() => {
@@ -86,6 +86,7 @@ export async function runAgenticLoop(
     signals: {
       shouldBreak: false,
       shouldResetIteration: false,
+      pendingSayMessages: [],
       blockedEndCount: 0,
     },
     maxBlockedEnds: MAX_BLOCKED_ENDS,
@@ -95,12 +96,21 @@ export async function runAgenticLoop(
     actionResults: [],
   };
 
+  const resetRalphRecovery = () => {
+    ralphRetries = 0;
+    lastRalphFingerprint = '';
+    sameRalphFingerprintStreak = 0;
+  };
+
+  const shouldDisplayControlMessages = opts.displayStream && !(opts.quiet ?? false);
+
   while (true) {
     iteration++;
 
     // Reset per-iteration signals
     execCtx.signals.shouldBreak = false;
     execCtx.signals.shouldResetIteration = false;
+    execCtx.signals.pendingSayMessages = [];
     execCtx.actionResults = [];
 
     // Overall timeout check
@@ -142,7 +152,7 @@ export async function runAgenticLoop(
         displayStream: opts.displayStream,
         quiet: opts.quiet ?? false,
         timeout: opts.iterationTimeout,
-        thinkingLabel: opts.displayStream ? 'Reflection...' : 'Thinking...',
+        thinkingLabel: 'Reticulating...',
         tools: toolsParam,
       });
       isFirstIteration = false;
@@ -171,7 +181,14 @@ export async function runAgenticLoop(
 
         ctx.sessionManager.history = [
           ctx.sessionManager.history[0],
-          { role: 'user', content: condensedSummary },
+          {
+            role: 'user',
+            content: condensedSummary,
+            _render: {
+              kind: 'compaction_divider',
+              text: 'Conversation context condensed after token limit',
+            },
+          },
         ];
 
         try {
@@ -221,8 +238,19 @@ export async function runAgenticLoop(
 
       // Check control flow signals
       if (execCtx.signals.shouldBreak) {
-        endMessage = execCtx.signals.endMessage;
+        const finalControlMessage =
+          execCtx.signals.endMessage || execCtx.signals.pendingSayMessages.at(-1);
+        if (finalControlMessage && shouldDisplayControlMessages) {
+          display.sayResult(finalControlMessage);
+        }
+        endMessage = finalControlMessage;
         break;
+      }
+
+      if (execCtx.signals.pendingSayMessages.length > 0 && shouldDisplayControlMessages) {
+        for (const message of execCtx.signals.pendingSayMessages) {
+          display.sayResult(message);
+        }
       }
       if (execCtx.signals.shouldResetIteration) {
         iteration = 0;
@@ -287,32 +315,40 @@ export async function runAgenticLoop(
 
       // No actions at all (only unknown tools) — ralph loop: nudge model to continue
       if (execCtx.actionResults.length === 0) {
-        ralphRetries++;
-        if (ralphRetries >= MAX_RALPH_RETRIES) {
-          display.muted(`[Ralph] Model produced no actions after ${MAX_RALPH_RETRIES} nudges — stopping`);
+        // say_message is a valid progress signal: don't inject a stall nudge.
+        if (execCtx.signals.pendingSayMessages.length > 0) {
+          resetRalphRecovery();
+          emptyResponseRetries = 0;
+          forcedRetryAttempted = false;
+          useXmlFallback = false;
+          consecutiveErrors = 0;
+          continue;
+        }
+
+        const outcome = applyRalphRecovery({
+          history: ctx.sessionManager.history,
+          originalUserTask,
+          responseContent,
+          thinkingContent,
+          finishReason,
+          ralphRetries,
+          maxRalphRetries: MAX_RALPH_RETRIES,
+          lastFingerprint: lastRalphFingerprint,
+          sameFingerprintStreak: sameRalphFingerprintStreak,
+          mode: 'tool',
+          pushAssistantSnapshot: false,
+        });
+        ralphRetries = outcome.nextRetries;
+        lastRalphFingerprint = outcome.nextFingerprint;
+        sameRalphFingerprintStreak = outcome.nextSameFingerprintStreak;
+        if (!outcome.shouldContinue) {
           break;
         }
-        display.muted(`[Ralph] No actions detected — nudging model to continue (${ralphRetries}/${MAX_RALPH_RETRIES})`);
-
-        // Strip previous ralph nudges so context stays clean
-        ctx.sessionManager.history = ctx.sessionManager.history.filter(
-          m => !(m.role === 'user' && typeof m.content === 'string' && m.content.includes(RALPH_TAG)),
-        );
-
-        ctx.sessionManager.history.push({
-          role: 'user',
-          content: [
-            RALPH_TAG,
-            `You did not execute any action. Focus only on the task:`,
-            `"${originalUserTask}"`,
-            `Execute a tool NOW to make progress, or use the End tool if the task is done.`,
-          ].join('\n'),
-        });
         continue;
       }
 
       // Reset retry counters on successful tool execution
-      ralphRetries = 0;
+      resetRalphRecovery();
       emptyResponseRetries = 0;
       forcedRetryAttempted = false;
       useXmlFallback = false;
@@ -658,34 +694,30 @@ export async function runAgenticLoop(
       }
 
       // No actions, not a hallucination — ralph loop: nudge model instead of stopping
-      ralphRetries++;
-      if (ralphRetries >= MAX_RALPH_RETRIES) {
-        display.muted(`[Ralph] Model produced no actions after ${MAX_RALPH_RETRIES} nudges — stopping`);
-        ctx.sessionManager.history.push({ role: 'assistant', content: responseContent });
+      const outcome = applyRalphRecovery({
+        history: ctx.sessionManager.history,
+        originalUserTask,
+        responseContent,
+        thinkingContent,
+        finishReason,
+        ralphRetries,
+        maxRalphRetries: MAX_RALPH_RETRIES,
+        lastFingerprint: lastRalphFingerprint,
+        sameFingerprintStreak: sameRalphFingerprintStreak,
+        mode: 'xml',
+        pushAssistantSnapshot: true,
+      });
+      ralphRetries = outcome.nextRetries;
+      lastRalphFingerprint = outcome.nextFingerprint;
+      sameRalphFingerprintStreak = outcome.nextSameFingerprintStreak;
+      if (!outcome.shouldContinue) {
         break;
       }
-      display.muted(`[Ralph] No actions detected — nudging model to continue (${ralphRetries}/${MAX_RALPH_RETRIES})`);
-
-      // Strip previous ralph nudges so context stays clean
-      ctx.sessionManager.history = ctx.sessionManager.history.filter(
-        m => !(m.role === 'user' && typeof m.content === 'string' && m.content.includes(RALPH_TAG)),
-      );
-
-      ctx.sessionManager.history.push({ role: 'assistant', content: responseContent });
-      ctx.sessionManager.history.push({
-        role: 'user',
-        content: [
-          RALPH_TAG,
-          `You did not execute any action. Focus only on the task:`,
-          `"${originalUserTask}"`,
-          `Use an action tag (<read>, <edit>, <write>, <bash>, etc.) to make progress, or <end>message</end> if the task is done.`,
-        ].join('\n'),
-      });
       continue;
     }
 
     // Reset retry counters on successful action execution
-    ralphRetries = 0;
+    resetRalphRecovery();
     emptyResponseRetries = 0;
     forcedRetryAttempted = false;
 
@@ -761,7 +793,11 @@ function pushResponseMessages(
     // Fallback: just push text
     ctx.sessionManager.history.push({
       role: 'assistant',
-      content: responseContent || '[tool calls]',
+      content: responseContent || '',
+      _render: {
+        kind: 'assistant_markdown',
+        text: responseContent || '',
+      },
     });
     return;
   }
@@ -778,7 +814,11 @@ function pushResponseMessages(
 
       const assistantEntry: any = {
         role: 'assistant',
-        content: textParts || responseContent || '[tool calls]',
+        content: textParts || responseContent || '',
+        _render: {
+          kind: 'assistant_markdown',
+          text: textParts || responseContent || '',
+        },
       };
       if (toolCallParts.length > 0) {
         assistantEntry._toolCalls = toolCallParts.map((tc: any) => ({
@@ -802,6 +842,10 @@ function pushResponseMessages(
           role: 'tool',
           content: toolResults.map((tr: any) => `[${tr.toolName}] ${tr.result}`).join('\n'),
           toolResults,
+          _render: {
+            kind: 'tool',
+            text: toolResults.map((tr: any) => `[${tr.toolName}] ${tr.result}`).join('\n'),
+          },
         } as any);
       }
     }
@@ -821,4 +865,90 @@ function extractToolResultText(tr: any): string {
   // Fallback: stringify
   if (tr.output !== undefined) return JSON.stringify(tr.output);
   return 'No result';
+}
+
+type RalphMode = 'tool' | 'xml';
+
+function applyRalphRecovery(params: {
+  history: Message[];
+  originalUserTask: string;
+  responseContent: string;
+  thinkingContent: string;
+  finishReason: string | null;
+  ralphRetries: number;
+  maxRalphRetries: number;
+  lastFingerprint: string;
+  sameFingerprintStreak: number;
+  mode: RalphMode;
+  pushAssistantSnapshot: boolean;
+}): {
+  shouldContinue: boolean;
+  nextRetries: number;
+  nextFingerprint: string;
+  nextSameFingerprintStreak: number;
+} {
+  const fingerprint = [
+    params.mode,
+    (params.responseContent || '').replace(/\s+/g, ' ').trim().slice(0, 600),
+    (params.thinkingContent || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+    params.finishReason || '',
+  ].join('|');
+
+  const sameStreak =
+    params.lastFingerprint && params.lastFingerprint === fingerprint
+      ? params.sameFingerprintStreak + 1
+      : 1;
+  const retries = params.ralphRetries + 1;
+
+  if (retries >= params.maxRalphRetries) {
+    if (params.pushAssistantSnapshot && params.responseContent.trim()) {
+      params.history.push({ role: 'assistant', content: params.responseContent });
+    }
+    return {
+      shouldContinue: false,
+      nextRetries: retries,
+      nextFingerprint: fingerprint,
+      nextSameFingerprintStreak: sameStreak,
+    };
+  }
+
+  // Keep only the latest recovery nudge, similar to OpenClaw attempt-loop cleanup.
+  const cleaned = params.history.filter(
+    m => !(m.role === 'user' && typeof m.content === 'string' && m.content.includes(RALPH_TAG)),
+  );
+  params.history.length = 0;
+  params.history.push(...cleaned);
+
+  if (params.pushAssistantSnapshot && sameStreak === 1 && params.responseContent.trim()) {
+    params.history.push({ role: 'assistant', content: params.responseContent });
+  }
+
+  const modeInstruction =
+    params.mode === 'tool'
+      ? 'Call one concrete tool now, or end if fully complete.'
+      : 'Output one valid action tag now (<read>/<edit>/<write>/<bash>), or <end> if fully complete.';
+  const strategyHint =
+    sameStreak > 1
+      ? 'Your previous output repeated without progress. Change strategy and take a different concrete action.'
+      : 'Do not restate plans. Execute immediately.';
+
+  params.history.push({
+    role: 'user',
+    content: [
+      RALPH_TAG,
+      'Task:',
+      `"${params.originalUserTask}"`,
+      '',
+      'You stalled (no actionable progress detected).',
+      strategyHint,
+      modeInstruction,
+    ].join('\n'),
+  });
+
+  return {
+    shouldContinue: true,
+    nextRetries: retries,
+    nextFingerprint: fingerprint,
+    nextSameFingerprintStreak: sameStreak,
+  };
 }

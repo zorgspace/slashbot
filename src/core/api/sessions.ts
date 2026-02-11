@@ -14,6 +14,34 @@ export interface ConversationSession {
   fileContextCache: LRUCache<string, string>;
   displayedContent: string;
   lastActivity: number;
+  usage: SessionUsageStats;
+  compaction: SessionCompactionStats;
+}
+
+export interface SessionUsageStats {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  requests: number;
+  lastRequestAt: number | null;
+}
+
+export interface SessionCompactionStats {
+  condensedFallbackRuns: number;
+  pruneRuns: number;
+  prunedToolOutputs: number;
+  summaryRuns: number;
+  lastCompactedAt: number | null;
+  lastSummaryChars: number;
+  lastMessagesCompressed: number;
+}
+
+export interface SessionSummary {
+  id: string;
+  messageCount: number;
+  lastActivity: number;
+  lastRole: Message['role'] | null;
+  preview: string;
 }
 
 /**
@@ -27,6 +55,21 @@ export interface SessionScope {
   displayedContent: string;
   compressContext(): void;
   condenseHistory(): string;
+  recordUsage(usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    requests?: number;
+  }): void;
+  noteCompaction(event: {
+    kind: 'condense_fallback' | 'prune' | 'summary';
+    prunedToolOutputs?: number;
+    messagesCompressed?: number;
+    summaryChars?: number;
+  }): void;
+  getUsageStats(): SessionUsageStats;
+  getCompactionStats(): SessionCompactionStats;
+  getId(): string;
 }
 
 /**
@@ -36,11 +79,13 @@ export interface SessionScope {
  */
 export class ScopedSession implements SessionScope {
   private session: ConversationSession;
+  private readonly sessionId: string;
 
   constructor(
     private manager: SessionManager,
     sessionId: string,
   ) {
+    this.sessionId = sessionId;
     this.session = manager.ensureSession(sessionId);
   }
 
@@ -118,7 +163,42 @@ export class ScopedSession implements SessionScope {
     }
     summary += `Total messages: ${messages.length}\n`;
     summary += 'Please continue from this point.';
+    this.noteCompaction({
+      kind: 'condense_fallback',
+      messagesCompressed: messages.length,
+      summaryChars: summary.length,
+    });
     return summary;
+  }
+
+  recordUsage(usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    requests?: number;
+  }): void {
+    this.manager.recordSessionUsage(this.sessionId, usage);
+  }
+
+  noteCompaction(event: {
+    kind: 'condense_fallback' | 'prune' | 'summary';
+    prunedToolOutputs?: number;
+    messagesCompressed?: number;
+    summaryChars?: number;
+  }): void {
+    this.manager.noteSessionCompaction(this.sessionId, event);
+  }
+
+  getUsageStats(): SessionUsageStats {
+    return this.manager.getSessionUsage(this.sessionId);
+  }
+
+  getCompactionStats(): SessionCompactionStats {
+    return this.manager.getSessionCompaction(this.sessionId);
+  }
+
+  getId(): string {
+    return this.sessionId;
   }
 }
 
@@ -132,6 +212,28 @@ export class SessionManager {
   constructor(private buildSystemPrompt: () => string) {
     // Initialize default CLI session
     this.createSession('cli');
+  }
+
+  private createEmptyUsage(): SessionUsageStats {
+    return {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      requests: 0,
+      lastRequestAt: null,
+    };
+  }
+
+  private createEmptyCompaction(): SessionCompactionStats {
+    return {
+      condensedFallbackRuns: 0,
+      pruneRuns: 0,
+      prunedToolOutputs: 0,
+      summaryRuns: 0,
+      lastCompactedAt: null,
+      lastSummaryChars: 0,
+      lastMessagesCompressed: 0,
+    };
   }
 
   // ===== Session lifecycle =====
@@ -150,6 +252,47 @@ export class SessionManager {
 
   getSessionIds(): string[] {
     return Array.from(this.sessions.keys());
+  }
+
+  getSessionSummaries(): SessionSummary[] {
+    return Array.from(this.sessions.entries())
+      .map(([id, session]) => {
+        const nonSystem = session.history.filter(m => m.role !== 'system');
+        const last = nonSystem[nonSystem.length - 1];
+        const preview =
+          typeof last?.content === 'string'
+            ? last.content.slice(0, 120)
+            : Array.isArray(last?.content)
+              ? (last?.content.find((p: any) => p.type === 'text')?.text || '').slice(0, 120)
+              : '';
+        return {
+          id,
+          messageCount: nonSystem.length,
+          lastActivity: session.lastActivity,
+          lastRole: last?.role ?? null,
+          preview,
+        };
+      })
+      .sort((a, b) => b.lastActivity - a.lastActivity);
+  }
+
+  getSessionHistoryById(sessionId: string): Message[] {
+    const history = this.getSession(sessionId).history;
+    history.forEach(msg => this.ensureRenderMetadata(msg));
+    return [...history];
+  }
+
+  appendUserMessage(sessionId: string, content: string): void {
+    const session = this.getSession(sessionId);
+    session.history.push({
+      role: 'user',
+      content,
+      _render: {
+        kind: 'user',
+        text: content,
+      },
+    });
+    session.lastActivity = Date.now();
   }
 
   /**
@@ -178,6 +321,8 @@ export class SessionManager {
       ];
       session.fileContextCache.clear();
       session.displayedContent = '';
+      session.usage = this.createEmptyUsage();
+      session.compaction = this.createEmptyCompaction();
     }
   }
 
@@ -218,11 +363,132 @@ export class SessionManager {
   }
 
   getHistory(): Message[] {
+    this.history.forEach(msg => this.ensureRenderMetadata(msg));
     return [...this.history];
   }
 
+  getHistoryForSession(sessionId: string): Message[] {
+    const session = this.ensureSession(sessionId);
+    session.history.forEach(msg => this.ensureRenderMetadata(msg));
+    return [...session.history];
+  }
+
+  getSessionUsage(sessionId: string): SessionUsageStats {
+    const session = this.ensureSession(sessionId);
+    return { ...session.usage };
+  }
+
+  getSessionCompaction(sessionId: string): SessionCompactionStats {
+    const session = this.ensureSession(sessionId);
+    return { ...session.compaction };
+  }
+
+  getSessionUsageSummaries(): Array<{ id: string; usage: SessionUsageStats }> {
+    return Array.from(this.sessions.entries())
+      .map(([id, session]) => ({ id, usage: { ...session.usage } }))
+      .sort((a, b) => (b.usage.lastRequestAt || 0) - (a.usage.lastRequestAt || 0));
+  }
+
+  getSessionCompactionSummaries(): Array<{ id: string; compaction: SessionCompactionStats }> {
+    return Array.from(this.sessions.entries())
+      .map(([id, session]) => ({ id, compaction: { ...session.compaction } }))
+      .sort((a, b) => (b.compaction.lastCompactedAt || 0) - (a.compaction.lastCompactedAt || 0));
+  }
+
+  resetAllSessionMetrics(): void {
+    for (const session of this.sessions.values()) {
+      session.usage = this.createEmptyUsage();
+      session.compaction = this.createEmptyCompaction();
+    }
+  }
+
+  // SessionScope compatibility for non-scoped usage (current session)
+  recordUsage(usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    requests?: number;
+  }): void {
+    this.recordSessionUsage(this.currentSessionId, usage);
+  }
+
+  noteCompaction(event: {
+    kind: 'condense_fallback' | 'prune' | 'summary';
+    prunedToolOutputs?: number;
+    messagesCompressed?: number;
+    summaryChars?: number;
+  }): void {
+    this.noteSessionCompaction(this.currentSessionId, event);
+  }
+
+  getUsageStats(): SessionUsageStats {
+    return this.getSessionUsage(this.currentSessionId);
+  }
+
+  getCompactionStats(): SessionCompactionStats {
+    return this.getSessionCompaction(this.currentSessionId);
+  }
+
+  getId(): string {
+    return this.currentSessionId;
+  }
+
+  recordSessionUsage(
+    sessionId: string,
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      requests?: number;
+    },
+  ): void {
+    const session = this.ensureSession(sessionId);
+    session.usage.promptTokens += Math.max(0, usage.promptTokens || 0);
+    session.usage.completionTokens += Math.max(0, usage.completionTokens || 0);
+    session.usage.totalTokens += Math.max(0, usage.totalTokens || 0);
+    session.usage.requests += Math.max(0, usage.requests ?? 1);
+    session.usage.lastRequestAt = Date.now();
+    session.lastActivity = Date.now();
+  }
+
+  noteSessionCompaction(
+    sessionId: string,
+    event: {
+      kind: 'condense_fallback' | 'prune' | 'summary';
+      prunedToolOutputs?: number;
+      messagesCompressed?: number;
+      summaryChars?: number;
+    },
+  ): void {
+    const session = this.ensureSession(sessionId);
+    if (event.kind === 'condense_fallback') {
+      session.compaction.condensedFallbackRuns += 1;
+    } else if (event.kind === 'prune') {
+      session.compaction.pruneRuns += 1;
+      session.compaction.prunedToolOutputs += Math.max(0, event.prunedToolOutputs || 0);
+    } else if (event.kind === 'summary') {
+      session.compaction.summaryRuns += 1;
+    }
+    if (typeof event.messagesCompressed === 'number') {
+      session.compaction.lastMessagesCompressed = Math.max(0, event.messagesCompressed);
+    }
+    if (typeof event.summaryChars === 'number') {
+      session.compaction.lastSummaryChars = Math.max(0, event.summaryChars);
+    }
+    session.compaction.lastCompactedAt = Date.now();
+    session.lastActivity = Date.now();
+  }
+
   addMessage(msg: Message): void {
+    this.ensureRenderMetadata(msg);
     this.history.push(msg);
+  }
+
+  addMessageToSession(sessionId: string, msg: Message): void {
+    const session = this.ensureSession(sessionId);
+    this.ensureRenderMetadata(msg);
+    session.history.push(msg);
+    session.lastActivity = Date.now();
   }
 
   // ===== Context compression =====
@@ -307,6 +573,11 @@ export class SessionManager {
 
     summary += `Total messages: ${messages.length}\n`;
     summary += 'Please continue from this point.';
+    this.noteSessionCompaction(this.currentSessionId, {
+      kind: 'condense_fallback',
+      messagesCompressed: messages.length,
+      summaryChars: summary.length,
+    });
 
     return summary;
   }
@@ -405,6 +676,10 @@ export class SessionManager {
     this.history = [systemPrompt, ...pruned];
     const prunedCount = Math.max(0, totalToolOutputs - protectLastN);
     if (prunedCount > 0) {
+      this.noteSessionCompaction(this.currentSessionId, {
+        kind: 'prune',
+        prunedToolOutputs: prunedCount,
+      });
       display.muted(`[Compaction] Pruned ${prunedCount} old tool outputs`);
     }
   }
@@ -427,9 +702,19 @@ export class SessionManager {
       {
         role: 'user' as const,
         content: `<session-summary>\nThe following is a summary of the conversation so far:\n\n${summary}\n\nContinue from this point. The recent messages below provide current context.\n</session-summary>`,
+        _render: {
+          kind: 'compaction_divider',
+          text: 'Conversation context compacted',
+        },
       },
       ...recentMessages,
     ];
+
+    this.noteSessionCompaction(this.currentSessionId, {
+      kind: 'summary',
+      messagesCompressed: messages.length,
+      summaryChars: summary.length,
+    });
 
     display.muted(
       `[Compaction] Compressed ${messages.length} messages → 1 summary + ${recentMessages.length} recent`,
@@ -500,6 +785,8 @@ export class SessionManager {
       fileContextCache: new LRUCache<string, string>(50),
       displayedContent: '',
       lastActivity: Date.now(),
+      usage: this.createEmptyUsage(),
+      compaction: this.createEmptyCompaction(),
     };
     this.sessions.set(sessionId, session);
     return session;
@@ -510,7 +797,46 @@ export class SessionManager {
     if (!session) {
       session = this.createSession(sessionId);
     }
+    if (!(session as any).usage) {
+      (session as any).usage = this.createEmptyUsage();
+    }
+    if (!(session as any).compaction) {
+      (session as any).compaction = this.createEmptyCompaction();
+    }
     session.lastActivity = Date.now();
     return session;
+  }
+
+  private ensureRenderMetadata(msg: Message): void {
+    if (msg._render?.kind) return;
+    if (msg.role === 'system') {
+      msg._render = { kind: 'skip' };
+      return;
+    }
+    if (msg.role === 'user') {
+      const raw = typeof msg.content === 'string' ? msg.content : msg.content?.[0]?.text || '';
+      if (raw.includes('<session-summary>')) {
+        msg._render = { kind: 'compaction_divider', text: 'Conversation context compacted' };
+        return;
+      }
+      if (raw.includes('<tool-output-summary>')) {
+        msg._render = { kind: 'skip', text: '' };
+        return;
+      }
+      const text = raw.replace(/^\[you\]\s*/i, '');
+      msg._render = { kind: 'user', text };
+      return;
+    }
+    if (msg.role === 'assistant') {
+      const text = typeof msg.content === 'string' ? msg.content : '';
+      msg._render = { kind: 'assistant_markdown', text };
+      return;
+    }
+    if (msg.role === 'tool') {
+      const text = typeof msg.content === 'string' ? msg.content : '';
+      msg._render = { kind: 'tool', text };
+      return;
+    }
+    msg._render = { kind: 'plain' };
   }
 }

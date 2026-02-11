@@ -6,6 +6,7 @@
 import type { OAuthClientProvider as IOAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { MCPAuthStorage } from './auth';
 import type { MCPOAuthConfig } from './types';
+import { display } from '../../core/ui';
 
 const CALLBACK_PORT = 19877;
 const REDIRECT_URL = `http://127.0.0.1:${CALLBACK_PORT}/mcp/oauth/callback`;
@@ -58,7 +59,7 @@ export class MCPOAuthProvider implements IOAuthClientProvider {
     if (this.onRedirect) {
       this.onRedirect(authorizationUrl);
     } else {
-      console.log(`[MCP:${this.serverName}] Authorize at: ${authorizationUrl}`);
+      display.warningText(`[MCP:${this.serverName}] Authorize at: ${authorizationUrl}`);
     }
   }
 

@@ -64,7 +64,7 @@ async function displayImage(n: number) {
     } else {
       image = await terminalImage.file(imgPath);
     }
-    console.log(image);
+    display.appendAssistantMessage(image);
   } catch (e) {
     display.errorText('Display failed');
   }

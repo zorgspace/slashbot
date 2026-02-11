@@ -17,6 +17,7 @@ import { display } from '../../core/ui/display';
 import type { UIOutput, SidebarData, TUIAppCallbacks } from '../../core/ui/types';
 import type { HeaderOptions } from './panels/HeaderPanel';
 import { HeaderPanel } from './panels/HeaderPanel';
+import { TabsPanel, type TabItem } from './panels/TabsPanel';
 import { ChatPanel } from './panels/ChatPanel';
 import { CommPanel } from './panels/CommPanel';
 import { DiffPanel } from './panels/DiffPanel';
@@ -63,6 +64,7 @@ function copyToClipboard(text: string): void {
 export class TUIApp implements UIOutput {
   private renderer!: CliRenderer;
   private headerPanel!: HeaderPanel;
+  private tabsPanel!: TabsPanel;
   private chatPanel!: ChatPanel;
   private commPanel!: CommPanel;
   private diffPanel!: DiffPanel;
@@ -113,6 +115,20 @@ export class TUIApp implements UIOutput {
     // Header panel (includes status indicators)
     this.headerPanel = new HeaderPanel(this.renderer);
     root.add(this.headerPanel.getRenderable());
+
+    // Tabs row (Agents manager + agent tabs)
+    this.tabsPanel = new TabsPanel(this.renderer, {
+      onSelect: tabId => {
+        this.callbacks.onTabChange?.(tabId);
+      },
+      onCreateAgent: () => {
+        this.callbacks.onCreateAgent?.();
+      },
+      onEditAgent: agentId => {
+        this.callbacks.onEditAgent?.(agentId);
+      },
+    });
+    root.add(this.tabsPanel.getRenderable());
 
     // Content row: left column (chat + comm) + right diff panel
     const contentRow = new BoxRenderable(this.renderer, {
@@ -213,13 +229,17 @@ export class TUIApp implements UIOutput {
       if (key.ctrl && key.name === 'c' && !key.shift) {
         key.stopPropagation();
         key.preventDefault();
+        this.inputPanel.cancelPrompt();
         const now = Date.now();
         if (now - this.lastCtrlC < 2000) {
           this.callbacks.onExit();
           return;
         }
         this.lastCtrlC = now;
-        this.callbacks.onAbort();
+        this.callbacks.onAbort({
+          tabId: this.tabsPanel.getActiveTabId(),
+          source: 'ctrl_c',
+        });
         this.inputPanel.clear();
         this.chatPanel.append('Press Ctrl+C again to exit');
         return;
@@ -271,6 +291,24 @@ export class TUIApp implements UIOutput {
             display.warningText('Could not read image from clipboard.');
           });
         return;
+      }
+
+      // Escape - abort running work in active tab and clear prompt
+      if (key.name === 'escape' && !key.ctrl && !key.shift) {
+        const aborted = this.callbacks.onAbort({
+          tabId: this.tabsPanel.getActiveTabId(),
+          source: 'escape',
+        });
+        if (aborted) {
+          key.stopPropagation();
+          key.preventDefault();
+          if (this.commandPalette.isVisible()) {
+            this.commandPalette.hide();
+          }
+          this.inputPanel.clear();
+          this.inputPanel.focus();
+          return;
+        }
       }
 
       // The following keys only apply when input is focused
@@ -371,6 +409,18 @@ export class TUIApp implements UIOutput {
     this.headerPanel.setOptions(options);
   }
 
+  updateTabs(tabs: TabItem[], activeTabId: string): void {
+    this.tabsPanel.setTabs(tabs, activeTabId);
+  }
+
+  setActiveTab(tabId: string): void {
+    this.tabsPanel.setActiveTab(tabId);
+  }
+
+  getActiveTabId(): string {
+    return this.tabsPanel.getActiveTabId();
+  }
+
   appendChat(content: string): void {
     this.chatPanel.append(content);
   }
@@ -379,12 +429,24 @@ export class TUIApp implements UIOutput {
     this.chatPanel.appendStyled(content);
   }
 
+  appendUserChat(content: string): void {
+    this.chatPanel.appendUserMessage(content);
+  }
+
   appendAssistantChat(content: StyledText | string): void {
     this.chatPanel.appendAssistantMessage(content);
   }
 
   appendAssistantMarkdown(text: string): void {
     this.chatPanel.appendAssistantMarkdown(text);
+  }
+
+  upsertAssistantMarkdownBlock(key: string, text: string): void {
+    this.chatPanel.upsertAssistantMarkdownBlock(key, text);
+  }
+
+  removeAssistantMarkdownBlock(key: string): void {
+    this.chatPanel.removeAssistantMarkdownBlock(key);
   }
 
   startResponse(): void {

@@ -2,6 +2,7 @@ import type { ActionParserConfig, ParserUtils } from '../../core/actions/parser'
 import { extractAttr, extractBoolAttr } from '../../core/actions/parser';
 import type { Action } from '../../core/actions/types';
 import { display } from '../../core/ui';
+import { detectEscapedNewlineCorruption } from '../../core/actions/contentGuards';
 
 // Quote pattern: matches both single and double quotes
 const Q = `["']`;
@@ -53,6 +54,12 @@ function detectContentCorruption(content: string, targetPath: string): string | 
   }
   if (signalCount >= 3) {
     return `${signalCount} different action tag patterns in content`;
+  }
+
+  // Signal 4: LLM emitted literal "\n" sequences to fake indentation/new lines.
+  const escapedNewlineCorruption = detectEscapedNewlineCorruption(content);
+  if (escapedNewlineCorruption) {
+    return escapedNewlineCorruption;
   }
 
   return null;

@@ -3,7 +3,7 @@
  */
 
 import { display } from '../../core/ui';
-import { fg, bold } from '@opentui/core';
+import { t, fg, bold } from '@opentui/core';
 import { theme } from '../../core/ui/theme';
 import type { CommandHandler, CommandContext } from '../../core/commands/registry';
 import { TYPES } from '../../core/di/types';
@@ -62,7 +62,7 @@ ${fg(theme.muted)('  Statistics:')}
     if (subcommand === 'config' || subcommand === 'c') {
       const config = heartbeatService.getConfig();
 
-      const configBlock = `${fg(bold(theme.accent)('  Heartbeat Configuration'))}
+      const configBlock = `${bold(fg(theme.accent)('  Heartbeat Configuration'))}
 
   enabled:     ${fg((config.enabled ?? true) ? theme.success : theme.warning)(String(config.enabled ?? true))}
   period:      ${fg(theme.muted)(config.period || '30m')}
@@ -157,7 +157,7 @@ ${
       const content = await heartbeatService.readHeartbeatMd();
       if (content) {
         display.append('');
-        display.boldText('  HEARTBEAT.md');
+        display.appendAssistantMessage(t`${bold('  HEARTBEAT.md')}`);
         display.append('');
         display.append(content);
         display.append('');
@@ -169,7 +169,7 @@ ${
     }
 
     // Unknown subcommand - show help
-    const helpBlock = `${fg(bold(theme.accent)('  Heartbeat Commands '))}
+    const helpBlock = `${bold(fg(theme.accent)('  Heartbeat Commands '))}
 
   /heartbeat              ${fg(theme.muted)('Trigger heartbeat now')}
   /heartbeat status       ${fg(theme.muted)('Show status and statistics')}

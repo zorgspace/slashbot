@@ -33,6 +33,7 @@ export class ChatPanel {
   private syntaxStyle: SyntaxStyle | null = null;
   private responseBuffer = '';
   private responseRenderable: TextRenderable | null = null;
+  private liveAssistantBlocks = new Map<string, string>();
 
   constructor(renderer: CliRenderer) {
     this.renderer = renderer;
@@ -164,6 +165,7 @@ export class ChatPanel {
       this.scrollBox.remove(id);
     }
     this.lineCounter = 0;
+    this.liveAssistantBlocks.clear();
   }
 
   private addLine(content: StyledText | string): void {
@@ -189,6 +191,7 @@ export class ChatPanel {
       borderColor,
       paddingLeft: 2,
       marginBottom: 1,
+      marginTop:1
     });
     box.add(text);
     this.scrollBox.add(box);
@@ -202,11 +205,7 @@ export class ChatPanel {
     this.scrollBox.scrollTo(Infinity);
   }
 
-  /**
-   * Render markdown text inside a single bordered block.
-   * Self-contained: creates the box, parses markdown, adds code blocks inline.
-   */
-  appendAssistantMarkdown(text: string): void {
+  private buildAssistantMarkdownBlock(text: string): BoxRenderable {
     this.lineCounter++;
     const block = new BoxRenderable(this.renderer, {
       id: `chat-assistant-md-${this.lineCounter}`,
@@ -214,6 +213,7 @@ export class ChatPanel {
       borderColor: theme.accent,
       paddingLeft: 2,
       marginTop: 1,
+      marginBottom:1,
       flexDirection: 'column',
     });
 
@@ -294,6 +294,39 @@ export class ChatPanel {
 
     this.scrollBox.add(block);
     this.pruneLines();
+    return block;
+  }
+
+  /**
+   * Render markdown text inside a single bordered block.
+   * Self-contained: creates the box, parses markdown, adds code blocks inline.
+   */
+  appendAssistantMarkdown(text: string): void {
+    this.buildAssistantMarkdownBlock(text);
+  }
+
+  upsertAssistantMarkdownBlock(key: string, text: string): void {
+    const existingBlockId = this.liveAssistantBlocks.get(key);
+    if (existingBlockId) {
+      try {
+        this.scrollBox.remove(existingBlockId);
+      } catch {
+        // Block may have been pruned.
+      }
+    }
+    const block = this.buildAssistantMarkdownBlock(text);
+    this.liveAssistantBlocks.set(key, block.id);
+  }
+
+  removeAssistantMarkdownBlock(key: string): void {
+    const existingBlockId = this.liveAssistantBlocks.get(key);
+    if (!existingBlockId) return;
+    try {
+      this.scrollBox.remove(existingBlockId);
+    } catch {
+      // Block may already be gone.
+    }
+    this.liveAssistantBlocks.delete(key);
   }
 
   /**

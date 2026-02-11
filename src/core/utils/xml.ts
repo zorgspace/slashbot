@@ -57,6 +57,11 @@ export function cleanXmlTags(content: string | unknown): string {
   result = result.replace(/^[a-z]*">\s*/i, ''); // Partial tag at start like `h">`
   result = result.replace(/<\/[a-z-]*$/i, ''); // Incomplete closing tag at end like `</`
   result = result.replace(/<[a-z-]*">\s*/gi, ''); // Malformed opening with stray quote
+
+  // Strip xAI tool call XML and literal placeholders to prevent display in chat
+  result = result.replace(/<xai:function_call\b[^>]*>[\s\S]*?<\/xai:function_call>/gi, '');
+  result = result.replace(/\[tool calls?\]/gi, '');
+
   return result.trim();
 }
 

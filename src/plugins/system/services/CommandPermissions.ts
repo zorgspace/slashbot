@@ -205,7 +205,7 @@ export class CommandPermissions {
           process.stdin.setRawMode(false);
         }
         process.stdin.pause();
-        console.log();
+        display.newline();
       };
 
       process.stdin.on('data', onKeyPress);

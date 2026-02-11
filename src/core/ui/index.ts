@@ -10,6 +10,14 @@ export type { TUISpinnerCallbacks, BannerOptions } from './display';
 export type { UIOutput, SidebarData, SidebarStatusItem, TUIAppCallbacks } from './types';
 export { formatToolAction, formatToolName } from './format';
 export type { ToolActionResult } from './format';
+export {
+  isAssistantToolTranscript,
+  parseAssistantToolTranscript,
+  parseLegacyToolLine,
+  summarizeToolResult,
+  humanizeToolName,
+} from './toolTranscript';
+export type { ToolTranscriptEntry } from './toolTranscript';
 
 /* TUIApp moved to plugins/tui but directory missing - temporarily disable */
 // export { TUIApp } from '../../plugins/tui/TUIApp';

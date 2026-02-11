@@ -1,8 +1,7 @@
 /**
  * InputPanel - Text input with history and tab completion
  *
- * SplitBorder style with backgroundPanel, amber prompt char,
- * and keyboard hint text on the right.
+ * Compact bordered input with prompt label and safe prompt-mode takeover.
  */
 
 import {
@@ -10,11 +9,9 @@ import {
   InputRenderable,
   InputRenderableEvents,
   TextRenderable,
-  TextareaRenderable,
   t,
   fg,
   bold,
-  dim,
   type CliRenderer,
 } from '@opentui/core';
 import { theme } from '../../../core/ui/theme';
@@ -28,13 +25,17 @@ export interface InputPanelOptions {
 export class InputPanel {
   private container: BoxRenderable;
   private input: InputRenderable;
-  private promptLabel: TextareaRenderable;
+  private promptLabel: TextRenderable;
   private history: string[] = [];
   private historyIndex = -1;
   private currentInput = '';
   private submitCallback: (value: string) => void;
   private completer?: (line: string) => [string[], string];
   private _isPromptActive = false;
+  private promptResolver: ((value: string) => void) | null = null;
+  private promptCleanup: (() => void) | null = null;
+  private readonly defaultPromptContent = t`${bold(fg(theme.primary)('❯ '))}`;
+  private readonly defaultPromptWidth = 3;
 
   constructor(renderer: CliRenderer, options: InputPanelOptions) {
     this.submitCallback = options.onSubmit;
@@ -46,17 +47,19 @@ export class InputPanel {
     this.container = new BoxRenderable(renderer, {
       id: 'input-container',
       height: 3,
+      width: '100%',
       flexDirection: 'row',
       border: true,
       borderColor: theme.borderSubtle,
       alignItems: 'center',
       paddingLeft: 1,
+      paddingRight: 1,
     });
 
-    this.promptLabel = new TextareaRenderable(renderer, {
+    this.promptLabel = new TextRenderable(renderer, {
       id: 'input-prompt',
-      placeholder: t`${bold(fg(theme.primary)('❯'))} `,
-      width: 3,
+      content: this.defaultPromptContent,
+      width: this.defaultPromptWidth,
       height: 1,
     });
 
@@ -71,20 +74,16 @@ export class InputPanel {
       },
     });
 
-    // Keyboard hints on the right
-    const hints = new TextRenderable(renderer, {
-      id: 'input-hints',
-      content: t`${dim(fg(theme.muted)('Ctrl+T comm · Ctrl+D diff'))}`,
-      height: 1,
-      width: 28,
-    });
-
     this.container.add(this.promptLabel);
     this.container.add(this.input);
-    this.container.add(hints);
   }
 
   private handleSubmit(): void {
+    // Prompt mode (e.g. New Agent flow) owns Enter handling.
+    // If we process submit here, prompt values are cleared before prompt resolver reads them.
+    if (this._isPromptActive) {
+      return;
+    }
     const value = this.input.value;
     if (value.trim()) {
       this.submitCallback(value);
@@ -128,6 +127,24 @@ export class InputPanel {
 
   getDefaultPlaceholder(): string {
     return 'Type your message...';
+  }
+
+  private resetPromptChrome(): void {
+    this.promptLabel.content = this.defaultPromptContent;
+    this.promptLabel.width = this.defaultPromptWidth;
+  }
+
+  cancelPrompt(): void {
+    if (!this._isPromptActive) {
+      this.resetPromptChrome();
+      return;
+    }
+    const cleanup = this.promptCleanup;
+    const resolve = this.promptResolver;
+    this.promptCleanup = null;
+    this.promptResolver = null;
+    cleanup?.();
+    resolve?.('');
   }
 
   setHistory(history: string[]): void {
@@ -200,22 +217,31 @@ export class InputPanel {
    * Resolves when the user presses Enter. Restores normal input after.
    */
   promptInput(label: string, options?: { masked?: boolean }): Promise<string> {
+    if (this._isPromptActive) {
+      this.cancelPrompt();
+    }
+
     return new Promise(resolve => {
       this._isPromptActive = true;
+      this.promptResolver = resolve;
       const masked = options?.masked ?? false;
       const savedPlaceholder = this.input.placeholder;
       const savedValue = this.input.value;
+      // Start from known defaults to avoid cumulative width drift.
+      this.resetPromptChrome();
 
-      // Hide prompt label for password prompts
-      const savedPromptPlaceholder = this.promptLabel.placeholder;
       if (masked) {
-        this.promptLabel.placeholder = '';
+        this.promptLabel.content = '';
+        this.promptLabel.width = 1;
       } else {
-        // Change prompt label
-        this.promptLabel.placeholder = t`${bold(fg(theme.warning)(label))} `;
+        const promptText = `${label.trim()}: `;
+        this.promptLabel.content = t`${bold(fg(theme.warning)(promptText))}`;
+        // Keep prompt width tied to actual label length.
+        this.promptLabel.width = Math.max(3, [...promptText].length + 1);
       }
+
       this.input.value = '';
-      this.input.placeholder = masked ? 'Enter password...' : 'Enter text...';
+      this.input.placeholder = masked ? 'Enter password...' : label;
       this.input.focus();
 
       let realValue = '';
@@ -224,14 +250,16 @@ export class InputPanel {
 
       const cleanup = () => {
         this._isPromptActive = false;
+        this.promptCleanup = null;
         if (inputListener) this.input.off(InputRenderableEvents.INPUT, inputListener);
         if (enterListener) this.input.off(InputRenderableEvents.ENTER, enterListener);
-        // Restore normal state
-        this.promptLabel.placeholder = savedPromptPlaceholder;
+        // Restore normal chrome deterministically.
+        this.resetPromptChrome();
         this.input.value = savedValue;
         this.input.placeholder = savedPlaceholder;
         this.input.focus();
       };
+      this.promptCleanup = cleanup;
 
       if (masked) {
         // Track real value while displaying asterisks
@@ -263,6 +291,7 @@ export class InputPanel {
 
       enterListener = () => {
         const value = masked ? realValue : this.input.value;
+        this.promptResolver = null;
         cleanup();
         resolve(value);
       };

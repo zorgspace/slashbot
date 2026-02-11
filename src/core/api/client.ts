@@ -22,8 +22,11 @@ import type {
 } from './types';
 import { getEnvironmentInfo } from './utils';
 import type { PromptAssembler } from './prompts/assembler';
+import type { PromptAssemblyReport } from './prompts/assembler';
 import type { ToolRegistry } from './toolRegistry';
 import { SessionManager } from './sessions';
+import type { SessionSummary } from './sessions';
+import type { SessionUsageStats, SessionCompactionStats } from './sessions';
 import { DirectAuthProvider, DEFAULT_CONFIG } from '../../plugins/providers/auth';
 import { streamResponse } from './streaming';
 import { runAgenticLoop } from './agenticLoop';
@@ -49,6 +52,7 @@ export class LLMClient implements ClientContext {
   private promptAssembler: PromptAssembler | null = null;
   private assembledPromptCache: string | null = null;
   private responseEndCallback: (() => void) | null = null;
+  private readonly abortControllersBySession = new Map<string, AbortController>();
 
   constructor(config: LLMConfig, registry?: ProviderRegistry) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -124,6 +128,30 @@ export class LLMClient implements ClientContext {
     return this.sessionManager.getSessionIds();
   }
 
+  getSessionSummaries(): SessionSummary[] {
+    return this.sessionManager.getSessionSummaries();
+  }
+
+  getSessionUsage(sessionId: string): SessionUsageStats {
+    return this.sessionManager.getSessionUsage(sessionId);
+  }
+
+  getSessionCompaction(sessionId: string): SessionCompactionStats {
+    return this.sessionManager.getSessionCompaction(sessionId);
+  }
+
+  getSessionUsageSummaries(): Array<{ id: string; usage: SessionUsageStats }> {
+    return this.sessionManager.getSessionUsageSummaries();
+  }
+
+  getSessionCompactionSummaries(): Array<{ id: string; compaction: SessionCompactionStats }> {
+    return this.sessionManager.getSessionCompactionSummaries();
+  }
+
+  getSessionHistoryById(sessionId: string): Message[] {
+    return this.sessionManager.getSessionHistoryById(sessionId);
+  }
+
   clearSession(sessionId: string): void {
     this.sessionManager.clearSession(sessionId);
   }
@@ -140,8 +168,16 @@ export class LLMClient implements ClientContext {
     return this.sessionManager.getHistory();
   }
 
+  getHistoryForSession(sessionId: string): Message[] {
+    return this.sessionManager.getHistoryForSession(sessionId);
+  }
+
   addMessage(msg: Message): void {
     this.sessionManager.addMessage(msg);
+  }
+
+  addMessageToSession(sessionId: string, msg: Message): void {
+    this.sessionManager.addMessageToSession(sessionId, msg);
   }
 
   setContextCompression(enabled: boolean, maxMessages?: number): void {
@@ -180,6 +216,10 @@ export class LLMClient implements ClientContext {
       this.assembledPromptCache = await this.promptAssembler.assemble();
       this.rebuildSystemPrompt();
     }
+  }
+
+  getPromptReport(): PromptAssemblyReport | null {
+    return this.promptAssembler?.getLastReport?.() ?? null;
   }
 
   private buildSystemPrompt(): string {
@@ -248,7 +288,37 @@ export class LLMClient implements ClientContext {
     return MODELS.filter((m: any) => m.provider === providerId).map((m: any) => m.id);
   }
 
+  private bindAbortController(sessionId: string, controller: AbortController | null): void {
+    if (controller) {
+      this.abortControllersBySession.set(sessionId, controller);
+      this.abortController = controller;
+      return;
+    }
+    const previous = this.abortControllersBySession.get(sessionId);
+    this.abortControllersBySession.delete(sessionId);
+    if (previous && this.abortController === previous) {
+      this.abortController = null;
+    }
+  }
+
+  abortSession(sessionId: string): boolean {
+    const controller = this.abortControllersBySession.get(sessionId);
+    if (!controller) {
+      return false;
+    }
+    controller.abort();
+    this.abortControllersBySession.delete(sessionId);
+    if (this.abortController === controller) {
+      this.abortController = null;
+    }
+    return true;
+  }
+
   abort(): void {
+    for (const [sessionId, controller] of this.abortControllersBySession) {
+      controller.abort();
+      this.abortControllersBySession.delete(sessionId);
+    }
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
@@ -291,9 +361,18 @@ export class LLMClient implements ClientContext {
 
   // ===== Public chat methods =====
 
-  async chat(userMessage: string): Promise<{ response: string; thinking: string }> {
+  async chat(
+    userMessage: string,
+    options?: { sessionId?: string; displayResult?: boolean; quiet?: boolean },
+  ): Promise<{ response: string; thinking: string }> {
+    // Pin this request to an explicit session ID when provided so tab switches
+    // during generation cannot reroute output to another conversation.
+    const effectiveSessionId = options?.sessionId || this.sessionManager.getSessionId();
+    const shouldDisplay = options?.displayResult !== false;
+    const quiet = options?.quiet ?? false;
+
     // Create a scoped session for this request
-    const scope = this.sessionManager.scoped(this.sessionManager.getSessionId());
+    const scope = this.sessionManager.scoped(effectiveSessionId);
     scope.displayedContent = '';
 
     const recentImages = getRecentImages();
@@ -305,7 +384,14 @@ export class LLMClient implements ClientContext {
     recentImages.forEach((imgUrl: string) => {
       userContent.push({ type: 'image_url', image_url: { url: imgUrl } });
     });
-    scope.history.push({ role: 'user', content: userContent });
+    scope.history.push({
+      role: 'user',
+      content: userContent,
+      _render: {
+        kind: 'user',
+        text: userMessage,
+      },
+    });
 
     scope.compressContext();
 
@@ -315,10 +401,12 @@ export class LLMClient implements ClientContext {
     const ctx: ClientContext = {
       authProvider: this.authProvider,
       sessionManager: scope,
+      sessionId: effectiveSessionId,
       config: this.config,
       usage: this.usage,
       thinkingActive: this.thinkingActive,
       abortController: this.abortController,
+      onAbortControllerChange: controller => this.bindAbortController(effectiveSessionId, controller),
       rawOutputCallback: this.rawOutputCallback,
       actionHandlers: this.actionHandlers,
       providerRegistry: this.providerRegistry,
@@ -329,7 +417,8 @@ export class LLMClient implements ClientContext {
     };
 
     const result = await runAgenticLoop(ctx, messageHasImages, {
-      displayStream: true,
+      displayStream: shouldDisplay,
+      quiet,
       maxIterations: AGENTIC.MAX_ITERATIONS_CLI,
       cacheFileContents: true,
       includeFileContext: true,
@@ -347,7 +436,14 @@ export class LLMClient implements ClientContext {
     // Store final response in history
     const lastMessage = scope.history[scope.history.length - 1];
     if (lastMessage?.role !== 'assistant' || lastMessage?.content !== result.finalResponse) {
-      scope.history.push({ role: 'assistant', content: result.finalResponse });
+      scope.history.push({
+        role: 'assistant',
+        content: result.finalResponse,
+        _render: {
+          kind: 'assistant_markdown',
+          text: result.finalResponse,
+        },
+      });
     }
 
     // Inject executed actions into context
@@ -374,7 +470,7 @@ export class LLMClient implements ClientContext {
     // Safety net: if nothing was displayed during streaming and no endMessage was shown,
     // display the cleaned response now. This handles cases where the LLM wraps everything
     // in action tags (as instructed) and the streaming display strips them.
-    if (!scope.displayedContent && !result.endMessage && cleanResponse.trim()) {
+    if (shouldDisplay && !scope.displayedContent && !result.endMessage && cleanResponse.trim()) {
       display.sayResult(cleanResponse);
     }
 
@@ -402,15 +498,24 @@ export class LLMClient implements ClientContext {
     const scopeId = `__isolated_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const scope = this.sessionManager.scoped(scopeId);
     scope.displayedContent = '';
-    scope.history.push({ role: 'user', content: userMessage });
+    scope.history.push({
+      role: 'user',
+      content: userMessage,
+      _render: {
+        kind: 'user',
+        text: userMessage,
+      },
+    });
 
     const ctx: ClientContext = {
       authProvider: this.authProvider,
       sessionManager: scope,
+      sessionId: scopeId,
       config: this.config,
       usage: this.usage,
       thinkingActive: false,
       abortController: null,
+      onAbortControllerChange: controller => this.bindAbortController(scopeId, controller),
       rawOutputCallback: this.rawOutputCallback,
       actionHandlers: this.actionHandlers,
       providerRegistry: this.providerRegistry,
@@ -443,6 +548,21 @@ export class LLMClient implements ClientContext {
     }
   }
 
+  async sendToSession(
+    sessionId: string,
+    message: string,
+    options?: { run?: boolean; quiet?: boolean },
+  ): Promise<{ delivered: boolean; response?: string }> {
+    if (!options?.run) {
+      this.sessionManager.appendUserMessage(sessionId, message);
+      return { delivered: true };
+    }
+
+    const response = await this.chatWithResponse(message, undefined, 120000, sessionId);
+    void options?.quiet;
+    return { delivered: true, response };
+  }
+
   /**
    * Chat with action execution for Telegram/Discord
    */
@@ -451,6 +571,7 @@ export class LLMClient implements ClientContext {
     source?: 'telegram' | 'discord',
     timeout: number = 120000,
     sessionId?: string,
+    options?: { displayResult?: boolean },
   ): Promise<string> {
     const effectiveSessionId = sessionId || source || 'cli';
 
@@ -477,9 +598,23 @@ export class LLMClient implements ClientContext {
       recentImages.forEach((imgUrl: string) => {
         userContent.push({ type: 'image_url', image_url: { url: imgUrl } });
       });
-      scope.history.push({ role: 'user', content: userContent });
+      scope.history.push({
+        role: 'user',
+        content: userContent,
+        _render: {
+          kind: 'user',
+          text: userMessage + platformHint,
+        },
+      });
     } else {
-      scope.history.push({ role: 'user', content: userMessage + platformHint });
+      scope.history.push({
+        role: 'user',
+        content: userMessage + platformHint,
+        _render: {
+          kind: 'user',
+          text: userMessage + platformHint,
+        },
+      });
     }
 
     scope.compressContext();
@@ -489,10 +624,12 @@ export class LLMClient implements ClientContext {
     const ctx: ClientContext = {
       authProvider: this.authProvider,
       sessionManager: scope,
+      sessionId: effectiveSessionId,
       config: this.config,
       usage: this.usage,
       thinkingActive: false,
       abortController: null,
+      onAbortControllerChange: controller => this.bindAbortController(effectiveSessionId, controller),
       rawOutputCallback: this.rawOutputCallback,
       actionHandlers: this.actionHandlers,
       providerRegistry: this.providerRegistry,
@@ -536,15 +673,23 @@ export class LLMClient implements ClientContext {
 
     const cleanResponse = cleanSelfDialogue(cleanXmlTags(result.finalResponse)).trim();
 
+    const shouldDisplay = options?.displayResult !== false;
+
     if (cleanResponse) {
-      display.sayResult(cleanResponse);
+      if (shouldDisplay) {
+        display.sayResult(cleanResponse);
+      }
       return cleanResponse;
     } else if (result.actionsSummary.length > 0) {
       const summary = `Done: ${result.actionsSummary.join(', ')}`;
-      display.sayResult(summary);
+      if (shouldDisplay) {
+        display.sayResult(summary);
+      }
       return summary;
     }
-    display.sayResult('Done.');
+    if (shouldDisplay) {
+      display.sayResult('Done.');
+    }
     return 'Done.';
   }
 
@@ -556,6 +701,7 @@ export class LLMClient implements ClientContext {
 
   resetUsage(): void {
     this.usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, requests: 0 };
+    this.sessionManager.resetAllSessionMetrics();
   }
 
   // ===== Public methods for plugin access =====

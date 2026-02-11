@@ -25,6 +25,7 @@ export async function executeRead(
   if (fileContent) {
     const lines = fileContent.split('\n');
     const lineCount = lines.length;
+    display.pushExploreProbe('Read', `${action.path}${rangeInfo} (${lineCount} lines)`, true);
     display.appendAssistantMessage(
       formatToolAction('Read', action.path + rangeInfo, { success: true, summary: lineCount + ' lines' }),
     );
@@ -94,6 +95,7 @@ export async function executeRead(
       result: `${header}\n${numberedContent}`,
     };
   } else {
+    display.pushExploreProbe('Read', `${action.path}: not found`, false);
     display.appendAssistantMessage(
       formatToolAction('Read', action.path + rangeInfo, { success: false, summary: 'not found' }),
     );

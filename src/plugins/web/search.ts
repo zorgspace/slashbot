@@ -4,7 +4,7 @@
 
 import { display } from '../../core/ui';
 import type { GrokClient } from '../../core/api';
-import { GROK_CONFIG } from '../../core/config/constants';
+import { GROK_CONFIG, MODELS } from '../../core/config/constants';
 
 export async function webSearch(
   grokClient: GrokClient,
@@ -43,8 +43,11 @@ export async function webSearch(
     { role: 'user', content: userMessage },
   ];
 
+  const currentModel = grokClient.getCurrentModel();
+  const searchModel = currentModel.startsWith('grok-') ? currentModel : MODELS.SEARCH;
+
   const requestBody = {
-    model: 'grok-4-1-fast-reasoning',
+    model: searchModel,
     input,
     tools,
   };

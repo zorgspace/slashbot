@@ -11,6 +11,18 @@ export interface Message {
   toolResults?: Array<{ toolCallId: string; toolName: string; result: string }>;
   /** For assistant messages with tool calls: raw AI SDK format for history replay */
   _rawAIMessage?: any;
+  /** Optional UI replay metadata for deterministic tab rendering */
+  _render?: {
+    kind:
+      | 'skip'
+      | 'user'
+      | 'assistant_markdown'
+      | 'assistant_tool_transcript'
+      | 'compaction_divider'
+      | 'tool'
+      | 'plain';
+    text?: string;
+  };
 }
 
 export interface LLMConfig {
@@ -122,10 +134,14 @@ export interface AgenticLoopResult {
 export interface ClientContext {
   authProvider: ApiAuthProvider;
   sessionManager: import('./sessions').SessionScope;
+  /** Session currently being executed (for scoped abort wiring) */
+  sessionId?: string;
   config: LLMConfig;
   usage: UsageStats;
   thinkingActive: boolean;
   abortController: AbortController | null;
+  /** Optional hook called when streamResponse swaps/clears the abort controller */
+  onAbortControllerChange?: (controller: AbortController | null) => void;
   rawOutputCallback: ((text: string) => void) | null;
   actionHandlers: import('../actions').ActionHandlers;
   providerRegistry: import('../../plugins/providers/registry').ProviderRegistry;

@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers, GrepOptions } from '../../core/actions/types';
 import type { GlobAction, GrepAction, LSAction } from './types';
-import { display, formatToolAction } from '../../core/ui';
+import { display } from '../../core/ui';
 
 export async function executeGlob(
   action: GlobAction,
@@ -12,13 +12,9 @@ export async function executeGlob(
 ): Promise<ActionResult | null> {
   if (!handlers.onGlob) return null;
 
-  const pathInfo = action.path ? `, "${action.path}"` : '';
-  const detail = `"${action.pattern}"${pathInfo}`;
-
   try {
     const files = await handlers.onGlob(action.pattern, action.path);
-    const summary = files.length === 0 ? 'no matches' : `${files.length} file${files.length > 1 ? 's' : ''}`;
-    display.appendAssistantMessage(formatToolAction('Glob', detail, { success: true, summary }));
+    display.pushExploreProbe('Glob', files.join('\n'), true);
 
     return {
       action: `Glob: ${action.pattern}`,
@@ -27,7 +23,7 @@ export async function executeGlob(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.appendAssistantMessage(formatToolAction('Glob', detail, { success: false, summary: errorMsg }));
+    display.pushExploreProbe('Glob', errorMsg, false);
     return {
       action: `Glob: ${action.pattern}`,
       success: false,
@@ -42,20 +38,6 @@ export async function executeGrep(
   handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
   if (!handlers.onGrep) return null;
-
-  // Build options display string
-  const opts: string[] = [];
-  if (action.context) opts.push(`-C${action.context}`);
-  if (action.contextBefore) opts.push(`-B${action.contextBefore}`);
-  if (action.contextAfter) opts.push(`-A${action.contextAfter}`);
-  if (action.caseInsensitive) opts.push('-i');
-  if (action.lineNumbers) opts.push('-n');
-  if (action.multiline) opts.push('-U');
-  if (action.headLimit) opts.push(`limit:${action.headLimit}`);
-  const optsStr = opts.length > 0 ? ` ${opts.join(' ')}` : '';
-  const pathInfo = action.path ? ` in ${action.path}` : '';
-  const globInfo = action.glob ? ` (${action.glob})` : '';
-  const detail = action.pattern + optsStr + pathInfo + globInfo;
 
   // Build options for handler
   const grepOptions: GrepOptions = {
@@ -72,10 +54,7 @@ export async function executeGrep(
   };
 
   const grepResults = await handlers.onGrep(action.pattern, grepOptions);
-  const lines = grepResults ? grepResults.split('\n').filter(l => l.trim()) : [];
-  const summary = lines.length === 0 ? 'no matches' : `${lines.length} match${lines.length > 1 ? 'es' : ''}`;
-
-  display.appendAssistantMessage(formatToolAction('Grep', detail, { success: true, summary }));
+  display.pushExploreProbe('Grep', grepResults || 'No results', true);
 
   return {
     action: `Grep: ${action.pattern}`,
@@ -90,13 +69,9 @@ export async function executeLS(
 ): Promise<ActionResult | null> {
   if (!handlers.onLS) return null;
 
-  const ignoreInfo = action.ignore?.length ? ` (ignore: ${action.ignore.join(', ')})` : '';
-  const detail = `${action.path}${ignoreInfo}`;
-
   try {
     const entries = await handlers.onLS(action.path, action.ignore);
-    const summary = entries.length === 0 ? 'empty' : `${entries.length} entries`;
-    display.appendAssistantMessage(formatToolAction('LS', detail, { success: true, summary }));
+    display.pushExploreProbe('LS', entries.join('\n'), true);
 
     return {
       action: `LS: ${action.path}`,
@@ -105,7 +80,7 @@ export async function executeLS(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.appendAssistantMessage(formatToolAction('LS', detail, { success: false, summary: errorMsg }));
+    display.pushExploreProbe('LS', errorMsg, false);
     return {
       action: `ls: ${action.path}`,
       success: false,

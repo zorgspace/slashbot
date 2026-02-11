@@ -27,8 +27,9 @@ import {
   sendSol,
   sendSlashbot,
   unlockSession,
+  getCreditBalance,
 } from './services';
-
+import { getPaymentMode } from './provider';
 export class WalletPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
     id: 'feature.wallet',
@@ -126,17 +127,20 @@ export class WalletPlugin implements Plugin {
             const exists = walletExists();
             const publicKey = getPublicKey();
             const sessionActive = isSessionActive();
+            const mode = getPaymentMode();
             let balances: { sol: number; slashbot: number } | null = null;
+            let credits: number | null = null;
 
             if (exists) {
               try {
                 balances = await getBalances();
+                credits = await getCreditBalance();
               } catch {
-                // Unable to fetch balances
+                // Unable to fetch balances/credits
               }
             }
 
-            return { exists, publicKey, balances, sessionActive };
+            return { exists, publicKey, balances, sessionActive, mode, credits };
           },
         },
         execute: executeWalletStatus as any,
@@ -192,7 +196,7 @@ export class WalletPlugin implements Plugin {
         id: 'wallet',
         label: 'Wallet',
         order: 30,
-        getStatus: () => isSessionActive(),
+        getStatus: () => walletExists() && isSessionActive(),
       },
     ];
   }

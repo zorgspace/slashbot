@@ -7,7 +7,7 @@ import type { CommandHandler, CommandContext } from '../../core/commands/registr
 import type { TUIApp } from '../tui/TUIApp';
 import { PROXY_CONFIG } from '../../core/config/constants';
 import { display } from '../../core/ui';
-import { fg, bold } from '@opentui/core';
+import { fg, bold, t } from '@opentui/core';
 import { theme } from '../../core/ui/theme';
 import { container } from '../../core/di/container';
 import { TYPES } from '../../core/di/types';
@@ -290,9 +290,9 @@ File:    ${fg(theme.muted)(WALLET_PATH)}
 SEED PHRASE - BACKUP NOW!
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${fg(theme.danger)(seedPhrase)}
+${fg(theme.error)(seedPhrase)}
 
-${fg(bold(theme.warning))('WARNING: Write this down and store it securely!')}
+${bold(fg(theme.warning)('WARNING: Write this down and store it securely!'))}
 ${fg(theme.warning)('Anyone with this phrase can access your funds.')}
 ${fg(theme.muted)('You can export it later with: /wallet export seed')}
 
@@ -412,9 +412,9 @@ Address: ${fg(theme.success)(publicKey)}
           const exportSeedBlock = `\n Seed Phrase Export 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${fg(bold(theme.warning))('WARNING: Never share your seed phrase!')}
+${bold(fg(theme.warning)('WARNING: Never share your seed phrase!'))}
 
-${fg(theme.danger)(seedPhrase)}
+${fg(theme.error)(seedPhrase)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
@@ -434,9 +434,9 @@ ${fg(theme.danger)(seedPhrase)}
         const exportPrivateBlock = `\n Private Key Export 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${fg(bold(theme.warning))('WARNING: Never share your private key!')}
+${bold(fg(theme.warning)('WARNING: Never share your private key!'))}
 
-${fg(theme.danger)(privateKey)}
+${fg(theme.error)(privateKey)}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
@@ -458,7 +458,7 @@ ${fg(theme.danger)(privateKey)}
         const balanceBlock = ` Wallet Balance 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Address:  ${fg(theme.muted)(getPublicKey())}
+Address:  ${fg(theme.muted)(getPublicKey() || 'Unknown')}
 
 ${balances ? `
 SOL:      ${fg(theme.accent)(formatNumber(balances.sol, 9) + ' SOL')}
@@ -557,8 +557,8 @@ ${fg(theme.muted)('Examples:')}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Amount:    ${fg(theme.success)(formatNumber(amount, 9) + ' ' + tokenType.toUpperCase())}
-Signature: ${fg(theme.muted)(result.signature)}
-Explorer:  ${fg(theme.accent)('https://solscan.io/tx/' + result.signature)}
+Signature: ${fg(theme.muted)(result.signature || 'Unknown')}
+Explorer:  ${fg(theme.accent)('https://solscan.io/tx/' + (result.signature || ''))}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `;
@@ -1064,22 +1064,35 @@ ${fg(theme.success)('API requests will be authenticated with your wallet.')}
         const sessionActive = isSessionActive();
         const proxyConfigured = !!(PROXY_CONFIG.BASE_URL && publicKey);
 
-        const statusBlock = ` Proxy Mode Status 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const currentMode = getPaymentMode() || context.configManager.getConfig().paymentMode || 'apikey';
 
-Wallet:      ${fg(theme.muted)(publicKey || 'Not configured')}
-Proxy URL:   ${fg(theme.muted)(PROXY_CONFIG.BASE_URL || 'Not configured')}
-Session:     ${fg(sessionActive ? theme.success : theme.warning)(sessionActive ? 'Active (unlocked)' : 'Inactive (locked)')}
-Mode:        ${fg(proxyConfigured ? theme.success : theme.muted)(proxyConfigured ? (sessionActive ? 'Proxy (authenticated)' : 'Proxy (needs unlock)') : 'Direct API')}
+        let modeDisplay: string;
+        if (currentMode === 'apikey') {
+          modeDisplay = 'API Key (direct)';
+        } else if (!publicKey) {
+          modeDisplay = 'Token (no wallet)';
+        } else if (!sessionActive) {
+          modeDisplay = 'Proxy (needs unlock)';
+        } else {
+          modeDisplay = 'Proxy (authenticated)';
+        }
 
-${!proxyConfigured && !process.env.GROK_API_KEY && !process.env.XAI_API_KEY ? `
-${fg(theme.warning)('WARNING: No API key or proxy configured!')}
-${fg(theme.warning)('Set GROK_API_KEY or configure wallet for proxy mode.')}
-` : ''}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-`;
-        display.append(statusBlock);
+        const statusLines = [
+          '',
+          'Payment Mode Status',
+          '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+          '',
+          `Wallet:      ${publicKey || 'Not configured'}`,
+          `Proxy URL:   ${PROXY_CONFIG.BASE_URL || 'Not configured'}`,
+          `Session:     ${sessionActive ? 'Active (unlocked)' : 'Inactive (locked)'}`,
+          `Mode:        ${modeDisplay}`,
+        ];
+        if (!proxyConfigured && !process.env.GROK_API_KEY && !process.env.XAI_API_KEY) {
+          statusLines.push('', 'WARNING: No API key or proxy configured!');
+          statusLines.push('Set GROK_API_KEY or configure wallet for proxy mode.');
+        }
+        statusLines.push('', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        display.append(statusLines.join('\n'));
         return true;
       }
 
@@ -1091,42 +1104,6 @@ ${fg(theme.warning)('Set GROK_API_KEY or configure wallet for proxy mode.')}
       if (publicKey) {
         [balances, credits] = await Promise.all([getBalances(), getCreditBalance()]);
       }
-
-      const overviewBlock = `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-${fg(bold(theme.accent)('Wallet'))}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-${publicKey ? fg(theme.muted)('Address: ' + publicKey) + '\n' : ''}${balances ? `
-SOL:     ${fg(theme.accent)(formatNumber(balances.sol, 9) + ' SOL')}
-SLASHBOT: ${fg(theme.accent)(formatNumber(balances.slashbot, 4) + ' tokens')}
-` : ''}${credits !== null ? fg(theme.success)('Credits: ' + credits.toLocaleString()) + '\n' : publicKey ? fg(theme.muted)('Credits: (proxy offline)') + '\n' : ''}${!publicKey ? `
-${fg(theme.muted)('No wallet configured.')}
-${fg(theme.muted)('Run /wallet create to create a new wallet')}
-${fg(theme.muted)('Or /wallet import <key> to import existing')}
-` : ''}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-${fg(bold(theme.primary)('Commands:'))}
-  /wallet create              ${fg(theme.muted)('- Create new wallet')}
-  /wallet import <key>        ${fg(theme.muted)('- Import private key')}
-  /wallet import seed         ${fg(theme.muted)('- Import from seed phrase')}
-  /wallet export              ${fg(theme.muted)('- Export private key')}
-  /wallet export seed         ${fg(theme.muted)('- Export seed phrase')}
-  /wallet balance             ${fg(theme.muted)('- Show balances')}
-  /wallet send <type> <to> <amt> ${fg(theme.muted)('- Send tokens')}
-  /wallet redeem <amount>     ${fg(theme.muted)('- Redeem for credits')}
-  /wallet unlock              ${fg(theme.muted)('- Unlock for proxy mode')}
-  /wallet lock                ${fg(theme.muted)('- Lock wallet session')}
-  /wallet status              ${fg(theme.muted)('- Show proxy status')}
-  /wallet pricing [model]     ${fg(theme.muted)('- Show pricing')}
-  /wallet mode [apikey|token] ${fg(theme.muted)('- Switch payment mode')}
-  /wallet usage [...]         ${fg(theme.muted)('- Usage tracking')}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-`;
-      display.append(overviewBlock);
 
       if (publicKey) {
         display.append(`Address: ${publicKey}`);

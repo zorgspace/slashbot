@@ -113,7 +113,7 @@ export const historyCommand: CommandHandler = {
       const historyBlock = `${fg(theme.accent)('Command history:')}\n\n${recent.map((line, i) => fg(theme.muted)('  ' + String(lines.length - recent.length + i + 1).padStart(4) + '  ' + line)).join('\n')}\n`;
       display.append(historyBlock);
     } catch {
-      display.append(fg(theme.muted)('Could not read history'));
+      display.muted('Could not read history');
     }
 
     return true;
@@ -127,7 +127,6 @@ export const exitCommand: CommandHandler = {
   group: 'System',
   execute: async (_, context) => {
     display.append(`${fg(theme.accent)('Goodbye!')}\n\n`);
-    context.scheduler.stop();
     process.exit(0);
   },
 };
@@ -138,23 +137,28 @@ export const bannerCommand: CommandHandler = {
   usage: '/banner',
   group: 'System',
   execute: async (_, context) => {
-    const tasks = context.scheduler.listTasks();
+    let tasksCount = 0;
     let heartbeatStatus: { running: boolean; enabled: boolean } | undefined;
     try {
       const { TYPES } = await import('../../../core/di/types');
       const hbService = context.container.get<any>(TYPES.HeartbeatService);
       heartbeatStatus = hbService?.getStatus();
+      const agentService = context.container.get<any>(TYPES.AgentOrchestratorService);
+      const summary = agentService?.getSummary?.();
+      if (summary) {
+        tasksCount = Number(summary.queued || 0) + Number(summary.running || 0);
+      }
     } catch {
-      // HeartbeatService not bound
+      // Optional services not bound
     }
     const cfg = context.configManager.getConfig();
     const voiceEnabled = !!(cfg.providers?.openai?.apiKey || process.env.OPENAI_API_KEY);
     const walletUnlocked = isSessionActive();
 
     const pkg = await import('../../../../package.json');
-    const bannerText = `${fg(theme.primary)('Slashbot v' + pkg.version)}
+const bannerText = `${fg(theme.primary)('Slashbot v' + pkg.version)}
 ${fg(theme.muted)('Working directory: ' + context.codeEditor.getWorkDir())}
-${fg(theme.muted)('Tasks: ' + tasks.length)}
+${fg(theme.muted)('Tasks: ' + tasksCount)}
 ${fg(theme.muted)('Telegram: ' + (context.connectors.has('telegram') ? fg(theme.success)('connected') : 'off'))}
 ${fg(theme.muted)('Discord: ' + (context.connectors.has('discord') ? fg(theme.success)('connected') : 'off'))}
 ${fg(theme.muted)('Voice: ' + (voiceEnabled ? fg(theme.success)('enabled') : 'off'))}

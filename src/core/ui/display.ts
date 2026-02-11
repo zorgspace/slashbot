@@ -11,6 +11,9 @@
 import { t, fg, bold, type StyledText } from '@opentui/core';
 import { theme } from './theme';
 import type { UIOutput } from './types';
+import { formatToolAction } from './format';
+
+import { isAssistantToolTranscript, parseAssistantToolTranscript } from './toolTranscript';
 
 export interface TUISpinnerCallbacks {
   showSpinner: (label: string) => void;
@@ -28,6 +31,13 @@ class DisplayService {
   private tui: UIOutput | null = null;
   private thinkingStartTime = 0;
   private thinkingCallback: ((chunk: string) => void) | null = null;
+  private readonly exploreLiveKey = 'explore-live';
+  private exploreEvents: Array<{
+    tool: 'Grep' | 'Glob' | 'LS' | 'Read';
+    success: boolean;
+    total: number;
+    preview: string[];
+  }> = [];
 
   bindTUI(tui: UIOutput): void {
     this.tui = tui;
@@ -38,10 +48,6 @@ class DisplayService {
   }
 
   // === Core output ===
-
-  scrollToBottom(): void {
-    // No-op: content panel grows dynamically, no forced scroll
-  }
 
   /**
    * Append a plain message (no assistant border).
@@ -65,7 +71,6 @@ class DisplayService {
 
   /**
    * Append an assistant-bordered message (violet left border in TUI).
-   * Replaces: appendAssistant, appendAssistantStyled
    */
   appendAssistantMessage(content: StyledText | string): void {
     if (this.tui) {
@@ -85,16 +90,45 @@ class DisplayService {
     this.appendMessage(text);
   }
 
-  appendStyled(content: StyledText | string): void {
-    this.appendMessage(content);
+  appendUserMessage(content: string): void {
+    if (this.tui) {
+      this.tui.appendUserChat(content);
+    } else {
+      console.log(`[you] ${this.stripAnsi(content)}`);
+    }
   }
 
-  appendAssistant(text: string): void {
-    this.appendAssistantMessage(text);
+  beginUserTurn(): void {
+    this.exploreEvents = [];
+    if (this.tui) {
+      this.tui.removeAssistantMarkdownBlock(this.exploreLiveKey);
+    }
   }
 
-  appendAssistantStyled(content: StyledText | string): void {
-    this.appendAssistantMessage(content);
+  endUserTurn(): void {
+    // Keep the final live explore block visible after the turn ends.
+    // It will be cleared at the beginning of the next user turn.
+    this.exploreEvents = [];
+  }
+
+  pushExploreProbe(
+    tool: 'Grep' | 'Glob' | 'LS' | 'Read',
+    payload: string,
+    success: boolean,
+  ): void {
+    const lines = (payload || '')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean);
+    const preview = lines.slice(0, 5);
+    this.exploreEvents.push({
+      tool,
+      success,
+      total: lines.length,
+      preview,
+    });
+    if (!this.tui) return;
+    this.tui.upsertAssistantMarkdownBlock(this.exploreLiveKey, this.buildExploreSummaryText());
   }
 
   // === Convenience wrappers ===
@@ -128,7 +162,7 @@ class DisplayService {
   }
 
   info(text: string): void {
-    this.appendMessage(t`${fg(theme.info)(text)}`);
+    this.appendAssistantMessage(t`${fg(theme.info)(text)}`);
   }
 
   errorText(text: string): void {
@@ -136,25 +170,17 @@ class DisplayService {
   }
 
   successText(text: string): void {
-    this.appendMessage(t`${fg(theme.success)(text)}`);
+    this.appendAssistantMessage(t`${fg(theme.success)(text)}`);
   }
 
   warningText(text: string): void {
-    this.appendMessage(t`${fg(theme.warning)(text)}`);
-  }
-
-  boldText(text: string): void {
-    this.appendMessage(t`${bold(text)}`);
+    this.appendAssistantMessage(t`${fg(theme.warning)(text)}`);
   }
 
   // === Block helpers ===
 
   errorBlock(msg: string): void {
-    this.appendMessage(t`${bold(fg(theme.error)('[ERROR]'))} ${fg(theme.error)(msg)}`);
-  }
-
-  successBlock(msg: string): void {
-    this.appendMessage(t`${bold(fg(theme.success)('[OK]'))} ${fg(theme.success)(msg)}`);
+    this.appendAssistantMessage(t`${bold(fg(theme.error)('[ERROR]'))} ${fg(theme.error)(msg)}`);
   }
 
   // === Thinking/Spinner ===
@@ -243,13 +269,24 @@ class DisplayService {
       ? (content: StyledText | string) => this.appendAssistantMessage(content)
       : (content: StyledText | string) => this.appendMessage(content);
     const appendPlain = bordered
-      ? (text: string) => this.appendAssistant(text)
-      : (text: string) => this.append(text);
+      ? (text: string) => this.appendAssistantMessage(text)
+      : (text: string) => this.appendMessage(text);
 
     const lines = text.split('\n');
     let inCodeBlock = false;
     let codeBlockLang = '';
     let codeBlockLines: string[] = [];
+    const flushCodeBlock = () => {
+      if (codeBlockLines.length === 0) return;
+      if (codeBlockLang) {
+        appendLine(t`${fg(theme.muted)(`[${codeBlockLang}]`)}`);
+      }
+      for (const codeLine of codeBlockLines) {
+        appendLine(t`${fg(theme.secondary)(codeLine)}`);
+      }
+      codeBlockLang = '';
+      codeBlockLines = [];
+    };
 
     for (const line of lines) {
       if (line.startsWith('```')) {
@@ -258,11 +295,8 @@ class DisplayService {
           codeBlockLang = line.slice(3).trim();
           codeBlockLines = [];
         } else {
-          const content = codeBlockLines.join('\n');
-          console.log(content);
+          flushCodeBlock();
           inCodeBlock = false;
-          codeBlockLang = '';
-          codeBlockLines = [];
         }
         continue;
       }
@@ -287,9 +321,8 @@ class DisplayService {
       }
     }
 
-    if (inCodeBlock && codeBlockLines.length > 0) {
-      const content = codeBlockLines.join('\n');
-      console.log(content);
+    if (inCodeBlock) {
+      flushCodeBlock();
     }
 
     if (!bordered) {
@@ -297,10 +330,65 @@ class DisplayService {
     }
   }
 
+  /**
+   * Render legacy assistant tool transcript blocks (e.g. "[tool] [git_status] ...")
+   * into concise, styled assistant rows.
+   */
+  renderAssistantTranscript(text: string): boolean {
+    if (!isAssistantToolTranscript(text)) {
+      return false;
+    }
+    const entries = parseAssistantToolTranscript(text);
+    if (entries.length === 0) {
+      return false;
+    }
+
+    let exploreLines: string[] = [];
+    let exploreSuccess = true;
+    const isControlToolName = (toolName: string): boolean => {
+      const normalized = toolName.trim().toLowerCase().replace(/[\s_-]+/g, '');
+      return normalized === 'saymessage' || normalized === 'endtask' || normalized === 'continuetask';
+    };
+    const flushExplore = () => {
+      if (exploreLines.length === 0) return;
+      const header = `Explore - ${exploreLines.length} probe(s) ${exploreSuccess ? '✓' : '✗'}`;
+      this.renderMarkdown(`${header}\n${exploreLines.join('\n')}`, true);
+      exploreLines = [];
+      exploreSuccess = true;
+    };
+
+    for (const entry of entries) {
+      if (entry.kind === 'tool') {
+        if (isControlToolName(entry.toolName)) {
+          continue;
+        }
+        if (this.isExploreToolName(entry.toolName)) {
+          const detail = entry.detail || 'completed';
+          exploreLines.push(`- ${entry.toolName}: ${detail}`);
+          exploreSuccess = exploreSuccess && (entry.success ?? true);
+          continue;
+        }
+        flushExplore();
+        this.appendAssistantMessage(
+          formatToolAction(entry.toolName, entry.detail, {
+            success: entry.success ?? true,
+          }),
+        );
+        continue;
+      }
+
+      if (entry.text.trim()) {
+        flushExplore();
+        this.appendAssistantMessage(entry.text);
+      }
+    }
+    flushExplore();
+    return true;
+  }
+
   // === Say result display ===
 
   sayResult(msg: string): void {
-    this.scrollToBottom();
     this.renderMarkdown(msg, true);
   }
 
@@ -344,6 +432,37 @@ class DisplayService {
 
   private stripAnsi(str: string): string {
     return str.replace(/\x1b\[[0-9;]*m/g, '');
+  }
+
+  private buildExploreSummaryText(): string {
+    const probes = this.exploreEvents.length;
+    const totalLines = this.exploreEvents.reduce((sum, item) => sum + item.total, 0);
+    const success = this.exploreEvents.every(item => item.success);
+
+    const allRows = this.exploreEvents.flatMap(item =>
+      item.preview.map(line => `- ${item.tool}: ${line}`),
+    );
+    const previewRows = allRows.slice(-5);
+    const hidden = Math.max(0, totalLines - previewRows.length);
+
+    const header = `Explore - ${probes} probe(s) ${success ? '✓' : '✗'} ${totalLines} lines`;
+    if (previewRows.length === 0) {
+      return `${header}\n- no matches`;
+    }
+    return `${header}\n${previewRows.join('\n')}${hidden > 0 ? `\n- ... +${hidden} more line(s)` : ''}`;
+  }
+
+  private isExploreToolName(toolName: string): boolean {
+    const normalized = toolName.trim().toLowerCase().replace(/\s+/g, '');
+    return (
+      normalized === 'grep' ||
+      normalized === 'glob' ||
+      normalized === 'ls' ||
+      normalized === 'list' ||
+      normalized === 'explore' ||
+      normalized === 'read' ||
+      normalized === 'readfile'
+    );
   }
 
   showNotification(text: string): void {

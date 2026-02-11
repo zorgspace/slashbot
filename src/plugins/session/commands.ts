@@ -19,7 +19,7 @@ export const loginCommand: CommandHandler = {
     const apiKey = args.join('');
 
     if (!apiKey) {
-      display.appendAssistantStyled(t`
+      display.appendAssistantMessage(t`
 ${bold(fg(theme.accent)('Connect to an AI provider'))}
 ${fg(theme.muted)('Get your API key from:')}
 ${fg(theme.muted)('  xAI (Grok):    https://console.x.ai/')}
@@ -103,17 +103,13 @@ export const configCommand: CommandHandler = {
             .join(', ')
         : '';
 
-    const tasks = context.scheduler?.listTasks() || [];
-
-    display.appendAssistantStyled(t`
+    display.appendAssistantMessage(t`
 ${bold(fg(theme.accent)('Slashbot Configuration'))}
 
   Status:     ${isAuth ? 'Connected' : 'Not connected'}
   Provider:   ${providerName}
   Model:      ${currentModel}
   Config:     ${configDir}${providersList}
-
-  Tasks:      ${tasks.length} scheduled
 `);
     return true;
   },
@@ -143,7 +139,7 @@ export const modelCommand: CommandHandler = {
         )
         .join('\n');
 
-      display.appendAssistantStyled(t`
+      display.appendAssistantMessage(t`
 ${bold(fg(theme.accent)('Model Configuration'))}
 
   Provider: ${providerName}
@@ -191,7 +187,7 @@ export const providerCommand: CommandHandler = {
         })
         .join('\n');
 
-      display.appendAssistantStyled(t`
+      display.appendAssistantMessage(t`
 ${bold(fg(theme.accent)('Provider Configuration'))}
 
 ${providerLines}
@@ -206,7 +202,7 @@ ${fg(theme.muted)('  Example: /provider anthropic')}
     // Check if provider exists
     const providerInfo = PROVIDERS[providerArg];
     if (!providerInfo) {
-      display.appendAssistantStyled(t`${fg(theme.error)('Unknown provider: ' + providerArg)}
+      display.appendAssistantMessage(t`${fg(theme.error)('Unknown provider: ' + providerArg)}
 ${fg(theme.muted)('Available: ' + Object.keys(PROVIDERS).join(', '))}`);
       return true;
     }
@@ -214,7 +210,7 @@ ${fg(theme.muted)('Available: ' + Object.keys(PROVIDERS).join(', '))}`);
     // Check if provider is configured
     const creds = context.configManager.getProviderCredentials(providerArg);
     if (!creds) {
-      display.appendAssistantStyled(t`${fg(theme.error)("Provider '" + providerArg + "' not configured.")}
+      display.appendAssistantMessage(t`${fg(theme.error)("Provider '" + providerArg + "' not configured.")}
 ${fg(theme.muted)('Set ' + providerInfo.envVars[0] + ' environment variable, or /login with the API key.')}`);
       return true;
     }

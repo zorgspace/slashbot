@@ -1,0 +1,5 @@
+{
+  "module": "./index.ts",
+  "exportName": "SystemPlugin",
+  "enabled": true
+}

@@ -1,0 +1,5 @@
+{
+  "module": "./plugin.ts",
+  "exportName": "DiscordPlugin",
+  "enabled": true
+}

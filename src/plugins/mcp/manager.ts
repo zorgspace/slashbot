@@ -21,6 +21,7 @@ import * as path from 'path';
 
 const DEFAULT_CONNECT_TIMEOUT = 30_000;
 const DEFAULT_TOOL_TIMEOUT = 60_000;
+const DEFAULT_CONNECT_RETRIES = 2;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label?: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -47,6 +48,20 @@ function normalizeConfig(raw: MCPServerConfig): MCPServerConfig {
   if ('command' in raw && raw.command) return { ...raw, type: 'local' as const };
   if ('url' in raw && (raw as any).url) return { ...raw, type: 'remote' } as MCPRemoteServerConfig;
   return raw;
+}
+
+function isTransientMCPError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  const lowered = msg.toLowerCase();
+  return (
+    lowered.includes('timed out') ||
+    lowered.includes('timeout') ||
+    lowered.includes('econnreset') ||
+    lowered.includes('connection closed') ||
+    lowered.includes('socket hang up') ||
+    lowered.includes('temporarily unavailable') ||
+    lowered.includes('network')
+  );
 }
 
 interface MCPConnection {
@@ -144,16 +159,34 @@ export class MCPManager {
 
     this.statuses.set(name, { status: 'disconnected' });
 
-    try {
-      if (isRemoteConfig(config)) {
-        await this.connectRemote(name, config);
-      } else {
-        await this.connectLocal(name, config as MCPLocalServerConfig);
+    const maxAttempts = isRemoteConfig(config) ? DEFAULT_CONNECT_RETRIES + 1 : 1;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        if (isRemoteConfig(config)) {
+          await this.connectRemote(name, config);
+        } else {
+          await this.connectLocal(name, config as MCPLocalServerConfig);
+        }
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        const msg = error instanceof Error ? error.message : String(error);
+        if (attempt >= maxAttempts || !isTransientMCPError(error)) {
+          this.statuses.set(name, { status: 'failed', error: msg });
+          throw error;
+        }
+        this.statuses.set(name, {
+          status: 'failed',
+          error: `connect attempt ${attempt}/${maxAttempts} failed: ${msg}`,
+        });
       }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+    }
+    if (lastError) {
+      const msg = lastError instanceof Error ? lastError.message : String(lastError);
       this.statuses.set(name, { status: 'failed', error: msg });
-      throw error;
+      throw lastError;
     }
 
     this.configs.set(name, config);
@@ -265,7 +298,7 @@ export class MCPManager {
     client: Client,
     transport: Transport,
   ): Promise<void> {
-    const toolsResult = await client.listTools();
+    const toolsResult = await withTimeout(client.listTools(), DEFAULT_CONNECT_TIMEOUT, `List tools for ${name}`);
     const tools: MCPToolInfo[] = (toolsResult.tools || []).map((tool: any) => ({
       name: tool.name,
       description: tool.description || '',
@@ -287,12 +320,30 @@ export class MCPManager {
     }
 
     const config = this.configs.get(serverName);
-    const result = await connection.client.callTool(
-      { name: toolName, arguments: args },
-      CallToolResultSchema,
-      { timeout: config?.timeout ?? DEFAULT_TOOL_TIMEOUT, resetTimeoutOnProgress: true },
-    );
-    return result;
+    try {
+      const result = await connection.client.callTool(
+        { name: toolName, arguments: args },
+        CallToolResultSchema,
+        { timeout: config?.timeout ?? DEFAULT_TOOL_TIMEOUT, resetTimeoutOnProgress: true },
+      );
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.statuses.set(serverName, { status: 'failed', error: msg });
+      if (config && isTransientMCPError(error)) {
+        await this.reconnect(serverName);
+        const retried = this.connections.get(serverName);
+        if (!retried) {
+          throw error;
+        }
+        return await retried.client.callTool(
+          { name: toolName, arguments: args },
+          CallToolResultSchema,
+          { timeout: config?.timeout ?? DEFAULT_TOOL_TIMEOUT, resetTimeoutOnProgress: true },
+        );
+      }
+      throw error;
+    }
   }
 
   /**

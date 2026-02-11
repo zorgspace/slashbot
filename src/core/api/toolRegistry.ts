@@ -8,7 +8,7 @@ import type { Tool } from 'ai';
 import type { ToolContribution } from '../../plugins/types';
 import type { Action, ActionResult, ActionHandlers } from '../actions/types';
 import { executeActions } from '../actions/executor';
-import { display } from '../ui';
+import { detectEscapedNewlineCorruption } from '../actions/contentGuards';
 
 /**
  * Execution context shared between tool execute callbacks and the agentic loop.
@@ -22,6 +22,7 @@ export interface ToolExecContext {
     shouldBreak: boolean;
     shouldResetIteration: boolean;
     endMessage?: string;
+    pendingSayMessages: string[];
     blockedEndCount: number;
   };
   maxBlockedEnds: number;
@@ -142,7 +143,6 @@ export class ToolRegistry {
       }
       const action = contrib.toAction(args);
       const message = (action as any).message || '';
-      if (message) display.sayResult(message);
       ctx.signals.shouldBreak = true;
       ctx.signals.endMessage = message || undefined;
       return 'Task ended';
@@ -152,7 +152,9 @@ export class ToolRegistry {
     if (controlFlow === 'say') {
       const action = contrib.toAction(args);
       const message = (action as any).message || '';
-      if (message) display.sayResult(message);
+      if (message) {
+        ctx.signals.pendingSayMessages.push(message);
+      }
       return 'Message displayed';
     }
 
@@ -164,6 +166,45 @@ export class ToolRegistry {
 
     // --- Regular action tools ---
     const action = contrib.toAction(args);
+
+    // Reject malformed escaped-newline payloads (e.g. literal "\n" used for indentation).
+    if (action.type === 'edit') {
+      const path = action.path as string | undefined;
+      const newString = action.newString;
+      if (typeof newString === 'string') {
+        const corruption = detectEscapedNewlineCorruption(newString);
+        if (corruption) {
+          const target = path || 'unknown file';
+          const errorMsg = `Cannot edit ${target} — ${corruption}. Use REAL new lines in newString, not literal "\\n".`;
+          ctx.actionResults.push({
+            action: `Edit: ${target}`,
+            success: false,
+            result: 'Blocked',
+            error: errorMsg,
+          });
+          return errorMsg;
+        }
+      }
+    }
+    if (action.type === 'write' || action.type === 'create') {
+      const path = action.path as string | undefined;
+      const content = action.content;
+      if (typeof content === 'string') {
+        const corruption = detectEscapedNewlineCorruption(content);
+        if (corruption) {
+          const target = path || 'unknown file';
+          const verb = action.type === 'write' ? 'write' : 'create';
+          const errorMsg = `Cannot ${verb} ${target} — ${corruption}. Use REAL new lines in content, not literal "\\n".`;
+          ctx.actionResults.push({
+            action: `Write: ${target}`,
+            success: false,
+            result: 'Blocked',
+            error: errorMsg,
+          });
+          return errorMsg;
+        }
+      }
+    }
 
     // Read tracking
     if (action.type === 'read') {

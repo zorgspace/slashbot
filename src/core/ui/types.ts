@@ -7,11 +7,11 @@ import type { StyledText } from '@opentui/core';
 export interface UIOutput {
   appendChat(content: string): void;
   appendStyledChat(content: StyledText | string): void;
+  appendUserChat(content: string): void;
   appendAssistantChat(content: StyledText | string): void;
   appendAssistantMarkdown(text: string): void;
-  startResponse(): void;
-  appendResponse(chunk: string): void;
-  endResponse(): void;
+  upsertAssistantMarkdownBlock(key: string, text: string): void;
+  removeAssistantMarkdownBlock(key: string): void;
   appendCodeBlock(content: string, filetype?: string): void;
   appendDiffBlock(diff: string, filetype?: string): void;
   appendThinking(chunk: string): void;
@@ -53,5 +53,8 @@ export interface TUIApp {
 export interface TUIAppCallbacks {
   onInput: (input: string) => Promise<void>;
   onExit: () => void;
-  onAbort: () => void;
+  onAbort: (options?: { tabId?: string; source?: 'ctrl_c' | 'escape' }) => boolean;
+  onTabChange?: (tabId: string) => void | Promise<void>;
+  onCreateAgent?: () => void | Promise<void>;
+  onEditAgent?: (agentId: string) => void | Promise<void>;
 }

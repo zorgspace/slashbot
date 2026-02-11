@@ -341,12 +341,9 @@ export class HeartbeatService {
     const visibility = this.config.visibility || {};
 
     if (result.type === 'ok') {
-      const showOk = visibility.showOk ?? false;
-      if (showOk || result.content) {
-        display.appendAssistantMessage(formatToolAction('Heartbeat', 'reflection', { success: true }));
-      } else {
-        display.muted('  ⎿  OK');
-      }
+      // Explicitly silent on OK heartbeats unless a future dedicated
+      // UI mode is added. This avoids noisy "HEARTBEAT_OK" confirmations.
+      return;
     } else if (result.type === 'alert') {
       const showAlerts = visibility.showAlerts ?? true;
       if (showAlerts && result.content) {

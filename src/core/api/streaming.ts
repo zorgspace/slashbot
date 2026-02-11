@@ -24,14 +24,10 @@ export async function streamResponse(
   const displayStream = options?.displayStream ?? true;
   const quiet = options?.quiet ?? false;
   const timeout = options?.timeout;
-  const thinkingLabel = options?.thinkingLabel ?? 'Thinking...';
+  const thinkingLabel = options?.thinkingLabel ?? 'Reticulating...';
 
   if (ctx.authProvider.beforeRequest) {
     await ctx.authProvider.beforeRequest();
-  }
-
-  if (displayStream && !quiet) {
-    display.scrollToBottom();
   }
 
   let responseContent = '';
@@ -42,6 +38,7 @@ export async function streamResponse(
   ctx.thinkingActive = true;
 
   ctx.abortController = new AbortController();
+  ctx.onAbortControllerChange?.(ctx.abortController);
 
   let fetchTimeout: ReturnType<typeof setTimeout> | undefined;
   if (timeout) {
@@ -87,7 +84,7 @@ export async function streamResponse(
       if (msg.role === 'assistant' && (msg as any)._toolCalls) {
         const parts: any[] = [];
         const text = typeof msg.content === 'string' ? msg.content : '';
-        if (text && text !== '[tool calls]') {
+        if (text) {
           parts.push({ type: 'text', text });
         }
         for (const tc of (msg as any)._toolCalls) {
@@ -246,14 +243,27 @@ export async function streamResponse(
       let cleaned = cleanXmlTags(responseContent);
       cleaned = cleaned.replace(/^Assistant:\s*/gim, '');
       const normalized = cleaned.replace(/\n{3,}/g, '\n\n');
-      if (normalized.trim()) {
-        display.renderMarkdown(normalized, true);
-        ctx.sessionManager.displayedContent = normalized;
+      const displayText = normalized
+        .replace(/<session-actions>[\s\S]*?<\/session-actions>/gi, '')
+        .replace(/^\[you\]\s*/gim, '')
+        .trim();
+      if (displayText) {
+        if (!display.renderAssistantTranscript(displayText)) {
+          display.renderMarkdown(displayText, true);
+        }
+        ctx.sessionManager.displayedContent = displayText;
       }
     }
 
     const deltaPrompt = ctx.usage.promptTokens - startPromptTokens;
     const deltaCompletion = ctx.usage.completionTokens - startCompletionTokens;
+    const deltaTotal = Math.max(0, deltaPrompt + deltaCompletion);
+    ctx.sessionManager.recordUsage({
+      promptTokens: Math.max(0, deltaPrompt),
+      completionTokens: Math.max(0, deltaCompletion),
+      totalTokens: deltaTotal,
+      requests: 1,
+    });
 
     if (!quiet) {
       display.streamThinkingChunk(
@@ -287,6 +297,7 @@ export async function streamResponse(
       display.endThinkingStream();
     }
     ctx.abortController = null;
+    ctx.onAbortControllerChange?.(null);
   }
 
   if (thinkingContent && !responseContent.trim() && !hasToolCalls) {
