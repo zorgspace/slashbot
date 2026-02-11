@@ -7,7 +7,7 @@ export interface TabItem {
 }
 
 export interface TabsPanelCallbacks {
-  onSelect?: (tabId: string) => void;
+  onSelect?: (tabId: string) => void | Promise<void>;
   onCreateAgent?: () => void;
   onEditAgent?: (agentId: string) => void;
 }
@@ -33,6 +33,7 @@ export class TabsPanel {
       border: ['bottom'],
       borderColor: theme.borderSubtle,
     });
+    this.container.selectable = false;
   }
 
   setTabs(tabs: TabItem[], activeTabId: string): void {
@@ -72,19 +73,28 @@ export class TabsPanel {
         content: isActive
           ? t`${bg(theme.accent)(bold(fg(theme.bg)(`  ${label}  `)))}`
           : t`${bg(theme.borderSubtle)(fg(theme.white)(`  ${label}  `))}`,
+        selectable: false,
       });
       tabText.onMouseDown = event => {
         event.preventDefault();
         event.stopPropagation();
+        const previousTabId = this.activeTabId;
         this.activeTabId = tab.id;
         this.rebuild();
-        this.callbacks.onSelect?.(tab.id);
+        const maybePromise = this.callbacks.onSelect?.(tab.id);
+        if (maybePromise && typeof (maybePromise as Promise<void>).then === 'function') {
+          void (maybePromise as Promise<void>).catch(() => {
+            this.activeTabId = previousTabId;
+            this.rebuild();
+          });
+        }
       };
       this.container.add(tabText);
 
       const gap = new TextRenderable(this.renderer, {
         id: `tab-gap-${tab.id}`,
         content: ' ',
+        selectable: false,
       });
       this.container.add(gap);
     }
@@ -98,6 +108,7 @@ export class TabsPanel {
     const createBtn = new TextRenderable(this.renderer, {
       id: 'tabs-create',
       content: t`${bg(theme.primary)(bold(fg(theme.bg)(' + New Agent ')))}`,
+      selectable: false,
     });
     createBtn.onMouseDown = event => {
       event.preventDefault();
@@ -110,12 +121,14 @@ export class TabsPanel {
       const editGap = new TextRenderable(this.renderer, {
         id: 'tabs-edit-gap',
         content: ' ',
+        selectable: false,
       });
       this.container.add(editGap);
 
       const editBtn = new TextRenderable(this.renderer, {
         id: 'tabs-edit',
         content: t`${bg(theme.accent)(bold(fg(theme.bg)(' Edit Agent ')))}`,
+        selectable: false,
       });
       editBtn.onMouseDown = event => {
         event.preventDefault();

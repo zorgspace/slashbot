@@ -243,6 +243,27 @@ export async function runAgenticLoop(
         if (finalControlMessage && shouldDisplayControlMessages) {
           display.sayResult(finalControlMessage);
         }
+        if (finalControlMessage?.trim()) {
+          const normalized = finalControlMessage.trim();
+          const hasRecentDuplicate = ctx.sessionManager.history
+            .slice(-12)
+            .some(
+              msg =>
+                msg.role === 'assistant' &&
+                typeof msg.content === 'string' &&
+                msg.content.trim() === normalized,
+            );
+          if (!hasRecentDuplicate) {
+            ctx.sessionManager.history.push({
+              role: 'assistant',
+              content: normalized,
+              _render: {
+                kind: 'assistant_markdown',
+                text: normalized,
+              },
+            });
+          }
+        }
         endMessage = finalControlMessage;
         break;
       }

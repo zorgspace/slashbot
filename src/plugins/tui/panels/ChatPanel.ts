@@ -190,7 +190,6 @@ export class ChatPanel {
       ...LeftBorder,
       borderColor,
       paddingLeft: 2,
-      marginBottom: 1,
       marginTop:1
     });
     box.add(text);
@@ -213,7 +212,6 @@ export class ChatPanel {
       borderColor: theme.accent,
       paddingLeft: 2,
       marginTop: 1,
-      marginBottom:1,
       flexDirection: 'column',
     });
 

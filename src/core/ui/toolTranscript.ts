@@ -37,6 +37,11 @@ export function summarizeToolResult(raw: string): { success?: boolean; detail: s
     first = first.slice(3).trim();
   }
 
+  // Backward compatibility: older bash results started with a generic heading.
+  if (/^(command output|directory contents):?$/i.test(first) && lines.length > 1) {
+    first = lines[1];
+  }
+
   const detailBase = (first || 'completed').replace(/\s+/g, ' ').slice(0, 160);
   const extra = lines.length > 1 ? ` (+${lines.length - 1} lines)` : '';
   return {

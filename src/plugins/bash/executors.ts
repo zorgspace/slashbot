@@ -25,13 +25,12 @@ export async function executeShellCommand(
       })
     : handlers.onExec!(command));
 
-  // Process output: add title and limit to 5 lines
+  // Process output: keep real command output and limit to 5 lines
   let processedOutput = output || '';
   if (processedOutput) {
     const lines = processedOutput.split('\n').filter(line => line.trim());
-    const title = command.trim().startsWith('ls') ? 'Directory Contents:' : 'Command Output:';
     const limitedLines = lines.slice(0, 5);
-    processedOutput = `${title}\n${limitedLines.join('\n')}`;
+    processedOutput = limitedLines.join('\n');
     if (lines.length > 5) {
       processedOutput += '\n... (truncated)';
     }

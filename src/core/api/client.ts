@@ -433,19 +433,6 @@ export class LLMClient implements ClientContext {
     this.thinkingActive = ctx.thinkingActive;
     this.abortController = ctx.abortController;
 
-    // Store final response in history
-    const lastMessage = scope.history[scope.history.length - 1];
-    if (lastMessage?.role !== 'assistant' || lastMessage?.content !== result.finalResponse) {
-      scope.history.push({
-        role: 'assistant',
-        content: result.finalResponse,
-        _render: {
-          kind: 'assistant_markdown',
-          text: result.finalResponse,
-        },
-      });
-    }
-
     // Inject executed actions into context
     if (result.executedActions.length > 0) {
       const actionSummary = result.executedActions
@@ -458,7 +445,7 @@ export class LLMClient implements ClientContext {
       });
     }
 
-    const cleanResponse = cleanSelfDialogue(cleanXmlTags(result.finalResponse));
+    const cleanResponse = cleanSelfDialogue(cleanXmlTags(result.endMessage || result.finalResponse)).trim();
 
     // Defensive cleanup
     if (this.thinkingActive) {
