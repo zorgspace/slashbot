@@ -11,7 +11,7 @@ import type {
 } from '../../plugins/types';
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import { registerActionParser } from '../../core/actions/parser';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 import { getTelegramParserConfigs } from './parser';
 
 async function executeTelegramConfig(
@@ -20,18 +20,15 @@ async function executeTelegramConfig(
 ): Promise<ActionResult | null> {
   if (!handlers.onTelegramConfig) return null;
 
-  display.tool(
-    'TelegramConfig',
-    action.chatId ? `chat_id: ${action.chatId}` : 'auto-detect chat_id',
-  );
+  const detail = action.chatId ? `chat_id: ${action.chatId}` : 'auto-detect chat_id';
 
   try {
     const result = await handlers.onTelegramConfig(action.botToken, action.chatId);
 
     if (result.success) {
-      display.result(`Telegram configured! Chat ID: ${result.chatId || action.chatId}`);
+      display.appendAssistantMessage(formatToolAction('TelegramConfig', detail, { success: true, summary: `Chat ID: ${result.chatId || action.chatId}` }));
     } else {
-      display.error(result.message);
+      display.appendAssistantMessage(formatToolAction('TelegramConfig', detail, { success: false, summary: result.message }));
     }
 
     return {

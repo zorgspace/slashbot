@@ -187,7 +187,7 @@ export const providerCommand: CommandHandler = {
           const isCurrent = id === currentProvider;
           const marker = isCurrent ? '[*]' : isConfigured ? '[+]' : '[ ]';
           const status = isCurrent ? ' (active)' : isConfigured ? ' (configured)' : '';
-          return `  ${marker} ${info.name}${status}`;
+          return `  ${marker} ${info.id} (${info.name})${status}`;
         })
         .join('\n');
 

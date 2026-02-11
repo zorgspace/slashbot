@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { ReadAction, EditAction, WriteAction, CreateAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 export async function executeRead(
   action: ReadAction,
@@ -12,12 +12,10 @@ export async function executeRead(
 ): Promise<ActionResult | null> {
   if (!handlers.onRead) return null;
 
-  // Display action in Claude Code style
   const rangeInfo =
     action.offset || action.limit
       ? ` (offset: ${action.offset || 0}, limit: ${action.limit || 'all'})`
       : '';
-  display.read(action.path + rangeInfo);
 
   const fileContent = await handlers.onRead(action.path, {
     offset: action.offset,
@@ -27,7 +25,9 @@ export async function executeRead(
   if (fileContent) {
     const lines = fileContent.split('\n');
     const lineCount = lines.length;
-    display.readResult(action.path + rangeInfo, lineCount);
+    display.appendAssistantMessage(
+      formatToolAction('Read', action.path + rangeInfo, { success: true, summary: lineCount + ' lines' }),
+    );
     // Detect language from file extension so the LLM knows the syntax
     const ext = action.path.split('.').pop()?.toLowerCase() || '';
     const langMap: Record<string, string> = {
@@ -86,7 +86,7 @@ export async function executeRead(
     const header = lang ? `[${lang}] ${action.path}${rangeNote}` : `${action.path}${rangeNote}`;
     const pad = String(endLine).length;
     const numberedContent = lines
-      .map((line, i) => `${String(startLine + i).padStart(pad, ' ')}│${line}`)
+      .map((line, i) => `${String(startLine + i).padStart(pad, ' ')}\u2502${line}`)
       .join('\n');
     return {
       action: `Read: ${action.path}`,
@@ -94,7 +94,9 @@ export async function executeRead(
       result: `${header}\n${numberedContent}`,
     };
   } else {
-    display.error('File not found');
+    display.appendAssistantMessage(
+      formatToolAction('Read', action.path + rangeInfo, { success: false, summary: 'not found' }),
+    );
     return {
       action: `Read: ${action.path}`,
       success: false,
@@ -110,8 +112,6 @@ export async function executeEdit(
 ): Promise<ActionResult | null> {
   if (!handlers.onEdit) return null;
 
-  display.update(action.path);
-
   const result = await handlers.onEdit(
     action.path,
     action.oldString,
@@ -120,21 +120,31 @@ export async function executeEdit(
   );
 
   if (result.status === 'applied') {
-    display.updateResult(action.path, true, 0, 0);
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: true }),
+    );
   } else if (result.status === 'already_applied') {
-    display.success('Already applied (skipped)');
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: true, summary: 'already applied' }),
+    );
   } else if (result.status === 'not_found') {
-    display.updateResult(action.path, false, 0, 0);
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: false, summary: 'not found' }),
+    );
     display.error(
       result.message?.includes('File not found')
         ? `File not found: ${action.path}. Use read_file to check if file exists, or write_file to make a new file.`
         : `${result.message}`,
     );
   } else if (result.status === 'no_match') {
-    display.updateResult(action.path, false, 0, 0);
-    display.error(`Search string not found in ${action.path} — re-read and retry.`);
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: false, summary: 'no match' }),
+    );
+    display.error(`Search string not found in ${action.path} \u2014 re-read and retry.`);
   } else {
-    display.updateResult(action.path, false, 0, 0);
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: false }),
+    );
   }
 
   let errorMsg = result.message;
@@ -168,12 +178,12 @@ export async function executeWrite(
   const handler = handlers.onWrite || handlers.onCreate;
   if (!handler) return null;
 
-  display.write(action.path);
-
   const success = await handler(action.path, action.content);
   const lineCount = action.content.split('\n').length;
 
-  display.writeResult(action.path, success, lineCount);
+  display.appendAssistantMessage(
+    formatToolAction('Create', action.path, { success, summary: success ? lineCount + ' lines' : 'failed' }),
+  );
 
   return {
     action: `Write: ${action.path}`,
@@ -190,12 +200,12 @@ export async function executeCreate(
   const handler = handlers.onCreate || handlers.onWrite;
   if (!handler) return null;
 
-  display.write(action.path);
-
   const success = await handler(action.path, action.content);
   const lineCount = action.content.split('\n').length;
 
-  display.writeResult(action.path, success, lineCount);
+  display.appendAssistantMessage(
+    formatToolAction('Create', action.path, { success, summary: success ? lineCount + ' lines' : 'failed' }),
+  );
 
   return {
     action: `Write: ${action.path}`,

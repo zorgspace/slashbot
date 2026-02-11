@@ -8,7 +8,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { HeartbeatAction, HeartbeatUpdateAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 /**
  * Execute a heartbeat action - triggers immediate heartbeat reflection
@@ -17,7 +17,7 @@ export async function executeHeartbeat(
   action: HeartbeatAction,
   handlers: ActionHandlers,
 ): Promise<ActionResult> {
-  display.heartbeat(action.prompt ? 'custom prompt' : 'reflection');
+  const mode = action.prompt ? 'custom prompt' : 'reflection';
 
   try {
     if (!handlers.onHeartbeat) {
@@ -30,8 +30,9 @@ export async function executeHeartbeat(
     }
 
     const result = await handlers.onHeartbeat(action.prompt);
-
-    display.heartbeatResult(result.type === 'ok');
+    display.appendAssistantMessage(
+      formatToolAction('Heartbeat', mode, { success: result.type === 'ok' }),
+    );
 
     return {
       action: 'heartbeat',
@@ -40,7 +41,9 @@ export async function executeHeartbeat(
     };
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
-    display.heartbeatResult(false);
+    display.appendAssistantMessage(
+      formatToolAction('Heartbeat', mode, { success: false }),
+    );
 
     return {
       action: 'heartbeat',
@@ -58,8 +61,6 @@ export async function executeHeartbeatUpdate(
   action: HeartbeatUpdateAction,
   handlers: ActionHandlers,
 ): Promise<ActionResult> {
-  display.heartbeatUpdate();
-
   try {
     if (!handlers.onHeartbeatUpdate) {
       return {
@@ -71,8 +72,12 @@ export async function executeHeartbeatUpdate(
     }
 
     const success = await handlers.onHeartbeatUpdate(action.content);
-
-    display.heartbeatUpdateResult(success);
+    display.appendAssistantMessage(
+      formatToolAction('HeartbeatUpdate', 'HEARTBEAT.md', {
+        success,
+        summary: success ? 'updated' : 'failed',
+      }),
+    );
 
     if (success) {
       return {
@@ -90,7 +95,9 @@ export async function executeHeartbeatUpdate(
     }
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
-    display.heartbeatUpdateResult(false);
+    display.appendAssistantMessage(
+      formatToolAction('HeartbeatUpdate', 'HEARTBEAT.md', { success: false }),
+    );
 
     return {
       action: 'heartbeat-update',

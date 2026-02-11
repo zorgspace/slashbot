@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { TaskAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 /**
  * Execute a subagent task.
@@ -15,20 +15,21 @@ export async function executeTask(
   handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
   const agentLabel = action.agentType === 'explore' ? 'Explorer' : 'Agent';
-  display.tool(`Subagent (${agentLabel})`, action.prompt.slice(0, 80));
 
   try {
     // For explore tasks, use available handlers to search the codebase
     if (action.agentType === 'explore') {
-      return await runExploreAgent(action.prompt, handlers);
+      return await runExploreAgent(action.prompt, handlers, agentLabel);
     }
 
     // For general tasks, we currently delegate to explore
     // Full general subagent with its own agentic loop will be a future enhancement
-    return await runExploreAgent(action.prompt, handlers);
+    return await runExploreAgent(action.prompt, handlers, agentLabel);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Subagent failed: ${errorMsg}`);
+    display.appendAssistantMessage(
+      formatToolAction(`Subagent (${agentLabel})`, action.prompt.slice(0, 80), { success: false, summary: errorMsg }),
+    );
     return {
       action: `Task: ${action.prompt.slice(0, 60)}`,
       success: false,
@@ -41,7 +42,7 @@ export async function executeTask(
 /**
  * Run an explore-type subagent that uses grep/glob to search the codebase
  */
-async function runExploreAgent(prompt: string, handlers: ActionHandlers): Promise<ActionResult> {
+async function runExploreAgent(prompt: string, handlers: ActionHandlers, agentLabel: string): Promise<ActionResult> {
   const results: string[] = [];
 
   // Extract search patterns from the prompt
@@ -76,7 +77,12 @@ async function runExploreAgent(prompt: string, handlers: ActionHandlers): Promis
   const output =
     results.length > 0 ? results.join('\n\n') : 'No results found for the given search terms.';
 
-  display.result(`${results.length} search results`);
+  display.appendAssistantMessage(
+    formatToolAction(`Subagent (${agentLabel})`, prompt.slice(0, 80), {
+      success: true,
+      summary: `${results.length} results`,
+    }),
+  );
 
   return {
     action: `Task: ${prompt.slice(0, 60)}`,

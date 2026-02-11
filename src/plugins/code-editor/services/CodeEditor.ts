@@ -101,6 +101,12 @@ export class CodeEditor {
       // Case insensitivity
       const caseArg = options?.caseInsensitive ? '-i' : '';
 
+      // Line numbers (default true)
+      const lineNumbersArg = options?.lineNumbers !== false ? '-n' : '';
+
+      // Multiline
+      const multilineArg = options?.multiline ? '-U' : '';
+
       // Determine search path - can be a specific file or directory
       let searchPath = this.workDir;
       const pathOpt = options?.path;
@@ -112,33 +118,48 @@ export class CodeEditor {
       const isFile = fs.existsSync(searchPath) && fs.statSync(searchPath).isFile();
       const recursiveArg = isFile ? '' : '-r';
 
-      const limit = (options as any)?.headLimit || 10;
-      const cmd = `grep ${recursiveArg} -n ${caseArg} ${contextArg} ${isFile ? '' : excludes} ${fileArg} "${pattern}" "${searchPath}" 2>/dev/null | head -${limit}`;
+      const limit = options?.headLimit || 10;
+      const cmd = `grep ${recursiveArg} ${lineNumbersArg} ${caseArg} ${multilineArg} ${contextArg} ${isFile ? '' : excludes} ${fileArg} "${pattern}" "${searchPath}" 2>/dev/null | head -${limit}`;
 
       const { stdout } = await execAsync(cmd);
+
+      const hasLineNumbers = options?.lineNumbers !== false;
 
       for (const line of stdout.split('\n').filter(l => l.trim())) {
         // Handle context separator lines (--)
         if (line === '--') continue;
 
-        const match = line.match(/^(.+?):(\d+):(.*)$/);
-        if (match) {
-          results.push({
-            file: match[1].replace(this.workDir + '/', ''),
-            line: parseInt(match[2]),
-            content: match[3], // Preserve indentation
-            match: pattern,
-          });
-        }
-        // Also handle context lines (file-linenum-content format)
-        const contextMatch = line.match(/^(.+?)-(\d+)-(.*)$/);
-        if (contextMatch) {
-          results.push({
-            file: contextMatch[1].replace(this.workDir + '/', ''),
-            line: parseInt(contextMatch[2]),
-            content: contextMatch[3], // Preserve indentation
-            match: '', // Context line, not a match
-          });
+        if (hasLineNumbers) {
+          const match = line.match(/^(.+?):(\d+):(.*)$/);
+          if (match) {
+            results.push({
+              file: match[1].replace(this.workDir + '/', ''),
+              line: parseInt(match[2]),
+              content: match[3], // Preserve indentation
+              match: pattern,
+            });
+          }
+          // Also handle context lines (file-linenum-content format)
+          const contextMatch = line.match(/^(.+?)-(\d+)-(.*)$/);
+          if (contextMatch) {
+            results.push({
+              file: contextMatch[1].replace(this.workDir + '/', ''),
+              line: parseInt(contextMatch[2]),
+              content: contextMatch[3], // Preserve indentation
+              match: '', // Context line, not a match
+            });
+          }
+        } else {
+          // Without line numbers: file:content
+          const match = line.match(/^(.+?):(.*)$/);
+          if (match) {
+            results.push({
+              file: match[1].replace(this.workDir + '/', ''),
+              line: 0, // Unknown line number
+              content: match[2], // Preserve indentation
+              match: pattern,
+            });
+          }
         }
       }
     } catch {

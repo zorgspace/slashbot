@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { ScheduleAction, NotifyAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 export async function executeSchedule(
   action: ScheduleAction,
@@ -15,14 +15,14 @@ export async function executeSchedule(
   const isPrompt = !!action.prompt;
   const content = action.prompt || action.command || '';
 
-  display.schedule(action.name, action.cron);
-  if (isPrompt) {
-    display.thinking(`AI-powered task: ${content.slice(0, 50)}...`);
-  }
-
   await handlers.onSchedule(action.cron, content, action.name, { isPrompt });
 
-  display.success(`Scheduled: ${action.cron}${isPrompt ? ' (AI task)' : ''}`);
+  display.appendAssistantMessage(
+    formatToolAction('Schedule', `${action.name}, "${action.cron}"`, {
+      success: true,
+      summary: isPrompt ? 'AI task' : undefined,
+    }),
+  );
 
   return {
     action: `Schedule: ${action.name}`,
@@ -46,13 +46,14 @@ export async function executeNotify(
   }
 
   const targetInfo = action.target ? ` to ${action.target}` : ' to all';
-  display.thinking(`Sending${targetInfo}...`);
 
   try {
     const result = await handlers.onNotify(action.message, action.target);
 
     if (result.sent.length > 0) {
-      display.success(`Sent to: ${result.sent.join(', ')}`);
+      display.appendAssistantMessage(
+        formatToolAction('Notify', targetInfo.trim(), { success: true, summary: result.sent.join(', ') }),
+      );
     }
     if (result.failed.length > 0) {
       display.error(`Failed: ${result.failed.join(', ')}`);
@@ -66,7 +67,9 @@ export async function executeNotify(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Notify failed: ${errorMsg}`);
+    display.appendAssistantMessage(
+      formatToolAction('Notify', targetInfo.trim(), { success: false, summary: errorMsg }),
+    );
     return {
       action: 'Notify',
       success: false,

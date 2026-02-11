@@ -4,6 +4,7 @@
  * Core prompt and provider hints are now contributed by the core-prompt plugin.
  */
 
+import { readdirSync } from 'fs';
 import type { PromptContribution, ContextProvider } from '../../../plugins/plugin-types';
 
 export class PromptAssembler {
@@ -64,6 +65,16 @@ export class PromptAssembler {
           prompt += `\n\n# ${contribution.title}\n${content}`;
         }
       }
+    }
+
+    // Add project context dynamically
+    const cwd = process.cwd();
+    try {
+      const files = readdirSync(cwd).sort();
+      const fileList = files.map(f => `- ${f}`).join('\n');
+      prompt += `\n\n# Project Context\nDirectory: ${cwd}\n\nFiles in directory:\n${fileList}`;
+    } catch (error) {
+      // If can't read, skip
     }
 
     // Add dynamic context from providers

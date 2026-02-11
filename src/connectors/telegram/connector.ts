@@ -10,7 +10,7 @@
  */
 
 import { Telegraf } from 'telegraf';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from '../base';
 import { getTranscriptionService } from '../../plugins/transcription/services/TranscriptionService';
 import { imageBuffer } from '../../plugins/filesystem/services/ImageBuffer';
@@ -136,7 +136,7 @@ export class TelegramConnector implements Connector {
 
           // Hide cursor and transcribe
           process.stdout.write('\x1b[?25l\r\x1b[K');
-          display.connector('telegram', 'transcribe');
+          display.appendAssistantMessage(formatToolAction('Telegram', 'transcribe'));
           const result = await transcriptionService.transcribeFromUrl(fileUrl);
 
           if (!result || !result.text) {
@@ -145,10 +145,10 @@ export class TelegramConnector implements Connector {
             return;
           }
 
-          display.connectorResult(`"${result.text}"`);
+          display.appendAssistantMessage(formatToolAction('Telegram', 'transcribe', { success: true, summary: `"${result.text}"` }));
           process.stdout.write('\n'); // Add spacing before actions
 
-          // Process transcribed text (already displayed via display.connectorResult)
+          // Process transcribed text (already displayed above)
           const response = await this.messageHandler(result.text, 'telegram', {
             alreadyDisplayed: true,
             sessionId: `telegram:${chatId}`,
@@ -193,7 +193,6 @@ export class TelegramConnector implements Connector {
           const fileUrl = `https://api.telegram.org/file/bot${this.bot.telegram.token}/${file.file_path}`;
 
           // Download and convert to base64 data URL
-          display.connector('telegram', 'image');
           const imageResponse = await fetch(fileUrl);
           const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString('base64');
           const mimeType = file.file_path?.endsWith('.png') ? 'image/png' : 'image/jpeg';
@@ -201,7 +200,7 @@ export class TelegramConnector implements Connector {
 
           // Add to image buffer for vision context
           imageBuffer.push(dataUrl);
-          display.connectorResult(`${Math.round(imageBuffer64.length / 1024)}KB`);
+          display.appendAssistantMessage(formatToolAction('Telegram', 'image', { success: true, summary: `${Math.round(imageBuffer64.length / 1024)}KB` }));
 
           // Use caption or default prompt
           const message = ctx.message.caption || 'What is in this image?';
@@ -226,8 +225,7 @@ export class TelegramConnector implements Connector {
 
     // Handle errors
     this.bot.catch(err => {
-      display.connector('telegram', 'error');
-      display.error(String(err));
+      display.appendAssistantMessage(formatToolAction('Telegram', 'error', { success: false, summary: String(err) }));
     });
   }
 
@@ -255,9 +253,8 @@ export class TelegramConnector implements Connector {
     // Try to acquire lock - only one instance can run Telegram
     const lock = await acquireLock('telegram');
     if (!lock.acquired) {
-      display.connector('telegram', 'locked');
-      display.connectorResult(
-        `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}`,
+      display.appendAssistantMessage(
+        formatToolAction('Telegram', 'locked', { success: false, summary: `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}` }),
       );
       return;
     }
@@ -296,8 +293,7 @@ export class TelegramConnector implements Connector {
 
       // Launch bot in background (non-blocking)
       this.bot.launch().catch(err => {
-        display.connector('telegram', 'error');
-        display.error(String(err));
+        display.appendAssistantMessage(formatToolAction('Telegram', 'error', { success: false, summary: String(err) }));
         releaseLock('telegram');
         if (this.eventBus) {
           this.eventBus.emit({ type: 'connector:disconnected', source: 'telegram' });
@@ -310,8 +306,7 @@ export class TelegramConnector implements Connector {
       }
     } catch (error) {
       await releaseLock('telegram');
-      display.connector('telegram', 'error');
-      display.error(error instanceof Error ? error.message : String(error));
+      display.appendAssistantMessage(formatToolAction('Telegram', 'error', { success: false, summary: error instanceof Error ? error.message : String(error) }));
       throw error;
     }
   }

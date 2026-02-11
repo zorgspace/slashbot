@@ -16,9 +16,15 @@ export interface ActionHandlers {
 }
 
 export interface GrepOptions {
+  path?: string;
   glob?: string;
+  outputMode?: 'content' | 'files_with_matches' | 'count';
+  context?: number;
+  contextBefore?: number;
+  contextAfter?: number;
   caseInsensitive?: boolean;
   lineNumbers?: boolean;
+  headLimit?: number;
   multiline?: boolean;
   [key: string]: unknown;
 }

@@ -1,7 +1,7 @@
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { MCPToolAction } from './types';
 import type { MCPManager } from './manager';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 let mcpManager: MCPManager | null = null;
 
@@ -23,7 +23,7 @@ export async function executeMCPTool(
   }
 
   const { toolName, serverName, args } = action;
-  display.tool(`MCP (${serverName})`, toolName);
+  const detail = `${serverName}/${toolName}`;
 
   try {
     const result = await mcpManager.callTool(serverName, toolName, args);
@@ -49,7 +49,9 @@ export async function executeMCPTool(
     output = output.trim() || JSON.stringify(result);
 
     if ((result as any).isError) {
-      display.error(`MCP tool error: ${output.slice(0, 200)}`);
+      display.appendAssistantMessage(
+        formatToolAction('MCP', detail, { success: false, summary: output.slice(0, 80) }),
+      );
       return {
         action: `MCP: ${toolName}`,
         success: false,
@@ -61,7 +63,9 @@ export async function executeMCPTool(
     // Truncate long results
     const truncated = output.length > 5000 ? output.slice(0, 5000) + '\n... (truncated)' : output;
 
-    display.result(`${output.length} chars`);
+    display.appendAssistantMessage(
+      formatToolAction('MCP', detail, { success: true, summary: `${output.length} chars` }),
+    );
     return {
       action: `MCP: ${toolName}`,
       success: true,
@@ -69,7 +73,9 @@ export async function executeMCPTool(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`MCP tool failed: ${errorMsg}`);
+    display.appendAssistantMessage(
+      formatToolAction('MCP', detail, { success: false, summary: errorMsg }),
+    );
     return {
       action: `MCP: ${toolName}`,
       success: false,

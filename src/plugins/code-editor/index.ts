@@ -92,8 +92,21 @@ export class CodeEditorPlugin implements Plugin {
           onGrep: async (pattern: string, options?: any) => {
             const codeEditor = getCodeEditor();
             const results = await codeEditor.grep(pattern, options?.glob, options);
-            if (results.length === 0) return '';
-            return results.map((r: any) => `${r.file}:${r.line}: ${r.content}`).join('\n');
+
+            if (results.length === 0) {
+              return options?.outputMode === 'count' ? '0' : '';
+            }
+
+            switch (options?.outputMode) {
+              case 'count':
+                return results.length.toString();
+              case 'files_with_matches':
+                const uniqueFiles = [...new Set(results.map((r: any) => r.file))];
+                return uniqueFiles.join('\n');
+              case 'content':
+              default:
+                return results.map((r: any) => `${r.file}:${r.line}: ${r.content}`).join('\n');
+            }
           },
         },
         execute: executeGrep,

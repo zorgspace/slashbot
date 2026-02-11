@@ -18,7 +18,7 @@ import {
   ThreadAutoArchiveDuration,
   TextChannel,
 } from 'discord.js';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from '../base';
 import { getTranscriptionService } from '../../plugins/transcription/services/TranscriptionService';
 import { imageBuffer } from '../../plugins/filesystem/services/ImageBuffer';
@@ -72,8 +72,7 @@ export class DiscordConnector implements Connector {
 
   private setupHandlers(token: string): void {
     this.client.once('ready', () => {
-      display.connector('discord', 'connected');
-      display.connectorResult(this.client.user?.tag || 'unknown');
+      display.appendAssistantMessage(formatToolAction('Discord', 'connected', { success: true, summary: this.client.user?.tag || 'unknown' }));
       if (this.eventBus) {
         this.eventBus.emit({ type: 'connector:connected', source: 'discord' });
       }
@@ -130,7 +129,6 @@ export class DiscordConnector implements Connector {
           // Process images and add to context
           for (const imgAtt of imageAttachments.values()) {
             try {
-              display.connector('discord', 'image');
               const imageResponse = await fetch(imgAtt.url);
               const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString(
                 'base64',
@@ -138,7 +136,7 @@ export class DiscordConnector implements Connector {
               const mimeType = imgAtt.contentType || 'image/jpeg';
               const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
               imageBuffer.push(dataUrl);
-              display.connectorResult(`${Math.round(imageBuffer64.length / 1024)}KB`);
+              display.appendAssistantMessage(formatToolAction('Discord', 'image', { success: true, summary: `${Math.round(imageBuffer64.length / 1024)}KB` }));
             } catch (imgErr) {
               display.error(`Failed to download: ${imgErr}`);
             }
@@ -160,7 +158,7 @@ export class DiscordConnector implements Connector {
               return;
             }
 
-            display.connector('discord', 'transcribe');
+            display.appendAssistantMessage(formatToolAction('Discord', 'transcribe'));
             const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
 
             if (!result || !result.text) {
@@ -168,7 +166,7 @@ export class DiscordConnector implements Connector {
               return;
             }
 
-            display.connectorResult(`"${result.text}"`);
+            display.appendAssistantMessage(formatToolAction('Discord', 'transcribe', { success: true, summary: `"${result.text}"` }));
             textContent = result.text;
           }
 
@@ -207,8 +205,7 @@ export class DiscordConnector implements Connector {
     });
 
     this.client.on('error', err => {
-      display.connector('discord', 'error');
-      display.error(err.message);
+      display.appendAssistantMessage(formatToolAction('Discord', 'error', { success: false, summary: err.message }));
     });
 
     // Store token for start()
@@ -229,9 +226,8 @@ export class DiscordConnector implements Connector {
     // Try to acquire lock - only one instance can run Discord
     const lock = await acquireLock('discord');
     if (!lock.acquired) {
-      display.connector('discord', 'locked');
-      display.connectorResult(
-        `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}`,
+      display.appendAssistantMessage(
+        formatToolAction('Discord', 'locked', { success: false, summary: `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}` }),
       );
       return;
     }
@@ -244,8 +240,7 @@ export class DiscordConnector implements Connector {
       }
     } catch (error) {
       await releaseLock('discord');
-      display.connector('discord', 'error');
-      display.error(error instanceof Error ? error.message : String(error));
+      display.appendAssistantMessage(formatToolAction('Discord', 'error', { success: false, summary: error instanceof Error ? error.message : String(error) }));
       throw error;
     }
   }

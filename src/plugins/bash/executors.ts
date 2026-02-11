@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { BashAction, ExecAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 /**
  * Execute a shell command (handles both bash and exec action types)
@@ -16,10 +16,6 @@ export async function executeShellCommand(
 ): Promise<ActionResult | null> {
   const handler = handlers.onBash || handlers.onExec;
   if (!handler) return null;
-
-  // Display action with optional description
-  const desc = options?.description ? ` (${options.description})` : '';
-  display.bash(command + desc);
 
   // Execute using available handler
   const output = await (handlers.onBash
@@ -44,8 +40,10 @@ export async function executeShellCommand(
   const isError =
     processedOutput?.startsWith('Error:') || processedOutput?.includes('Command blocked');
 
-  // Display result
-  display.bashResult(command, processedOutput, isError ? 1 : 0);
+  const desc = options?.description ? ` (${options.description})` : '';
+  display.appendAssistantMessage(
+    formatToolAction('Exec', command + desc, { success: !isError, summary: isError ? 'exit 1' : undefined }),
+  );
 
   return {
     action: `Bash: ${command}`,

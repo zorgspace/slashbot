@@ -1,6 +1,6 @@
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { GitStatusAction, GitDiffAction, GitLogAction, GitCommitAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 async function runGit(
   args: string[],
@@ -27,10 +27,9 @@ export async function executeGitStatus(
   _action: GitStatusAction,
   _handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
-  display.tool('Git', 'status');
-
   const result = await runGit(['status', '--short', '--branch']);
   if (result.exitCode !== 0) {
+    display.appendAssistantMessage(formatToolAction('Git', 'status', { success: false, summary: 'not a git repo' }));
     return {
       action: 'GitStatus',
       success: false,
@@ -40,14 +39,13 @@ export async function executeGitStatus(
   }
 
   const output = result.stdout || 'Clean working tree';
-  // Truncate to max 10 lines
   const lines = output.split('\n');
   const truncated =
     lines.length > 10
       ? lines.slice(0, 10).join('\n') + `\n... (truncated ${lines.length - 10} more lines)`
       : output;
 
-  display.result(truncated);
+  display.appendAssistantMessage(formatToolAction('Git', 'status', { success: true }));
   return { action: 'GitStatus', success: true, result: truncated };
 }
 
@@ -58,22 +56,17 @@ export async function executeGitDiff(
   const args = ['diff'];
   if (action.staged) args.push('--staged');
   if (action.ref) args.push(action.ref);
-
-  display.tool(
-    'Git',
-    `diff${action.staged ? ' --staged' : ''}${action.ref ? ' ' + action.ref : ''}`,
-  );
+  const detail = `diff${action.staged ? ' --staged' : ''}${action.ref ? ' ' + action.ref : ''}`;
 
   const result = await runGit(args);
   const output = result.stdout || 'No differences found';
-  // Truncate long diffs
   const lines = output.split('\n');
   const truncated =
     lines.length > 50
       ? lines.slice(0, 50).join('\n') + `\n... (truncated ${lines.length - 50} more lines)`
       : output;
 
-  display.result(truncated);
+  display.appendAssistantMessage(formatToolAction('Git', detail, { success: true }));
   return { action: 'GitDiff', success: true, result: truncated };
 }
 
@@ -82,14 +75,15 @@ export async function executeGitLog(
   _handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
   const count = action.count || 10;
-  display.tool('Git', `log -${count}`);
-
   const result = await runGit(['log', `--oneline`, `-${count}`]);
   if (result.exitCode !== 0) {
+    display.appendAssistantMessage(formatToolAction('Git', `log -${count}`, { success: false }));
     return { action: 'GitLog', success: false, result: 'Failed', error: result.stderr };
   }
 
-  display.result(`${result.stdout.split('\n').length} commits`);
+  display.appendAssistantMessage(
+    formatToolAction('Git', `log -${count}`, { success: true, summary: `${result.stdout.split('\n').length} commits` }),
+  );
   return { action: 'GitLog', success: true, result: result.stdout || 'No commits' };
 }
 
@@ -97,12 +91,13 @@ export async function executeGitCommit(
   action: GitCommitAction,
   _handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
-  display.tool('Git', `commit: ${action.message.slice(0, 60)}`);
+  const detail = `commit: ${action.message.slice(0, 60)}`;
 
   // Stage files if specified, otherwise stage all changes
   if (action.files && action.files.length > 0) {
     const addResult = await runGit(['add', ...action.files]);
     if (addResult.exitCode !== 0) {
+      display.appendAssistantMessage(formatToolAction('Git', detail, { success: false, summary: 'stage failed' }));
       return {
         action: `GitCommit: ${action.message}`,
         success: false,
@@ -117,7 +112,7 @@ export async function executeGitCommit(
   // Commit
   const result = await runGit(['commit', '-m', action.message]);
   if (result.exitCode !== 0) {
-    display.error('Commit failed: ' + result.stderr);
+    display.appendAssistantMessage(formatToolAction('Git', detail, { success: false, summary: 'commit failed' }));
     return {
       action: `GitCommit: ${action.message}`,
       success: false,
@@ -126,6 +121,6 @@ export async function executeGitCommit(
     };
   }
 
-  display.result(result.stdout);
+  display.appendAssistantMessage(formatToolAction('Git', detail, { success: true }));
   return { action: `GitCommit: ${action.message}`, success: true, result: result.stdout };
 }

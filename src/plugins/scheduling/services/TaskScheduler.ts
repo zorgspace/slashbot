@@ -6,7 +6,7 @@
  * Tasks are stored locally per project in .slashbot/tasks.json
  */
 
-import { display } from '../../../core/ui';
+import { display, formatToolAction } from '../../../core/ui';
 import {
   parseCron,
   matchesCron,
@@ -441,7 +441,7 @@ export class TaskScheduler {
     }
 
     // Display task start
-    display.schedule(task.name, describeCron(task.cron));
+    display.appendAssistantMessage(formatToolAction('Schedule', `${task.name}, "${describeCron(task.cron)}"`));
 
     let success = false;
     let output = '';

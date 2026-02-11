@@ -1,7 +1,7 @@
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { TodoWriteAction, TodoReadAction } from './types';
 import { todoStore } from './store';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 /** Optional callback for push-notifying completed todos to connectors */
 let notifyCallback: ((message: string, target?: string) => Promise<void>) | null = null;
@@ -16,21 +16,6 @@ export async function executeTodoWrite(
 ): Promise<ActionResult | null> {
   todoStore.setAll(action.todos);
   const summary = todoStore.getSummary();
-
-  const statuses = {
-    pending: summary.pending,
-    in_progress: summary.inProgress,
-    completed: summary.completed,
-  } as const;
-
-  const statusLines = Object.entries(statuses)
-    .filter(([, count]: [string, number]) => count > 0)
-    .map(([status, count]: [string, number]) => {
-      const icon =
-        status === 'completed' ? '\u2713' : status === 'in_progress' ? '\u25B6' : '\u25CB';
-      return `[${icon} ${status.replace('_', ' ').toLowerCase()}] ${count}`;
-    })
-    .join('\n');
 
   // Update persistent task list panel above input
   display.updateNotificationList(
@@ -67,7 +52,12 @@ export async function executeTodoRead(
 ): Promise<ActionResult | null> {
   const todos = todoStore.getAll(action.filter);
 
-  display.tool('TodoRead', action.filter ? `filter: ${action.filter}` : 'all');
+  display.appendAssistantMessage(
+    formatToolAction('TodoRead', action.filter ? `filter: ${action.filter}` : 'all', {
+      success: true,
+      summary: `${todos.length} items`,
+    }),
+  );
 
   if (todos.length === 0) {
     return {

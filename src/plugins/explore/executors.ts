@@ -7,7 +7,7 @@
 
 import type { ActionResult, ActionHandlers, GrepOptions } from '../../core/actions/types';
 import type { ExploreAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 interface SearchWorker {
   name: string;
@@ -351,7 +351,7 @@ export async function executeExplore(
   const depth = action.depth || 'medium';
   const query = action.query;
 
-  display.tool('Explore', `"${query}" in ${paths.join(', ')} (${depth})`);
+  const detail = `"${query}" in ${paths.join(', ')} (${depth})`;
 
   // Generate workers for each path
   const allWorkers: SearchWorker[] = [];
@@ -426,7 +426,9 @@ export async function executeExplore(
     const fileCount = sortedFiles.filter(f => f !== '_other').length;
     const summary = `Found ${totalMatches} matches in ${fileCount} files (${duration}ms, ${allWorkers.length} workers)`;
 
-    display.result(summary);
+    display.appendAssistantMessage(
+      formatToolAction('Explore', detail, { success: true, summary: `${totalMatches} matches in ${fileCount} files` }),
+    );
 
     const output =
       outputLines.length > 0
@@ -440,7 +442,9 @@ export async function executeExplore(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Explore failed: ${errorMsg}`);
+    display.appendAssistantMessage(
+      formatToolAction('Explore', detail, { success: false, summary: errorMsg }),
+    );
     return {
       action: `Explore: ${query}`,
       success: false,

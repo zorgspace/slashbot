@@ -12,7 +12,7 @@ import { injectable, inject } from 'inversify';
 import { TYPES } from '../../../core/di/types';
 import type { EventBus } from '../../../core/events/EventBus';
 import type { GrokClient } from '../../../core/api';
-import { display } from '../../../core/ui';
+import { display, formatToolAction } from '../../../core/ui';
 import { HOME_SLASHBOT_DIR } from '../../../core/config/constants';
 import {
   type FullHeartbeatConfig,
@@ -283,7 +283,7 @@ export class HeartbeatService {
     if (result.type === 'ok') {
       const showOk = visibility.showOk ?? false;
       if (showOk || result.content) {
-        display.heartbeatResult(true);
+        display.appendAssistantMessage(formatToolAction('Heartbeat', 'reflection', { success: true }));
       } else {
         display.muted('  ⎿  OK');
       }
@@ -294,7 +294,7 @@ export class HeartbeatService {
         const preview = lines.join(' ').slice(0, 100);
         display.warningText(`  ⎿  ${preview}${lines.length > 5 ? '...' : ''}`);
       }
-      display.heartbeatResult(false);
+      display.appendAssistantMessage(formatToolAction('Heartbeat', 'reflection', { success: false }));
     }
   }
 

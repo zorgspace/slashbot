@@ -382,16 +382,8 @@ export class TUIApp implements UIOutput {
     this.chatPanel.appendAssistantMessage(content);
   }
 
-  startAction(content: StyledText | string): void {
-    this.chatPanel.startAction(content, theme.accent);
-  }
-
-  appendActionContent(content: StyledText | string): void {
-    this.chatPanel.appendActionContent(content);
-  }
-
-  completeAction(content: StyledText | string): void {
-    this.chatPanel.completeAction(content);
+  appendAssistantMarkdown(text: string): void {
+    this.chatPanel.appendAssistantMarkdown(text);
   }
 
   startResponse(): void {
@@ -400,22 +392,6 @@ export class TUIApp implements UIOutput {
 
   appendResponse(chunk: string): void {
     this.chatPanel.appendResponse(chunk);
-  }
-
-  startAssistantBlock(): void {
-    this.chatPanel.startAssistantBlock();
-  }
-
-  appendAssistantBlockLine(content: StyledText | string): void {
-    this.chatPanel.appendAssistantBlockLine(content);
-  }
-
-  addAssistantBlockCode(content: string, filetype?: string): void {
-    this.chatPanel.addAssistantBlockCode(content, filetype);
-  }
-
-  endAssistantBlock(): void {
-    this.chatPanel.endAssistantBlock();
   }
 
   appendCodeBlock(content: string, filetype?: string): void {

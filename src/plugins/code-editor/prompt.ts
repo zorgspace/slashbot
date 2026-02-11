@@ -6,7 +6,7 @@ export const CODE_EDITOR_PROMPT = [
   '## Search & Navigation Tools',
   '',
   '## grep — Search file contents with regex',
-  'Parameters: `pattern` (required), `path` (optional), `glob` (file filter), `case_insensitive`, `context` (lines around match), `output_mode` (content/files_with_matches/count).',
+  'Parameters: `pattern` (required), `path` (optional), `glob` (file filter), `output_mode` (content/files_with_matches/count), `context` (lines around match), `context_before` (lines before), `context_after` (lines after), `case_insensitive`, `line_numbers`, `head_limit`, `multiline`.',
   '',
   '## glob — Find files by pattern',
   'Parameters: `pattern` (required, e.g. "**/*.ts"), `path` (optional, search directory).',

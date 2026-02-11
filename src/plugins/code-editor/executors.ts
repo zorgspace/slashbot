@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers, GrepOptions } from '../../core/actions/types';
 import type { GlobAction, GrepAction, LSAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 export async function executeGlob(
   action: GlobAction,
@@ -13,18 +13,12 @@ export async function executeGlob(
   if (!handlers.onGlob) return null;
 
   const pathInfo = action.path ? `, "${action.path}"` : '';
-  display.tool('Glob', `"${action.pattern}"${pathInfo}`);
+  const detail = `"${action.pattern}"${pathInfo}`;
 
   try {
     const files = await handlers.onGlob(action.pattern, action.path);
-
-    if (files.length === 0) {
-      display.result('No files found');
-    } else {
-      display.result(
-        `Found ${files.length} file${files.length > 1 ? 's' : ''}\n${files.join('\n')}`,
-      );
-    }
+    const summary = files.length === 0 ? 'no matches' : `${files.length} file${files.length > 1 ? 's' : ''}`;
+    display.appendAssistantMessage(formatToolAction('Glob', detail, { success: true, summary }));
 
     return {
       action: `Glob: ${action.pattern}`,
@@ -33,7 +27,7 @@ export async function executeGlob(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Glob failed: ${errorMsg}`);
+    display.appendAssistantMessage(formatToolAction('Glob', detail, { success: false, summary: errorMsg }));
     return {
       action: `Glob: ${action.pattern}`,
       success: false,
@@ -61,8 +55,7 @@ export async function executeGrep(
   const optsStr = opts.length > 0 ? ` ${opts.join(' ')}` : '';
   const pathInfo = action.path ? ` in ${action.path}` : '';
   const globInfo = action.glob ? ` (${action.glob})` : '';
-
-  display.grep(action.pattern + optsStr + pathInfo + globInfo);
+  const detail = action.pattern + optsStr + pathInfo + globInfo;
 
   // Build options for handler
   const grepOptions: GrepOptions = {
@@ -80,8 +73,9 @@ export async function executeGrep(
 
   const grepResults = await handlers.onGrep(action.pattern, grepOptions);
   const lines = grepResults ? grepResults.split('\n').filter(l => l.trim()) : [];
+  const summary = lines.length === 0 ? 'no matches' : `${lines.length} match${lines.length > 1 ? 'es' : ''}`;
 
-  display.grepResult(action.pattern, action.glob, lines.length, grepResults || undefined);
+  display.appendAssistantMessage(formatToolAction('Grep', detail, { success: true, summary }));
 
   return {
     action: `Grep: ${action.pattern}`,
@@ -97,18 +91,12 @@ export async function executeLS(
   if (!handlers.onLS) return null;
 
   const ignoreInfo = action.ignore?.length ? ` (ignore: ${action.ignore.join(', ')})` : '';
-  display.tool('LS', `${action.path}${ignoreInfo}`);
+  const detail = `${action.path}${ignoreInfo}`;
 
   try {
     const entries = await handlers.onLS(action.path, action.ignore);
-
-    if (entries.length === 0) {
-      display.result('Empty directory');
-    } else {
-      const preview = entries.slice(0, 3);
-      const more = entries.length > 3 ? `\n  ... and ${entries.length - 3} more` : '';
-      display.result(`${entries.length} entries\n${preview.join('\n')}${more}`);
-    }
+    const summary = entries.length === 0 ? 'empty' : `${entries.length} entries`;
+    display.appendAssistantMessage(formatToolAction('LS', detail, { success: true, summary }));
 
     return {
       action: `LS: ${action.path}`,
@@ -117,7 +105,7 @@ export async function executeLS(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`LS failed: ${errorMsg}`);
+    display.appendAssistantMessage(formatToolAction('LS', detail, { success: false, summary: errorMsg }));
     return {
       action: `ls: ${action.path}`,
       success: false,

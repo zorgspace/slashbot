@@ -15,6 +15,7 @@ import {
   RGBA,
   t,
   fg,
+  bold,
   type CliRenderer,
   type StyledText,
 } from '@opentui/core';
@@ -32,14 +33,6 @@ export class ChatPanel {
   private syntaxStyle: SyntaxStyle | null = null;
   private responseBuffer = '';
   private responseRenderable: TextRenderable | null = null;
-  private actionBox: BoxRenderable | null = null;
-  private actionTitleRenderable: TextRenderable | null = null;
-  private actionSpinnerTimer: ReturnType<typeof setInterval> | null = null;
-  private actionSpinnerFrame = 0;
-  private actionBaseChunks: any[] = [];
-  private actionLineCount = 0;
-  private static readonly MAX_ACTION_LINES = 5;
-  private assistantBlock: BoxRenderable | null = null;
 
   constructor(renderer: CliRenderer) {
     this.renderer = renderer;
@@ -76,31 +69,18 @@ export class ChatPanel {
   }
 
   append(text: string): void {
-    if (this.actionBox) {
-      this.appendActionContent(text);
-      return;
-    }
     this.addLine(text);
   }
 
   appendStyled(content: StyledText | string): void {
-    if (this.actionBox) {
-      this.appendActionContent(content);
-      return;
-    }
     this.addLine(content);
   }
 
   appendUserMessage(value: string): void {
-    this.closeActionBox();
     this.addBorderedLine(t`${fg(theme.white)(value)}`, theme.primary);
   }
 
   appendAssistantMessage(content: StyledText | string): void {
-    if (this.actionBox) {
-      this.appendActionContent(content);
-      return;
-    }
     const styledContent = typeof content === 'string' ? t`${fg(theme.white)(content)}` : content;
     this.addBorderedLine(styledContent, theme.accent);
   }
@@ -108,7 +88,6 @@ export class ChatPanel {
   addCodeBlock(content: string, filetype?: string): void {
     if (this.syntaxStyle && filetype) {
       try {
-        const lineCount = content.split('\n').length;
         const code = new CodeRenderable(this.renderer, {
           id: `chat-code-${this.lineCounter++}`,
           content,
@@ -217,182 +196,103 @@ export class ChatPanel {
   }
 
   /**
-   * Start an action block with dark bg, left border
-   */
-  startAction(content: StyledText | string, _borderColor: string): void {
-    this.closeActionBox();
-    const styled = typeof content === 'string' ? t`${fg(theme.white)(content)}` : content;
-    this.actionLineCount = 0;
-    this.lineCounter++;
-
-    this.actionTitleRenderable = new TextRenderable(this.renderer, {
-      id: `chat-action-title-${this.lineCounter}`,
-      content: styled,
-    });
-
-    this.actionBox = new BoxRenderable(this.renderer, {
-      id: `chat-action-${this.lineCounter}`,
-      ...LeftBorder,
-      borderColor: theme.grey, // grey for pending actions
-      paddingLeft: 2,
-      flexDirection: 'column',
-    });
-    this.actionBox.add(this.actionTitleRenderable);
-    this.scrollBox.add(this.actionBox);
-    this.pruneLines();
-  }
-
-  /**
-   * Add a content line to the current action block (max 5 lines)
-   */
-  appendActionContent(content: StyledText | string): void {
-    if (!this.actionBox) {
-      const styled = typeof content === 'string' ? t`${fg(theme.white)(content)}` : content;
-      this.addBorderedLine(styled, theme.accent);
-      return;
-    }
-    if (this.actionLineCount >= ChatPanel.MAX_ACTION_LINES) {
-      return;
-    }
-    this.actionLineCount++;
-    this.lineCounter++;
-    const line = new TextRenderable(this.renderer, {
-      id: `chat-action-line-${this.lineCounter}`,
-      content: typeof content === 'string' ? content : content,
-    });
-    this.actionBox.add(line);
-    if (this.actionLineCount === ChatPanel.MAX_ACTION_LINES) {
-      this.lineCounter++;
-      const truncLine = new TextRenderable(this.renderer, {
-        id: `chat-action-trunc-${this.lineCounter}`,
-        content: t`${fg(theme.muted)('...')}`,
-      });
-      this.actionBox.add(truncLine);
-    }
-  }
-
-  /**
-   * Complete a pending action — update title and border color based on status
-   */
-  completeAction(content: StyledText | string): void {
-    if (this.actionTitleRenderable) {
-      this.actionTitleRenderable.content = typeof content === 'string' ? content : content;
-      this.actionTitleRenderable = null;
-    } else {
-      const styled = typeof content === 'string' ? t`${fg(theme.white)(content)}` : content;
-      this.addBorderedLine(styled, theme.accent);
-      return;
-    }
-
-    // Update border color based on status
-    if (this.actionBox) {
-      const status = this.getActionStatus(content);
-      this.actionBox.borderColor = status === 'error' ? theme.error : theme.accent;
-    }
-
-    // actionBox kept alive — closed by closeActionBox() when new section starts
-  }
-
-  closeActionBox(): void {
-    this.clearActionSpinner();
-    this.actionBox = null;
-    this.actionTitleRenderable = null;
-    this.actionLineCount = 0;
-  }
-
-  private clearActionSpinner(): void {
-    if (this.actionSpinnerTimer) {
-      clearInterval(this.actionSpinnerTimer);
-      this.actionSpinnerTimer = null;
-    }
-    this.actionSpinnerFrame = 0;
-  }
-
-  private getActionStatus(content: StyledText | string): 'success' | 'error' | 'unknown' {
-    const text = typeof content === 'string' ? content : content.chunks.map(c => c.text).join('');
-    if (text.includes('\u2717')) return 'error';
-    if (text.includes('\u2713')) return 'success';
-    return 'unknown';
-  }
-
-  /**
-   * Scroll to bottom — call only on action start/finish, not on every line
+   * Scroll to bottom
    */
   scrollToBottom(): void {
     this.scrollBox.scrollTo(Infinity);
   }
 
   /**
-   * Start a bordered block for grouped assistant text (e.g. renderMarkdown)
+   * Render markdown text inside a single bordered block.
+   * Self-contained: creates the box, parses markdown, adds code blocks inline.
    */
-  startAssistantBlock(): void {
-    this.closeActionBox();
+  appendAssistantMarkdown(text: string): void {
     this.lineCounter++;
-    this.assistantBlock = new BoxRenderable(this.renderer, {
-      id: `chat-assistant-block-${this.lineCounter}`,
+    const block = new BoxRenderable(this.renderer, {
+      id: `chat-assistant-md-${this.lineCounter}`,
       ...LeftBorder,
       borderColor: theme.accent,
       paddingLeft: 2,
       marginTop: 1,
       flexDirection: 'column',
     });
-    this.scrollBox.add(this.assistantBlock);
-  }
 
-  /**
-   * Append a styled line to the current assistant block
-   */
-  appendAssistantBlockLine(content: StyledText | string): void {
-    if (!this.assistantBlock) {
-      // Fallback if no block is open
-      const styled = typeof content === 'string' ? t`${fg(theme.white)(content)}` : content;
-      this.addBorderedLine(styled, theme.accent);
-      return;
-    }
-    this.lineCounter++;
-    const line = new TextRenderable(this.renderer, {
-      id: `chat-block-line-${this.lineCounter}`,
-      content: typeof content === 'string' ? content : content,
-    });
-    this.assistantBlock.add(line);
-  }
+    const lines = text.split('\n');
+    let inCodeBlock = false;
+    let codeBlockLang = '';
+    let codeBlockLines: string[] = [];
 
-  /**
-   * Append a code block inside the current assistant block
-   */
-  addAssistantBlockCode(content: string, filetype?: string): void {
-    if (!this.assistantBlock) {
-      this.addCodeBlock(content, filetype);
-      return;
-    }
-    if (this.syntaxStyle && filetype) {
-      try {
-        const code = new CodeRenderable(this.renderer, {
-          id: `chat-block-code-${this.lineCounter++}`,
-          content,
-          filetype,
-          syntaxStyle: this.syntaxStyle,
-          fg: theme.white,
-        });
-        this.assistantBlock.add(code);
-      } catch {
-        // Fallback: add lines directly
-        for (const line of content.split('\n')) {
-          this.appendAssistantBlockLine(t`  ${fg(theme.white)(line)}`);
+    const addTextLine = (content: StyledText | string) => {
+      this.lineCounter++;
+      const line = new TextRenderable(this.renderer, {
+        id: `chat-md-line-${this.lineCounter}`,
+        content: typeof content === 'string' ? content : content,
+      });
+      block.add(line);
+    };
+
+    const addCode = (content: string, filetype?: string) => {
+      if (this.syntaxStyle && filetype) {
+        try {
+          const code = new CodeRenderable(this.renderer, {
+            id: `chat-md-code-${this.lineCounter++}`,
+            content,
+            filetype,
+            syntaxStyle: this.syntaxStyle,
+            fg: theme.white,
+          });
+          block.add(code);
+          return;
+        } catch {
+          // fallback below
         }
       }
-    } else {
-      for (const line of content.split('\n')) {
-        this.appendAssistantBlockLine(t`  ${fg(theme.white)(line)}`);
+      for (const codeLine of content.split('\n')) {
+        addTextLine(t`  ${fg(theme.white)(codeLine)}`);
+      }
+    };
+
+    for (const line of lines) {
+      if (line.startsWith('```')) {
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          codeBlockLang = line.slice(3).trim();
+          codeBlockLines = [];
+        } else {
+          addCode(codeBlockLines.join('\n'), codeBlockLang || undefined);
+          inCodeBlock = false;
+          codeBlockLang = '';
+          codeBlockLines = [];
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        codeBlockLines.push(line);
+        continue;
+      }
+
+      if (line.startsWith('### ')) {
+        addTextLine(t`${bold(fg(theme.accent)(line))}`);
+      } else if (line.startsWith('## ')) {
+        addTextLine(t`${bold(fg(theme.primary)(line))}`);
+      } else if (line.startsWith('# ')) {
+        addTextLine(t`${bold(fg(theme.accent)(line))}`);
+      } else if (line.startsWith('> ')) {
+        addTextLine(t`${fg(theme.muted)('\u2502 ' + line.slice(2))}`);
+      } else if (/^[-*] /.test(line)) {
+        addTextLine(t`${fg(theme.primary)('\u2022')} ${line.slice(2)}`);
+      } else {
+        addTextLine(t`${fg(theme.white)(line)}`);
       }
     }
-  }
 
-  /**
-   * End the current assistant block
-   */
-  endAssistantBlock(): void {
-    this.assistantBlock = null;
+    // Handle unclosed code block
+    if (inCodeBlock && codeBlockLines.length > 0) {
+      addCode(codeBlockLines.join('\n'), codeBlockLang || undefined);
+    }
+
+    this.scrollBox.add(block);
     this.pruneLines();
   }
 
@@ -400,7 +300,6 @@ export class ChatPanel {
    * Start streaming a response with violet left border
    */
   startResponse(): void {
-    this.closeActionBox();
     this.responseBuffer = '';
     this.lineCounter++;
     this.responseRenderable = new TextRenderable(this.renderer, {
