@@ -13,7 +13,6 @@ import { registerActionParser } from '../../core/actions/parser';
 import { TYPES } from '../../core/di/types';
 import { getAgentsParserConfigs } from './parser';
 import {
-  executeAgentSend,
   executeAgentStatus,
   executeAgentCreate,
   executeAgentUpdate,
@@ -36,6 +35,17 @@ export class AgentsPlugin implements Plugin {
 
   private context!: PluginContext;
   private service!: AgentOrchestratorService;
+
+  private resolveSenderAgentId(service: AgentOrchestratorService): string {
+    const fallback = service.getActiveAgentId() || service.listAgents()[0]?.id || '';
+    const client = this.context?.getGrokClient?.() as { getSessionId?: () => string } | null;
+    const sessionId = client?.getSessionId?.();
+    if (!sessionId) {
+      return fallback;
+    }
+    const fromAgent = service.listAgents().find(agent => agent.sessionId === sessionId);
+    return fromAgent?.id || fallback;
+  }
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
@@ -69,24 +79,6 @@ export class AgentsPlugin implements Plugin {
   getActionContributions(): ActionContribution[] {
     const service = this.service;
     return [
-      {
-        type: 'agent-send',
-        tagName: 'agent-send',
-        handler: {
-          onAgentSend: async (to: string, title: string, content: string) => {
-            const toId = service.resolveAgentId(to);
-            if (!toId) throw new Error(`Unknown agent: ${to}`);
-            const fromId = service.getActiveAgentId();
-            return await service.sendTask({
-              fromAgentId: fromId,
-              toAgentId: toId,
-              title,
-              content,
-            });
-          },
-        },
-        execute: executeAgentSend,
-      },
       {
         type: 'agent-status',
         tagName: 'agent-status',
@@ -189,22 +181,6 @@ export class AgentsPlugin implements Plugin {
         }),
       },
       {
-        name: 'agents_send',
-        description:
-          'Send a delegated task to another agent by id or name. Preferred over filesystem inspection for coordination.',
-        parameters: z.object({
-          to: z.string().describe('Target agent id or name (e.g. "agent-github" or "Agent 2")'),
-          title: z.string().describe('Short task title'),
-          content: z.string().describe('Detailed task instructions'),
-        }),
-        toAction: args => ({
-          type: 'agent-send',
-          to: args.to as string,
-          title: args.title as string,
-          content: args.content as string,
-        }),
-      },
-      {
         name: 'agents_list',
         description: 'List agents with current status fields for UI/RPC orchestration.',
         parameters: z.object({}),
@@ -252,7 +228,7 @@ export class AgentsPlugin implements Plugin {
       },
       {
         name: 'agents_delete',
-        description: 'Delete an agent by id or name (cannot delete the last remaining agent).',
+        description: 'Delete an agent by id or name.',
         parameters: z.object({
           agent: z.string().describe('Agent id or name to delete'),
         }),
@@ -292,12 +268,10 @@ export class AgentsPlugin implements Plugin {
           '- /agent status',
           '- /agent spawn <name> [responsibility]',
           '- /agent switch <agent-id|name>',
-          '- /agent send <to-agent> <task text>',
           '- /agent history <agent-id> [limit]',
           '',
           'Native orchestration tools (preferred):',
           '- `agents_status`',
-          '- `agents_send`',
           '- `agents_list`',
           '- `agents_create`',
           '- `agents_update`',
@@ -306,16 +280,9 @@ export class AgentsPlugin implements Plugin {
           '- `sessions_usage`',
           '- `sessions_compaction`',
           '',
-          'Action tag for delegation:',
-          '```',
-          '<agent-send to="agent-backend" title="Implement auth">',
-          'Build login + JWT refresh for API routes in src/server.',
-          '</agent-send>',
-          '```',
-          '',
           'Coordination policy:',
-          '- For agent routing/coordination, use `agents_status` and `agents_send` first.',
-          '- Do NOT use `bash`, `ls`, `glob`, or `read_file` just to discover agent state.',
+          '- For routing/coordination, use `agents_status` and `agents_list` when needed.',
+          '- Prefer direct execution tools for implementation tasks; coordinate only when blocked or delegating.',
           '',
           'Storage layout (OpenClaw-style, project-local):',
           '- .agents/agents.json',

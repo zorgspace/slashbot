@@ -1,7 +1,6 @@
 import { display, formatToolAction } from '../../core/ui';
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type {
-  AgentSendAction,
   AgentStatusAction,
   AgentCreateAction,
   AgentUpdateAction,
@@ -9,49 +8,6 @@ import type {
   AgentListAction,
   AgentRunAction,
 } from './types';
-
-export async function executeAgentSend(
-  action: AgentSendAction,
-  handlers: ActionHandlers,
-): Promise<ActionResult> {
-  try {
-    if (!handlers.onAgentSend) {
-      return {
-        action: 'agent-send',
-        success: false,
-        result: '',
-        error: 'Agent send handler not available',
-      };
-    }
-
-    const created = await handlers.onAgentSend(action.to, action.title || 'Task', action.content);
-    display.appendAssistantMessage(
-      formatToolAction('AgentSend', `${action.to}: ${action.title || 'Task'}`, {
-        success: true,
-        summary: created?.id || 'queued',
-      }),
-    );
-
-    return {
-      action: 'agent-send',
-      success: true,
-      result: `Task queued for ${action.to}`,
-    };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    display.appendAssistantMessage(
-      formatToolAction('AgentSend', `${action.to}: ${action.title || 'Task'}`, {
-        success: false,
-      }),
-    );
-    return {
-      action: 'agent-send',
-      success: false,
-      result: '',
-      error: msg,
-    };
-  }
-}
 
 export async function executeAgentStatus(
   _action: AgentStatusAction,
@@ -72,14 +28,14 @@ export async function executeAgentStatus(
     const agents = Array.isArray(payload?.agents) ? payload.agents : [];
 
     display.appendAssistantMessage(
-      formatToolAction('AgentsStatus', `active=${summary.activeAgentId || 'agent-1'}`, {
+      formatToolAction('AgentsStatus', `active=${summary.activeAgentId || 'none'}`, {
         success: true,
         summary: `${agents.length} agents`,
       }),
     );
 
     const lines = [
-      `Active: ${summary.activeAgentId || 'agent-1'}`,
+      `Active: ${summary.activeAgentId || 'none'}`,
       `Queue: ${summary.queued || 0} queued, ${summary.running || 0} running, ${summary.done || 0} done, ${summary.failed || 0} failed`,
       ...agents.map((agent: any) => {
         const poll = agent?.autoPoll ? 'poll=on' : 'poll=off';

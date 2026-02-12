@@ -3,28 +3,6 @@ import type { Action } from '../../core/actions/types';
 
 export function getAgentsParserConfigs(): ActionParserConfig[] {
   return [
-    {
-      tags: ['agent-send'],
-      selfClosingTags: [],
-      parse(content, { extractAttr }): Action[] {
-        const actions: Action[] = [];
-        const regex = /<agent-send\s+([^>]*)>([\s\S]*?)<\/agent-send>/gi;
-        let match: RegExpExecArray | null;
-        while ((match = regex.exec(content)) !== null) {
-          const fullTag = match[0];
-          const to = extractAttr(fullTag, 'to');
-          const title = extractAttr(fullTag, 'title');
-          const body = match[2]?.trim() || '';
-          if (!to || !body) continue;
-          actions.push({
-            type: 'agent-send',
-            to,
-            title: title || undefined,
-            content: body,
-          });
-        }
-        return actions;
-      },
     },
     {
       tags: ['agent-create'],
