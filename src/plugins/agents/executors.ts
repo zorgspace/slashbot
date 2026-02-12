@@ -6,8 +6,11 @@ import type {
   AgentUpdateAction,
   AgentDeleteAction,
   AgentListAction,
+  AgentTasksAction,
   AgentRunAction,
   AgentSendAction,
+  AgentVerifyAction,
+  AgentRecallAction,
 } from './types';
 
 export async function executeAgentStatus(
@@ -183,6 +186,40 @@ export async function executeAgentList(
   }
 }
 
+export async function executeAgentTasks(
+  action: AgentTasksAction,
+  handlers: ActionHandlers,
+): Promise<ActionResult> {
+  try {
+    if (!handlers.onAgentTasks) {
+      return {
+        action: 'agent-tasks',
+        success: false,
+        result: '',
+        error: 'Agent tasks handler not available',
+      };
+    }
+    const tasks = await handlers.onAgentTasks(action);
+    const list = Array.isArray(tasks) ? tasks : [];
+    const statusFilter = action.status ? ` status=${action.status}` : '';
+    return {
+      action: 'agent-tasks',
+      success: true,
+      result: [
+        `tasks=${list.length}${statusFilter}`,
+        ...list.map((task: any) => {
+          const verification =
+            task?.verificationStatus || (task?.status === 'done' ? 'unverified' : 'n/a');
+          return `${task?.id} [${task?.status}] verify=${verification} from=${task?.fromAgentId} to=${task?.toAgentId} title=${task?.title}`;
+        }),
+      ].join('\n'),
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { action: 'agent-tasks', success: false, result: '', error: msg };
+  }
+}
+
 export async function executeAgentRun(
   action: AgentRunAction,
   handlers: ActionHandlers,
@@ -231,5 +268,61 @@ export async function executeAgentSend(
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     return { action: 'agent-send', success: false, result: '', error: msg };
+  }
+}
+
+export async function executeAgentVerify(
+  action: AgentVerifyAction,
+  handlers: ActionHandlers,
+): Promise<ActionResult> {
+  try {
+    if (!handlers.onAgentVerify) {
+      return {
+        action: 'agent-verify',
+        success: false,
+        result: '',
+        error: 'Agent verify handler not available',
+      };
+    }
+    const verified = await handlers.onAgentVerify(action);
+    return {
+      action: 'agent-verify',
+      success: !!verified,
+      result: verified
+        ? `${verified.id} verification=${verified.verificationStatus}`
+        : 'Task not found or not verifiable',
+      error: verified ? undefined : `Cannot verify task ${action.taskId}`,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { action: 'agent-verify', success: false, result: '', error: msg };
+  }
+}
+
+export async function executeAgentRecall(
+  action: AgentRecallAction,
+  handlers: ActionHandlers,
+): Promise<ActionResult> {
+  try {
+    if (!handlers.onAgentRecall) {
+      return {
+        action: 'agent-recall',
+        success: false,
+        result: '',
+        error: 'Agent recall handler not available',
+      };
+    }
+    const recalled = await handlers.onAgentRecall(action);
+    return {
+      action: 'agent-recall',
+      success: !!recalled,
+      result: recalled
+        ? `Queued follow-up ${recalled.id} -> ${recalled.toAgentId}`
+        : 'Task not found or not recallable',
+      error: recalled ? undefined : `Cannot recall task ${action.taskId}`,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { action: 'agent-recall', success: false, result: '', error: msg };
   }
 }

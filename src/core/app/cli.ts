@@ -52,12 +52,20 @@ export function getMessageArg(): string | null {
 export async function handleCliArgs(version: string): Promise<boolean> {
   const args = process.argv.slice(2);
 
+  if (args[0] === 'gateway') {
+    const { handleGatewayCliCommand } = await import('../gateway/daemon');
+    if (await handleGatewayCliCommand(version, args)) {
+      return true;
+    }
+  }
+
   // Handle --help
   if (args.includes('--help') || args.includes('-h')) {
     display.violet('Slashbot - CLI Assistant powered by Grok');
     const helpContent = `${bold(fg(theme.primary)('Usage:'))}
   slashbot [options]
   slashbot login              Login setup
+  slashbot gateway ...        Manage gateway daemon
   slashbot -m "message"       Send a message and exit
 
 ${bold(fg(theme.primary)('Options:'))}

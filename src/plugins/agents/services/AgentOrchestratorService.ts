@@ -16,6 +16,7 @@ import type {
   AgentRoutingDecision,
   AgentTaskRunResult,
   AgentTaskStats,
+  AgentTaskVerificationStatus,
 } from './types';
 
 const DEFAULT_POLL_MS = 5000;
@@ -84,6 +85,10 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function isTaskVerificationStatus(value: unknown): value is AgentTaskVerificationStatus {
+  return value === 'unverified' || value === 'verified' || value === 'changes_requested';
+}
+
 function slugify(input: string): string {
   return input
     .toLowerCase()
@@ -105,6 +110,7 @@ function defaultArchitectPrompt(name: string, responsibility: string): string {
     'Delegate partial or full tasks to agents. For example if you have a github agent available, wait for the end of Developer agent then process it and send to github agent.',
     '- Never delegate to yourself.',
     'Require each worker to report completion evidence back to you before you mark the larger effort complete.',
+    'If a worker report is incomplete or changes are needed, explicitly request follow-up fixes (recall) before closing.',
     'Assign tasks after assessing queue and blockers; reroute quickly when blockers remain.',
     'The orchestrator owns the final user-facing completion signal only after verifying worker reports.',
   ].join('\n');
@@ -152,7 +158,7 @@ Execution policy:
 - Execute delegated work directly using repository/runtime tools.
 - Reproduce issues, implement fixes, and verify with concrete command/test evidence.
 - Keep changes scoped, minimal, and reversible.
-- Use coordination tools only when blocked by missing ownership or missing context.
+- Use <agent-send> only when blocked by missing ownership or missing context.
 - Never delegate to yourself.
 
 Reporting policy:
@@ -244,6 +250,7 @@ function templateForWorkspaceFile(params: {
             '- Do not implement code directly; orchestrate only.',
             '- Spawn specialists for implementation, then delegate with <agent-send>.',
             '- Require completion reports with verification evidence before closing work.',
+            '- If evidence is insufficient, recall the same specialist with clear follow-up instructions.',
           ]
         : [
             '- Execute delegated implementation work directly.',
@@ -261,6 +268,7 @@ function templateForWorkspaceFile(params: {
             '- Plan, delegate, and verify; never perform direct implementation.',
             '- Route tasks to the best specialist and track progress until completion.',
             '- Aggregate worker reports and provide final closure once evidence is sufficient.',
+            '- Request follow-up fixes/additions from specialists when verification fails or scope changes.',
           ]
         : [
             '- Execute delegated tasks fully from read to diff to apply to tests/deploy where appropriate.',
@@ -629,11 +637,41 @@ export class AgentOrchestratorService {
       }
       const raw = (await file.json()) as Partial<AgentTaskState>;
       const loadedTasks = Array.isArray(raw.tasks) ? raw.tasks : [];
-      const tasks = loadedTasks.filter(task => {
-        const from = typeof task?.fromAgentId === 'string' ? task.fromAgentId.trim() : '';
-        const to = typeof task?.toAgentId === 'string' ? task.toAgentId.trim() : '';
-        return !isRemovedLegacyConnectorAgentId(from) && !isRemovedLegacyConnectorAgentId(to);
-      });
+      const tasks = loadedTasks
+        .filter(task => {
+          const from = typeof task?.fromAgentId === 'string' ? task.fromAgentId.trim() : '';
+          const to = typeof task?.toAgentId === 'string' ? task.toAgentId.trim() : '';
+          return !isRemovedLegacyConnectorAgentId(from) && !isRemovedLegacyConnectorAgentId(to);
+        })
+        .map(task => {
+          const normalized = { ...(task as AgentTask) };
+          if (!isTaskVerificationStatus(normalized.verificationStatus)) {
+            normalized.verificationStatus =
+              normalized.status === 'done' ? 'unverified' : normalized.verificationStatus;
+          }
+          if (typeof normalized.recallCount !== 'number' || !Number.isFinite(normalized.recallCount)) {
+            normalized.recallCount = undefined;
+          }
+          if (
+            typeof normalized.verificationNotes !== 'string' ||
+            !normalized.verificationNotes.trim()
+          ) {
+            normalized.verificationNotes = undefined;
+          }
+          if (
+            typeof normalized.verifiedByAgentId !== 'string' ||
+            !normalized.verifiedByAgentId.trim()
+          ) {
+            normalized.verifiedByAgentId = undefined;
+          }
+          if (typeof normalized.verifiedAt !== 'string' || !normalized.verifiedAt.trim()) {
+            normalized.verifiedAt = undefined;
+          }
+          if (typeof normalized.recallOfTaskId !== 'string' || !normalized.recallOfTaskId.trim()) {
+            normalized.recallOfTaskId = undefined;
+          }
+          return normalized;
+        });
       this.tasks = {
         version: 1,
         tasks,
@@ -957,7 +995,7 @@ export class AgentOrchestratorService {
       'autonomy: required',
       'execution-policy:',
       '- Start with concrete execution in repository/runtime tools (read/edit/write/bash/test).',
-      '- Use coordination tools only if blocked by missing ownership or missing context.',
+      '- Use <agent-send> only if blocked by missing ownership or missing context.',
       '- If blocked, report exactly what is missing and what you already tried.',
       'definition-of-done:',
       '- Reproduce the issue with concrete commands/steps and expected vs actual behavior.',
@@ -966,6 +1004,8 @@ export class AgentOrchestratorService {
       '- If build/test/lint/typecheck fails, do not end_task yet. Fix and rerun verification until passing (or report an explicit blocker).',
       '- Summarize files changed, commands run, results, and residual risk.',
       `- Before end_task, send a completion report to ${params.fromAgentId} via <agent-send>.`,
+      '- Completion report must include a "verification evidence" section with exact commands/tests and outcomes.',
+      '- If the orchestrator requests follow-up fixes/additions, continue execution and submit a fresh completion report.',
       '[end-task-contract]',
       '',
     ];
@@ -995,6 +1035,145 @@ export class AgentOrchestratorService {
 
   listTasksForAgent(agentId: string): AgentTask[] {
     return this.listTasks().filter(t => t.toAgentId === agentId || t.fromAgentId === agentId);
+  }
+
+  getTask(taskId: string): AgentTask | null {
+    const normalizedId = String(taskId || '').trim();
+    if (!normalizedId) {
+      return null;
+    }
+    return this.tasks.tasks.find(task => task.id === normalizedId) || null;
+  }
+
+  async verifyTask(input: {
+    taskId: string;
+    verifierAgentId: string;
+    status: AgentTaskVerificationStatus;
+    notes?: string;
+  }): Promise<AgentTask | null> {
+    await this.loadTasks();
+
+    const task = this.getTask(input.taskId);
+    if (!task || task.status !== 'done') {
+      return null;
+    }
+    if (!isTaskVerificationStatus(input.status) || input.status === 'unverified') {
+      return null;
+    }
+
+    const verifierAgentId = String(input.verifierAgentId || '').trim();
+    if (!verifierAgentId || !this.getAgent(verifierAgentId)) {
+      return null;
+    }
+
+    const now = nowIso();
+    const notes = typeof input.notes === 'string' ? input.notes.trim() : '';
+
+    task.verificationStatus = input.status;
+    task.verifiedByAgentId = verifierAgentId;
+    task.verifiedAt = now;
+    task.verificationNotes = notes || undefined;
+    task.updatedAt = now;
+
+    await this.saveTasks();
+    this.eventBus.emit({
+      type: 'agents:task-verified',
+      task,
+      taskId: task.id,
+      verifierAgentId,
+      verificationStatus: task.verificationStatus,
+    } as any);
+    this.emitUpdated();
+    return task;
+  }
+
+  async recallTask(input: {
+    taskId: string;
+    fromAgentId: string;
+    reason: string;
+    title?: string;
+  }): Promise<AgentTask | null> {
+    await this.loadTasks();
+
+    const sourceTask = this.getTask(input.taskId);
+    if (!sourceTask || (sourceTask.status !== 'done' && sourceTask.status !== 'failed')) {
+      return null;
+    }
+
+    const fromAgentId = String(input.fromAgentId || '').trim() || sourceTask.fromAgentId;
+    const fromAgent = this.getAgent(fromAgentId);
+    const targetAgent = this.getAgent(sourceTask.toAgentId);
+    if (!fromAgent || !targetAgent || !targetAgent.enabled) {
+      return null;
+    }
+
+    const reason = String(input.reason || '').trim();
+    if (!reason) {
+      return null;
+    }
+
+    const now = nowIso();
+    const normalizedTitle = String(input.title || '').trim();
+    const title = normalizedTitle || `Follow-up: ${sourceTask.title}`;
+
+    sourceTask.verificationStatus = 'changes_requested';
+    sourceTask.verifiedByAgentId = fromAgentId;
+    sourceTask.verifiedAt = now;
+    sourceTask.verificationNotes = reason;
+    sourceTask.recallCount = (sourceTask.recallCount || 0) + 1;
+    sourceTask.updatedAt = now;
+
+    const followUpDetails = [
+      `Follow-up request for task ${sourceTask.id}.`,
+      `Requested by: ${fromAgentId}`,
+      `Reason: ${reason}`,
+      '',
+      'Apply the requested fixes/additions, rerun verification, and report back with updated evidence.',
+      sourceTask.resultSummary ? 'Previous completion summary:' : '',
+      sourceTask.resultSummary ? sourceTask.resultSummary : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const content = this.buildTaskContract({
+      fromAgentId,
+      requestedToAgentId: targetAgent.id,
+      toAgentId: targetAgent.id,
+      title,
+      content: followUpDetails,
+    });
+
+    const recalledTask: AgentTask = {
+      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      fromAgentId,
+      toAgentId: targetAgent.id,
+      title,
+      content,
+      status: 'queued',
+      retryCount: 0,
+      maxRetries: DEFAULT_TASK_MAX_RETRIES,
+      recallOfTaskId: sourceTask.id,
+      recallCount: sourceTask.recallCount,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.tasks.tasks.push(recalledTask);
+    await this.saveTasks();
+    this.eventBus.emit({
+      type: 'agents:task-recalled',
+      sourceTaskId: sourceTask.id,
+      task: recalledTask,
+      agentId: targetAgent.id,
+      reason,
+    } as any);
+    this.eventBus.emit({
+      type: 'agents:task-queued',
+      task: recalledTask,
+      agentId: targetAgent.id,
+    });
+    this.emitUpdated();
+    return recalledTask;
   }
 
   getTaskStatsForAgent(agentId: string): AgentTaskStats {
@@ -1114,6 +1293,7 @@ export class AgentOrchestratorService {
       status: 'queued',
       retryCount: 0,
       maxRetries: DEFAULT_TASK_MAX_RETRIES,
+      recallCount: 0,
       createdAt,
       updatedAt: createdAt,
     };
@@ -1220,6 +1400,7 @@ export class AgentOrchestratorService {
     task.status = 'running';
     task.startedAt = nowIso();
     task.updatedAt = task.startedAt;
+    task.error = undefined;
     await this.saveTasks();
     this.eventBus.emit({ type: 'agents:task-running', task, agentId: agent.id });
     this.emitUpdated();
@@ -1232,6 +1413,10 @@ export class AgentOrchestratorService {
       task.status = 'done';
       task.resultSummary = result.summary;
       task.error = undefined;
+      task.verificationStatus = 'unverified';
+      task.verificationNotes = undefined;
+      task.verifiedByAgentId = undefined;
+      task.verifiedAt = undefined;
       task.finishedAt = nowIso();
       task.updatedAt = task.finishedAt;
       agent.lastRunAt = task.finishedAt;
@@ -1248,6 +1433,10 @@ export class AgentOrchestratorService {
         task.startedAt = undefined;
         task.finishedAt = undefined;
         task.resultSummary = undefined;
+        task.verificationStatus = undefined;
+        task.verificationNotes = undefined;
+        task.verifiedByAgentId = undefined;
+        task.verifiedAt = undefined;
         task.updatedAt = nowIso();
         this.appendRetryContext(task, msg);
         agent.lastRunAt = task.updatedAt;
@@ -1273,6 +1462,10 @@ export class AgentOrchestratorService {
       }
       task.status = 'failed';
       task.error = msg;
+      task.verificationStatus = undefined;
+      task.verificationNotes = undefined;
+      task.verifiedByAgentId = undefined;
+      task.verifiedAt = undefined;
       task.finishedAt = nowIso();
       task.updatedAt = task.finishedAt;
       agent.lastRunAt = task.finishedAt;

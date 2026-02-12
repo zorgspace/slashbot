@@ -14,5 +14,6 @@ export type {
   AgentTaskRunResult,
   AgentKind,
   AgentTaskStatus,
+  AgentTaskVerificationStatus,
   AgentTaskStats,
 } from './types';

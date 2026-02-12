@@ -19,6 +19,7 @@ export interface AgentProfile {
 }
 
 export type AgentTaskStatus = 'queued' | 'running' | 'done' | 'failed';
+export type AgentTaskVerificationStatus = 'unverified' | 'verified' | 'changes_requested';
 
 export interface AgentTask {
   id: string;
@@ -35,6 +36,12 @@ export interface AgentTask {
   finishedAt?: string;
   resultSummary?: string;
   error?: string;
+  verificationStatus?: AgentTaskVerificationStatus;
+  verificationNotes?: string;
+  verifiedByAgentId?: string;
+  verifiedAt?: string;
+  recallOfTaskId?: string;
+  recallCount?: number;
 }
 
 export interface AgentWorkspaceState {

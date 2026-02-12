@@ -36,6 +36,13 @@ setupSignalHandlers({
 
 // CLI Entry Point
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  if (args[0] === 'gateway' && args[1] === 'daemon') {
+    const { runGatewayDaemon } = await import('./core/gateway/daemon');
+    await runGatewayDaemon(VERSION, args.slice(2));
+    return;
+  }
+
   const { handleCliArgs, getMessageArg } = await import('./core/app/cli');
 
   // Handle CLI args (help, version, login)

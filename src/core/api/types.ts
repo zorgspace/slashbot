@@ -159,6 +159,7 @@ export interface ClientContext {
   /** Optional hook called when streamResponse swaps/clears the abort controller */
   onAbortControllerChange?: (controller: AbortController | null) => void;
   rawOutputCallback: ((text: string) => void) | null;
+  chunkOutputCallback?: ((chunk: string) => void) | null;
   actionHandlers: import('../actions').ActionHandlers;
   providerRegistry: import('../../plugins/providers/registry').ProviderRegistry;
   toolRegistry: import('./toolRegistry').ToolRegistry | null;

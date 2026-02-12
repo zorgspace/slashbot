@@ -293,4 +293,79 @@ describe('AgentOrchestratorService default agent behavior', () => {
     expect(task?.retryCount).toBe(2);
     expect(attempts).toBe(3);
   });
+
+  it('lets architect verify completed task and store verification metadata', async () => {
+    const { service, workDir } = await createTempService();
+    cleanupDirs.push(workDir);
+
+    const worker = await service.createAgent({
+      name: 'Worker',
+      responsibility: 'Implementation specialist',
+    });
+
+    await service.sendTask({
+      fromAgentId: 'agent-architect',
+      toAgentId: worker.id,
+      title: 'Fix command',
+      content: 'Implement and verify command behavior',
+    });
+
+    service.setTaskExecutor(async () => ({ summary: 'Build passed and tests passed' }));
+    await service.runNextForAgent(worker.id);
+
+    const doneTask = service.listTasks().find(task => task.toAgentId === worker.id);
+    expect(doneTask?.status).toBe('done');
+    expect(doneTask?.verificationStatus).toBe('unverified');
+
+    const verified = await service.verifyTask({
+      taskId: doneTask!.id,
+      verifierAgentId: 'agent-architect',
+      status: 'verified',
+      notes: 'Reviewed output and checks look good',
+    });
+
+    expect(verified).not.toBeNull();
+    expect(verified?.verificationStatus).toBe('verified');
+    expect(verified?.verifiedByAgentId).toBe('agent-architect');
+    expect(verified?.verificationNotes).toContain('Reviewed output');
+  });
+
+  it('recalls completed task into a follow-up task for the same specialist', async () => {
+    const { service, workDir } = await createTempService();
+    cleanupDirs.push(workDir);
+
+    const worker = await service.createAgent({
+      name: 'Worker',
+      responsibility: 'Implementation specialist',
+    });
+
+    await service.sendTask({
+      fromAgentId: 'agent-architect',
+      toAgentId: worker.id,
+      title: 'Initial fix',
+      content: 'Fix issue and provide verification evidence',
+    });
+
+    service.setTaskExecutor(async () => ({ summary: 'Fixed bug and tests passed' }));
+    await service.runNextForAgent(worker.id);
+
+    const completed = service.listTasks().find(task => task.toAgentId === worker.id);
+    expect(completed?.status).toBe('done');
+
+    const recalled = await service.recallTask({
+      taskId: completed!.id,
+      fromAgentId: 'agent-architect',
+      reason: 'Add a regression test and extend docs',
+    });
+
+    expect(recalled).not.toBeNull();
+    expect(recalled?.status).toBe('queued');
+    expect(recalled?.toAgentId).toBe(worker.id);
+    expect(recalled?.recallOfTaskId).toBe(completed?.id);
+    expect(recalled?.content).toContain('Add a regression test and extend docs');
+
+    const sourceAfterRecall = service.getTask(completed!.id);
+    expect(sourceAfterRecall?.verificationStatus).toBe('changes_requested');
+    expect(sourceAfterRecall?.verificationNotes).toContain('regression test');
+  });
 });

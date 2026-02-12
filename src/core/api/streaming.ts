@@ -191,6 +191,18 @@ export async function streamResponse(
           withOutputTab(() => display.logAction((event as any).toolName));
         }
       }
+
+      if (type === 'text-delta') {
+        const delta =
+          typeof (event as any).textDelta === 'string'
+            ? (event as any).textDelta
+            : typeof (event as any).delta === 'string'
+              ? (event as any).delta
+              : '';
+        if (delta) {
+          ctx.chunkOutputCallback?.(delta);
+        }
+      }
     }
 
     // ===== Extract all data from AI SDK normalized promises =====

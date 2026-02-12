@@ -14,6 +14,7 @@ export const TYPES = {
   SkillManager: Symbol.for('SkillManager'),
   CommandPermissions: Symbol.for('CommandPermissions'),
   HeartbeatService: Symbol.for('HeartbeatService'),
+  AutomationService: Symbol.for('AutomationService'),
   AgentOrchestratorService: Symbol.for('AgentOrchestratorService'),
 
   // Composite services

@@ -89,16 +89,21 @@ async function executeAction(
   // Log action to comm panel
   display.logAction(describeAction(action));
 
-  // Dispatch via dynamic executor map (plugin contributions)
-  if (dynamicExecutorMap) {
-    const executor = dynamicExecutorMap.get(action.type);
-    if (executor) {
-      const t0 = Date.now();
-      const result = await executor(action, handlers);
-      return result;
+  try {
+    // Dispatch via dynamic executor map (plugin contributions)
+    if (dynamicExecutorMap) {
+      const executor = dynamicExecutorMap.get(action.type);
+      if (executor) {
+        const result = await executor(action, handlers);
+        return result;
+      }
     }
-  }
 
-  // No handler found for this action type
-  return null;
+    // No handler found for this action type
+    return null;
+  } finally {
+    // Keep action-level spinner state consistent even for control-flow actions
+    // that may finish without additional streaming events.
+    display.hideSpinner();
+  }
 }

@@ -20,8 +20,11 @@ import {
   executeAgentUpdate,
   executeAgentDelete,
   executeAgentList,
+  executeAgentTasks,
   executeAgentRun,
   executeAgentSend,
+  executeAgentVerify,
+  executeAgentRecall,
 } from './executors';
 import type { AgentOrchestratorService } from './services';
 import { createAgentOrchestratorService } from './services';
@@ -160,6 +163,33 @@ export class AgentsPlugin implements Plugin {
         execute: executeAgentList,
       },
       {
+        type: 'agent-tasks',
+        tagName: 'agent-tasks',
+        handler: {
+          onAgentTasks: async (input: {
+            agent?: string;
+            limit?: number;
+            status?: 'queued' | 'running' | 'done' | 'failed';
+          }) => {
+            const allTasks = input.agent
+              ? (() => {
+                  const id = service.resolveAgentId(input.agent || '');
+                  return id ? service.listTasksForAgent(id) : [];
+                })()
+              : service.listTasks();
+            const filtered = input.status
+              ? allTasks.filter(task => task.status === input.status)
+              : allTasks;
+            const limit =
+              typeof input.limit === 'number' && Number.isFinite(input.limit)
+                ? Math.max(1, Math.floor(input.limit))
+                : 20;
+            return filtered.slice(0, limit);
+          },
+        },
+        execute: executeAgentTasks,
+      },
+      {
         type: 'agent-run',
         tagName: 'agent-run',
         handler: {
@@ -190,6 +220,42 @@ export class AgentsPlugin implements Plugin {
         },
         execute: executeAgentSend,
       },
+      {
+        type: 'agent-verify',
+        tagName: 'agent-verify',
+        handler: {
+          onAgentVerify: async (action: {
+            taskId: string;
+            status: 'verified' | 'changes_requested';
+            notes?: string;
+          }) => {
+            const verifierAgentId = this.resolveSenderAgentId(service);
+            return await service.verifyTask({
+              taskId: action.taskId,
+              verifierAgentId,
+              status: action.status,
+              notes: action.notes,
+            });
+          },
+        },
+        execute: executeAgentVerify,
+      },
+      {
+        type: 'agent-recall',
+        tagName: 'agent-recall',
+        handler: {
+          onAgentRecall: async (action: { taskId: string; reason: string; title?: string }) => {
+            const fromAgentId = this.resolveSenderAgentId(service);
+            return await service.recallTask({
+              taskId: action.taskId,
+              fromAgentId,
+              reason: action.reason,
+              title: action.title,
+            });
+          },
+        },
+        execute: executeAgentRecall,
+      },
     ];
   }
 
@@ -210,6 +276,30 @@ export class AgentsPlugin implements Plugin {
         parameters: z.object({}),
         toAction: () => ({
           type: 'agent-list',
+        }),
+      },
+      {
+        name: 'agents_tasks',
+        description: 'List tasks for verification and follow-up orchestration.',
+        parameters: z.object({
+          agent: z.string().optional().describe('Optional agent id/name filter'),
+          status: z
+            .enum(['queued', 'running', 'done', 'failed'])
+            .optional()
+            .describe('Optional task status filter'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('Maximum number of tasks to return'),
+        }),
+        toAction: args => ({
+          type: 'agent-tasks',
+          agent: args.agent as string | undefined,
+          status: args.status as 'queued' | 'running' | 'done' | 'failed' | undefined,
+          limit: args.limit as number | undefined,
         }),
       },
       {
@@ -270,6 +360,40 @@ export class AgentsPlugin implements Plugin {
         toAction: args => ({
           type: 'agent-run',
           agent: args.agent as string,
+        }),
+      },
+      {
+        name: 'agents_verify',
+        description:
+          'Record verification decision for a completed task (approved or changes requested).',
+        parameters: z.object({
+          taskId: z.string().describe('Task id to verify'),
+          status: z
+            .enum(['verified', 'changes_requested'])
+            .describe('Verification outcome'),
+          notes: z.string().optional().describe('Optional verification notes'),
+        }),
+        toAction: args => ({
+          type: 'agent-verify',
+          taskId: args.taskId as string,
+          status: args.status as 'verified' | 'changes_requested',
+          notes: args.notes as string | undefined,
+        }),
+      },
+      {
+        name: 'agents_recall',
+        description:
+          'Queue a follow-up task for the same specialist when verification requires fixes/additions.',
+        parameters: z.object({
+          taskId: z.string().describe('Original task id'),
+          reason: z.string().describe('What must be fixed or added'),
+          title: z.string().optional().describe('Optional follow-up title'),
+        }),
+        toAction: args => ({
+          type: 'agent-recall',
+          taskId: args.taskId as string,
+          reason: args.reason as string,
+          title: args.title as string | undefined,
         }),
       },
     ];
@@ -434,24 +558,31 @@ export class AgentsPlugin implements Plugin {
           '',
           'Commands:',
           '- /agent status',
+          '- /agent tasks [agent|all] [limit]',
           '- /agent spawn <name> [responsibility]',
           '- /agent switch <agent-id|name>',
+          '- /agent verify <task-id> <approved|changes_requested> [notes]',
+          '- /agent recall <task-id> <follow-up request>',
           '- /agent history <agent-id> [limit]',
           '',
           'Native orchestration tools (preferred):',
           '- `agents_status`',
           '- `agents_list`',
+          '- `agents_tasks`',
           '- `agents_create`',
           '- `agents_update`',
           '- `agents_delete`',
           '- `agents_run`',
+          '- `agents_verify`',
+          '- `agents_recall`',
           '- `sessions_usage`',
           '- `sessions_compaction`',
           '',
           'Coordination policy:',
           '- Architect/orchestrator agents must not implement directly; they plan/delegate/verify only.',
           '- Specialist agents should execute implementation tasks directly and report results back to the requester.',
-          '- For routing/coordination, use `agents_status` and `agents_list` when needed.',
+          '- Verify delegated task results before closure; if needed, recall the specialist with explicit follow-up instructions.',
+          '- For routing/coordination, use `agents_status`, `agents_list`, and `agents_tasks` when needed.',
           '',
           'Storage layout (OpenClaw-style, project-local):',
           '- .agents/agents.json',
@@ -467,7 +598,10 @@ export class AgentsPlugin implements Plugin {
           '- `<agent-delete agent="MyAgent"/>`',
           '- `<agent-list/>`',
           '- `<agent-status/>`',
+          '- `<agent-tasks agent="Developer" status="done" limit="5"/>`',
           '- `<agent-run agent="MyAgent"/>`',
+          '- `<agent-verify task="task-123" status="changes_requested" notes="Add missing test coverage"/>`',
+          '- `<agent-recall task="task-123" reason="Add regression test and update docs"/>`',
           '',
           'Use XML tags directly for declarative agent management; fallback to tools (e.g., agents_create) if needed.',
         ].join('\n'),

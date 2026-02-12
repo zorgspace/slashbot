@@ -60,7 +60,15 @@ bun run install-global
 - `/model` switch model for current provider
 - `/telegram` configure Telegram connector
 - `/discord` configure Discord connector
+- `/automation` manage cron/webhook automation jobs
 - `/help` show full command list
+
+Gateway commands:
+
+- `slashbot gateway start --host 127.0.0.1 --port 7788`
+- `slashbot gateway status`
+- `slashbot gateway pair --label my-client`
+- `slashbot gateway stop`
 
 ## Configuration Files
 
@@ -86,5 +94,7 @@ bun run build
 - `docs/start/getting-started.md`
 - `docs/channels/telegram.md`
 - `docs/channels/discord.md`
+- `docs/GATEWAY_AUTOMATION.md`
+- `docs/plugins/README.md`
 - `docs/ARCHITECTURE.md`
 - `docs/ROADMAP.md`

@@ -19,16 +19,19 @@ function resolveAgentId(service: AgentOrchestratorService, raw: string | undefin
 export const agentCommand: CommandHandler = {
   name: 'agent',
   aliases: ['agents'],
-  description: 'Multi-agent orchestration: spawn, edit, send, switch, history, status',
+  description: 'Multi-agent orchestration: spawn, send, verify, recall, switch, history, status',
   usage:
-    '/agent [status|list|spawn|switch|send|prompt|rename|role|autopoll|enable|disable|delete|history|run] ...',
+    '/agent [status|list|tasks|spawn|switch|send|verify|recall|prompt|rename|role|autopoll|enable|disable|delete|history|run] ...',
   group: 'Agents',
   subcommands: [
     'status',
     'list',
+    'tasks',
     'spawn',
     'switch',
     'send',
+    'verify',
+    'recall',
     'prompt',
     'rename',
     'role',
@@ -74,6 +77,59 @@ export const agentCommand: CommandHandler = {
         );
         display.muted(`      workspace=${agent.workspaceDir}`);
         display.muted(`      agentDir=${agent.agentDir}`);
+      }
+      display.append('');
+      return true;
+    }
+
+    if (cmd === 'tasks') {
+      const targetRaw = args[1];
+      let targetId: string | null = null;
+      let limitRaw = args[2];
+
+      if (targetRaw && targetRaw.toLowerCase() !== 'all' && !/^\d+$/.test(targetRaw)) {
+        targetId = resolveAgentId(service, targetRaw);
+        if (!targetId) {
+          display.errorText(`Unknown agent: ${targetRaw}`);
+          return true;
+        }
+      } else if (targetRaw && /^\d+$/.test(targetRaw)) {
+        limitRaw = targetRaw;
+      }
+
+      const limit = Math.max(1, Number(limitRaw || 12) || 12);
+      const tasks = (targetId ? service.listTasksForAgent(targetId) : service.listTasks()).slice(
+        0,
+        limit,
+      );
+
+      display.append('');
+      display.violet(
+        `Tasks (${tasks.length}${targetId ? ` for ${targetId}` : ''})`,
+        { bold: true },
+      );
+      if (tasks.length === 0) {
+        display.muted('No tasks found.');
+        display.append('');
+        return true;
+      }
+
+      for (const task of tasks) {
+        const verification =
+          task.verificationStatus ||
+          (task.status === 'done' ? 'unverified' : task.status === 'failed' ? 'failed' : 'n/a');
+        const recallLabel = task.recallOfTaskId
+          ? ` recall-of=${task.recallOfTaskId}`
+          : task.recallCount
+            ? ` recalls=${task.recallCount}`
+            : '';
+        display.append(
+          ` - ${task.id} [${task.status}] verify=${verification} from=${task.fromAgentId} to=${task.toAgentId}${recallLabel}`,
+        );
+        display.muted(`      title=${task.title}`);
+        if (task.verificationNotes) {
+          display.muted(`      verify-notes=${task.verificationNotes}`);
+        }
       }
       display.append('');
       return true;
@@ -132,6 +188,90 @@ export const agentCommand: CommandHandler = {
         content,
       });
       display.successText(`Queued ${task.id} -> ${toId}`);
+      return true;
+    }
+
+    if (cmd === 'verify') {
+      const taskId = (args[1] || '').trim();
+      if (!taskId) {
+        display.errorText('Usage: /agent verify <task-id> <approved|changes_requested> [notes]');
+        return true;
+      }
+
+      const rawStatus = (args[2] || 'approved').trim().toLowerCase();
+      const verificationStatus =
+        rawStatus === 'approved' ||
+        rawStatus === 'approve' ||
+        rawStatus === 'pass' ||
+        rawStatus === 'verified'
+          ? 'verified'
+          : rawStatus === 'changes_requested' ||
+              rawStatus === 'changes' ||
+              rawStatus === 'reject' ||
+              rawStatus === 'fix'
+            ? 'changes_requested'
+            : null;
+      if (!verificationStatus) {
+        display.errorText(
+          'Status must be one of: approved, verified, pass, changes_requested, changes, reject, fix',
+        );
+        return true;
+      }
+
+      const verifierAgentId = service.getActiveAgentId();
+      if (!verifierAgentId) {
+        display.errorText('No active agent available to record verification.');
+        return true;
+      }
+
+      const notes = args.slice(3).join(' ').trim();
+      const verified = await service.verifyTask({
+        taskId,
+        verifierAgentId,
+        status: verificationStatus,
+        notes: notes || undefined,
+      });
+      if (!verified) {
+        display.errorText(`Unable to verify task ${taskId}. Only completed tasks can be verified.`);
+        return true;
+      }
+
+      display.successText(
+        `Task ${verified.id} verification set to ${verified.verificationStatus} by ${verifierAgentId}`,
+      );
+      return true;
+    }
+
+    if (cmd === 'recall') {
+      const taskId = (args[1] || '').trim();
+      if (!taskId) {
+        display.errorText('Usage: /agent recall <task-id> <follow-up request>');
+        return true;
+      }
+
+      const reason = args.slice(2).join(' ').trim();
+      if (!reason) {
+        display.errorText('Recall reason is required');
+        return true;
+      }
+
+      const fromAgentId = service.getActiveAgentId();
+      if (!fromAgentId) {
+        display.errorText('No active agent available for recall.');
+        return true;
+      }
+
+      const recalled = await service.recallTask({
+        taskId,
+        fromAgentId,
+        reason,
+      });
+      if (!recalled) {
+        display.errorText(`Unable to recall task ${taskId}.`);
+        return true;
+      }
+
+      display.successText(`Recalled ${taskId} -> queued ${recalled.id} for ${recalled.toAgentId}`);
       return true;
     }
 
@@ -272,7 +412,7 @@ export const agentCommand: CommandHandler = {
     }
 
     display.muted(
-      'Usage: /agent [status|list|spawn|switch|send|prompt|rename|role|autopoll|enable|disable|delete|history|run]',
+      'Usage: /agent [status|list|tasks|spawn|switch|send|verify|recall|prompt|rename|role|autopoll|enable|disable|delete|history|run]',
     );
     return true;
   },

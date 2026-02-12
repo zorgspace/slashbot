@@ -39,8 +39,9 @@ import type { ConfigManager } from '../config/config';
 import type { CodeEditor } from '../../plugins/code-editor/services/CodeEditor';
 import type { CommandPermissions } from '../../plugins/system/services/CommandPermissions';
 import type { SecureFileSystem } from '../../plugins/filesystem/services/SecureFileSystem';
-import type { ConnectorRegistry } from '../../connectors/registry';
+import type { ConnectorRegistry, ConnectorSnapshot } from '../../connectors/registry';
 import type { EventBus } from '../events/EventBus';
+import type { GatewayWebhookPayload } from '../gateway/protocol';
 import type {
   AgentOrchestratorService,
   AgentProfile,
@@ -74,6 +75,38 @@ const AGENT_BOOTSTRAP_FILES = [
 const MAX_AGENT_BOOTSTRAP_FILE_CHARS = 2400;
 const MAX_AGENT_BOOTSTRAP_TOTAL_CHARS = 10000;
 const CONNECTOR_AGENT_MIRROR_DISABLED = new Set(['telegram', 'discord']);
+const SPECIALIST_BLOCKED_TOOL_NAMES = [
+  'sessions_list',
+  'sessions_history',
+  'sessions_send',
+  'sessions_usage',
+  'sessions_compaction',
+  'agents_status',
+  'agents_list',
+  'agents_tasks',
+  'agents_create',
+  'agents_update',
+  'agents_delete',
+  'agents_run',
+  'agents_verify',
+  'agents_recall',
+];
+const SPECIALIST_BLOCKED_ACTION_TYPES = [
+  'sessions-list',
+  'sessions-history',
+  'sessions-send',
+  'sessions-usage',
+  'sessions-compaction',
+  'agent-status',
+  'agent-list',
+  'agent-tasks',
+  'agent-create',
+  'agent-update',
+  'agent-delete',
+  'agent-run',
+  'agent-verify',
+  'agent-recall',
+];
 
 export class Slashbot {
   private grokClient: GrokClient | null = null;
@@ -86,6 +119,8 @@ export class Slashbot {
   private pluginRegistry!: PluginRegistry;
   private promptAssembler!: PromptAssembler;
   private toolRegistry!: ToolRegistry;
+  private automationService: { handleWebhookTrigger?: (payload: GatewayWebhookPayload) => Promise<number> } | null =
+    null;
   private running = false;
   private history: string[] = [];
   private loadedContextFile: string | null = null;
@@ -113,6 +148,36 @@ export class Slashbot {
 
   setVersion(version: string): void {
     this.version = version;
+  }
+
+  isConnected(): boolean {
+    return !!this.grokClient;
+  }
+
+  getCurrentModel(): string | null {
+    return this.grokClient?.getCurrentModel?.() || null;
+  }
+
+  getCurrentProvider(): string | null {
+    return this.grokClient?.getProvider?.() || null;
+  }
+
+  getSessionSummaries(): Array<{
+    id: string;
+    messageCount: number;
+    lastActivity: number;
+    lastRole: string | null;
+    preview: string;
+  }> {
+    return this.grokClient?.getSessionSummaries?.() || [];
+  }
+
+  getConnectorSnapshots(): ConnectorSnapshot[] {
+    return this.connectorRegistry?.getSnapshots?.() || [];
+  }
+
+  getEventBus(): EventBus {
+    return this.eventBus;
   }
 
   /**
@@ -158,6 +223,9 @@ export class Slashbot {
     this.fileSystem = getService<SecureFileSystem>(TYPES.FileSystem);
     if (container.isBound(TYPES.AgentOrchestratorService)) {
       this.agentService = getService<AgentOrchestratorService>(TYPES.AgentOrchestratorService);
+    }
+    if (container.isBound(TYPES.AutomationService)) {
+      this.automationService = getService<any>(TYPES.AutomationService);
     }
 
     // Wire plugin contributions into the action system
@@ -605,6 +673,36 @@ export class Slashbot {
     return normalized.includes('<session-actions>') || normalized.includes('[ralph-nudge]');
   }
 
+  private shouldPreferWebSearchForConnectorQuery(query: string): boolean {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    const webLookupSignals = [
+      /\bweather\b/,
+      /\bforecast\b/,
+      /\btemperature\b/,
+      /\btoday\b/,
+      /\btomorrow\b/,
+      /\byesterday\b/,
+      /\blatest\b/,
+      /\bcurrent\b/,
+      /\bnews\b/,
+      /\bheadline\b/,
+      /\bprice\b/,
+      /\bstock\b/,
+      /\bquote\b/,
+      /\btweet\b/,
+      /\btwitter\b/,
+      /\bx\.com\b/,
+      /\blast tweet\b/,
+      /\bwhat'?s new\b/,
+      /\bsearch\b/,
+    ];
+    return webLookupSignals.some(pattern => pattern.test(normalized));
+  }
+
   private extractRenderableUserMessage(text: string): string {
     const normalized = text.replace(/^\[you\]\s*/i, '').trim();
     if (!normalized) {
@@ -683,6 +781,19 @@ export class Slashbot {
     return (
       label.includes('orchestrator') || label.includes('architect') || label.includes('coordinator')
     );
+  }
+
+  private buildSpecialistExecutionPolicy(): {
+    blockedToolNames: string[];
+    blockedActionTypes: string[];
+    blockReason: string;
+  } {
+    return {
+      blockedToolNames: [...SPECIALIST_BLOCKED_TOOL_NAMES],
+      blockedActionTypes: [...SPECIALIST_BLOCKED_ACTION_TYPES],
+      blockReason:
+        'Specialist lanes execute implementation directly. Use <agent-send> for escalation/reporting; do not use sessions_* or agent-management orchestration tools.',
+    };
   }
 
   private buildTabPromptDirectives(agent: AgentProfile): string[] {
@@ -861,7 +972,7 @@ Communication rules:
       : 'Execution default: work autonomously with read/edit/write/bash/test tools in your workspace.';
     const coordinationDirective = isOrchestrator
       ? 'Use agents_status/agents_send/sessions_* for coordination and routing; avoid noisy coordination loops.'
-      : 'Use agents_status/agents_send/sessions_* only when blocked by missing ownership or missing context.';
+      : 'Use agents_send only when blocked by missing ownership or missing context. Do not use sessions_* from specialist lanes.';
     await this.ensureSessionProfile({
       agent,
       sessionId: agent.sessionId,
@@ -931,6 +1042,95 @@ Communication rules:
         `Connector session: ${sessionId}`,
       ],
     });
+  }
+
+  private async ensureGatewaySession(sessionId: string, clientId?: string): Promise<void> {
+    if (!this.grokClient) return;
+
+    const normalizedClientId = String(clientId || 'gateway-client')
+      .trim()
+      .replace(/\s+/g, '-')
+      .toLowerCase();
+
+    const gatewayAgent = this.buildVirtualConnectorProfile({
+      connectorId: 'gateway',
+      label: 'Gateway',
+      sessionId,
+    });
+
+    await this.ensureSessionProfile({
+      agent: gatewayAgent,
+      sessionId,
+      contextHeader: `[gateway-context] Remote gateway client (${normalizedClientId})`,
+      directives: [
+        'Tab mode: GATEWAY.',
+        'This session handles remote gateway traffic.',
+        'Respond with the same level of rigor as CLI mode.',
+        'If tool actions are required, execute them before your final response.',
+      ],
+      executionDirective:
+        'Execution default: handle gateway user requests directly with available tools in this lane.',
+      coordinationDirective:
+        'Use agents_status/agents_send/sessions_* only when blocked by missing ownership or context.',
+      extraContextLines: [`Gateway session: ${sessionId}`, `Gateway client: ${normalizedClientId}`],
+    });
+  }
+
+  async processGatewayMessage(options: {
+    message: string;
+    sessionId?: string;
+    clientId?: string;
+    onChunk?: (chunk: string) => void;
+  }): Promise<{ response: string; sessionId: string }> {
+    const message = String(options.message || '').trim();
+    if (!message) {
+      throw new Error('Message cannot be empty');
+    }
+    if (!this.grokClient) {
+      throw new Error('Grok client is not initialized');
+    }
+
+    const normalizedClientId = String(options.clientId || 'gateway-client')
+      .trim()
+      .replace(/\s+/g, '-')
+      .toLowerCase();
+    const sessionId =
+      String(options.sessionId || '').trim() || `gateway:${normalizedClientId || 'default'}`;
+
+    await this.ensureGatewaySession(sessionId, normalizedClientId);
+
+    const result = await this.grokClient.chat(message, {
+      sessionId,
+      displayResult: false,
+      quiet: true,
+      onOutputChunk: options.onChunk,
+    });
+
+    await this.dumpContext();
+
+    return {
+      response: result.response,
+      sessionId,
+    };
+  }
+
+  async handleGatewayWebhook(
+    payload: GatewayWebhookPayload,
+  ): Promise<{ matchedJobs: number }> {
+    let matchedJobs = 0;
+    if (this.automationService?.handleWebhookTrigger) {
+      try {
+        matchedJobs = await this.automationService.handleWebhookTrigger(payload);
+      } catch {
+        matchedJobs = 0;
+      }
+    }
+    this.eventBus.emit({
+      type: 'gateway:webhook',
+      ...payload,
+      matchedJobs,
+    });
+    return { matchedJobs };
   }
 
   private async syncConnectorAgents(): Promise<void> {
@@ -1863,7 +2063,9 @@ Communication rules:
     await this.ensureAgentSession(agent);
     this.beginReticulatingSession(agent.sessionId);
     try {
-      const executionPolicy = this.isOrchestratorAgent(agent) ? 'orchestrator' : undefined;
+      const executionPolicy = this.isOrchestratorAgent(agent)
+        ? 'orchestrator'
+        : this.buildSpecialistExecutionPolicy();
       const result = await display.withOutputTab(agent.id, () =>
         this.grokClient!.chatWithResponse(taskText, undefined, 180000, agent.sessionId, {
           displayResult: false,
@@ -2112,7 +2314,15 @@ Communication rules:
       let cliAgent: AgentProfile | null = null;
       let startedUserTurn = false;
       let cliReticulating = false;
-      let cliExecutionPolicy: 'orchestrator' | undefined;
+      let cliExecutionPolicy:
+        | 'orchestrator'
+        | {
+            blockedToolNames: string[];
+            blockedActionTypes: string[];
+            blockReason: string;
+          }
+        | undefined;
+      let cliIsOrchestrator = false;
 
       if (source === 'cli') {
         const activeTab = this.getCliActiveTabId();
@@ -2129,6 +2339,9 @@ Communication rules:
           await this.ensureAgentSession(cliAgent);
           if (this.isOrchestratorAgent(cliAgent)) {
             cliExecutionPolicy = 'orchestrator';
+            cliIsOrchestrator = true;
+          } else {
+            cliExecutionPolicy = this.buildSpecialistExecutionPolicy();
           }
         }
         cliHistoryStart = this.grokClient.getHistoryForSession(cliTargetSessionId).length;
@@ -2143,14 +2356,26 @@ Communication rules:
           await this.ensureConnectorSession(source, effectiveConnectorSessionId);
           const connectorTabId =
             sessionId && this.isConnectorSessionId(sessionId) ? sessionId : undefined;
+          const shouldPreferWebSearch =
+            (source === 'telegram' || source === 'discord') &&
+            this.shouldPreferWebSearchForConnectorQuery(trimmed);
+          const blockedToolNames = [`${source}_send`];
+          const blockedActionTypes = [`${source}-send`];
+          let connectorBlockReason =
+            `Do not call ${source} send tools while handling an inbound ${source} message. ` +
+            'Return plain response text instead.';
+          if (shouldPreferWebSearch) {
+            blockedToolNames.push('bash', 'exec');
+            blockedActionTypes.push('bash', 'exec');
+            connectorBlockReason =
+              'This looks like an external web lookup. Use `search` (web_search/x_search) and optionally `fetch`; do not use bash/curl.';
+          }
           const connectorExecutionPolicy =
             source === 'telegram' || source === 'discord'
               ? {
-                  blockedToolNames: [`${source}_send`],
-                  blockedActionTypes: [`${source}-send`],
-                  blockReason:
-                    `Do not call ${source} send tools while handling an inbound ${source} message. ` +
-                    'Return plain response text instead.',
+                  blockedToolNames,
+                  blockedActionTypes,
+                  blockReason: connectorBlockReason,
                 }
               : undefined;
           if (connectorTabId) {
@@ -2182,7 +2407,7 @@ Communication rules:
         startedUserTurn = true;
 
         let llmUserMessage = trimmed;
-        if (cliExecutionPolicy === 'orchestrator' && cliAgent) {
+        if (cliIsOrchestrator && cliAgent) {
           llmUserMessage = this.buildOrchestratorRequestPayload(cliAgent, trimmed);
         }
 
@@ -2386,6 +2611,68 @@ Communication rules:
     if (!this.tuiApp) return;
     const sidebarData = this.buildSidebarDataWithHooks();
     this.tuiApp.updateSidebar(sidebarData);
+  }
+
+  async startGateway(): Promise<void> {
+    await this.initializeServices();
+    await this.codeEditor.init();
+
+    if (this.agentService) {
+      this.agentService.stop();
+      this.agentService.setWorkDir(this.codeEditor.getWorkDir());
+      await this.agentService.init();
+      await this.agentService.start();
+    }
+
+    await this.commandPermissions.load();
+    await this.loadHistory();
+
+    const pluginContext: PluginContext = createPluginRuntimeContext({
+      container,
+      eventBus: this.eventBus,
+      configManager: this.configManager,
+      workDir: this.codeEditor.getWorkDir(),
+      getGrokClient: () => this.grokClient,
+    });
+
+    await this.pluginRegistry.callLifecycleHook('onBeforeGrokInit', pluginContext);
+    await this.initializeGrok();
+    await this.pluginRegistry.callLifecycleHook('onAfterGrokInit', pluginContext);
+
+    await this.pluginRegistry.applyKernelHooksAsync('startup:after-grok-ready', {
+      agentService: this.agentService,
+      routeTaskWithLLM: (request: AgentRoutingRequest) => this.routeTaskWithLLM(request),
+      runDelegatedTask: (agent: AgentProfile, taskText: string) =>
+        this.runDelegatedTask(agent, taskText),
+      isOrchestratorAgent: (agent: AgentProfile) => this.isOrchestratorAgent(agent),
+    });
+
+    const connectorPlugins = this.pluginRegistry.getByCategory('connector') as ConnectorPlugin[];
+    await initializeConnectorPlugins({
+      connectorPlugins,
+      pluginContext,
+      eventBus: this.eventBus,
+      connectorRegistry: this.connectorRegistry,
+      onMessage: async (message, source, metadata) =>
+        this.handleInput(message, source, metadata?.sessionId),
+      onError: (pluginName, error) => {
+        display.warningText(`[${pluginName}] Could not start: ${error}`);
+      },
+    });
+
+    if (this.agentService) {
+      await this.syncConnectorAgents();
+    }
+
+    this.eventBus.on('connector:connected', () => {
+      void this.syncConnectorAgents();
+    });
+
+    await this.pluginRegistry.applyKernelHooksAsync('startup:after-connectors-ready', {
+      connectorRegistry: this.connectorRegistry,
+    });
+
+    this.running = true;
   }
 
   async start(): Promise<void> {

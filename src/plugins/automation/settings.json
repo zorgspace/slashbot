@@ -1,0 +1,5 @@
+{
+  "module": "./index.ts",
+  "exportName": "AutomationPlugin",
+  "enabled": true
+}

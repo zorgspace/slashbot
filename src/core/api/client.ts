@@ -520,6 +520,7 @@ export class LLMClient implements ClientContext {
       quiet?: boolean;
       outputTabId?: string;
       executionPolicy?: ExecutionPolicy | ExecutionPolicyMode;
+      onOutputChunk?: (chunk: string) => void;
     },
   ): Promise<{ response: string; thinking: string }> {
     // Pin this request to an explicit session ID when provided so tab switches
@@ -572,6 +573,7 @@ export class LLMClient implements ClientContext {
         abortController: this.abortController,
         onAbortControllerChange,
         rawOutputCallback: this.rawOutputCallback,
+        chunkOutputCallback: options?.onOutputChunk || null,
         actionHandlers: this.actionHandlers,
         providerRegistry: this.providerRegistry,
         toolRegistry: this.toolRegistry,
@@ -682,6 +684,7 @@ export class LLMClient implements ClientContext {
         abortController: null,
         onAbortControllerChange,
         rawOutputCallback: this.rawOutputCallback,
+        chunkOutputCallback: null,
         actionHandlers: this.actionHandlers,
         providerRegistry: this.providerRegistry,
         toolRegistry: this.toolRegistry,
@@ -763,6 +766,7 @@ export class LLMClient implements ClientContext {
       quiet?: boolean;
       outputTabId?: string;
       executionPolicy?: ExecutionPolicy | ExecutionPolicyMode;
+      onOutputChunk?: (chunk: string) => void;
     },
   ): Promise<{ response: string; endMessage?: string }> {
     const effectiveSessionId = sessionId || source || 'cli';
@@ -829,6 +833,7 @@ export class LLMClient implements ClientContext {
         abortController: null,
         onAbortControllerChange,
         rawOutputCallback: this.rawOutputCallback,
+        chunkOutputCallback: options?.onOutputChunk || null,
         actionHandlers: this.actionHandlers,
         providerRegistry: this.providerRegistry,
         toolRegistry: this.toolRegistry,

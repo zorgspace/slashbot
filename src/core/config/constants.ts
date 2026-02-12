@@ -36,6 +36,18 @@ export const getLocalTasksFile = (workDir?: string) =>
   path.join(getLocalSlashbotDir(workDir), 'tasks.json');
 export const getLocalPermissionsFile = (workDir?: string) =>
   path.join(getLocalSlashbotDir(workDir), 'permissions.json');
+export const getLocalAutomationJobsFile = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'automation-jobs.json');
+export const getLocalGatewayDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'gateway');
+export const getLocalGatewayPidFile = (workDir?: string) =>
+  path.join(getLocalGatewayDir(workDir), 'gateway.pid');
+export const getLocalGatewayStateFile = (workDir?: string) =>
+  path.join(getLocalGatewayDir(workDir), 'gateway-state.json');
+export const getLocalGatewayAuthFile = (workDir?: string) =>
+  path.join(getLocalGatewayDir(workDir), 'gateway-auth.json');
+export const getLocalGatewayLogFile = (workDir?: string) =>
+  path.join(getLocalGatewayDir(workDir), 'gateway.log');
 
 // ============================================================================
 // GROK API CONFIGURATION

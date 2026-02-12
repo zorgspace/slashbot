@@ -48,6 +48,7 @@ const COMPILED_FALLBACK_PLUGINS: readonly FallbackPluginSpec[] = [
   { load: () => import('../connectors/discord/plugin'), exportName: 'DiscordPlugin' },
   { load: () => import('../connectors/telegram/plugin'), exportName: 'TelegramPlugin' },
   { load: () => import('./agents'), exportName: 'AgentsPlugin' },
+  { load: () => import('./automation'), exportName: 'AutomationPlugin' },
   { load: () => import('./bash'), exportName: 'BashPlugin' },
   { load: () => import('./git'), exportName: 'GitPlugin' },
   { load: () => import('./code-editor'), exportName: 'CodeEditorPlugin' },
