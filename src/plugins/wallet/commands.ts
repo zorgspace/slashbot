@@ -234,7 +234,21 @@ export const walletCommands: CommandHandler[] = [
     aliases: ['wallet'],
     description: 'Manage Solana wallet, billing, and payments',
     group: 'Solana',
-    subcommands: ['create', 'import', 'export', 'balance', 'send', 'redeem', 'deposit', 'unlock', 'lock', 'status', 'pricing', 'mode', 'usage'],
+    subcommands: [
+      'create',
+      'import',
+      'export',
+      'balance',
+      'send',
+      'redeem',
+      'deposit',
+      'unlock',
+      'lock',
+      'status',
+      'pricing',
+      'mode',
+      'usage',
+    ],
     usage: `/solana - Show wallet overview
 /solana create - Create new wallet
 /solana import <privatekey> - Import from private key
@@ -524,7 +538,9 @@ export const walletCommands: CommandHandler[] = [
 
         const password = await promptPassword('Enter wallet password: ');
 
-        display.info(`Sending ${formatNumber(amount, 9)} ${tokenType.toUpperCase()} to ${toAddress}...`);
+        display.info(
+          `Sending ${formatNumber(amount, 9)} ${tokenType.toUpperCase()} to ${toAddress}...`,
+        );
 
         const result =
           tokenType === 'sol'
@@ -604,7 +620,7 @@ export const walletCommands: CommandHandler[] = [
             '',
             `Tokens sent:     ${formatNumber(amount, 4)} SLASHBOT`,
             `Credits awarded: ${result.creditsAwarded?.toLocaleString() || '0'}`,
-            `New balance:     ${(result.newBalance?.toLocaleString() || '0')} credits`,
+            `New balance:     ${result.newBalance?.toLocaleString() || '0'} credits`,
           ]);
           return true;
         } else {
@@ -889,7 +905,9 @@ export const walletCommands: CommandHandler[] = [
                 lines.push(`${status} ${time}`);
                 lines.push(`  Model:   ${record.model}`);
                 lines.push(`  Tokens:  ${tokens} (${formatTokens(record.tokens.total)} total)`);
-                lines.push(`  Cost:    ${record.cost.credits} credits (${formatUsd(record.cost.usd)})`);
+                lines.push(
+                  `  Cost:    ${record.cost.credits} credits (${formatUsd(record.cost.usd)})`,
+                );
                 lines.push(`  Latency: ${record.processingTimeMs}ms`);
                 lines.push('');
               }
@@ -1024,7 +1042,8 @@ export const walletCommands: CommandHandler[] = [
         const sessionActive = isSessionActive();
         const proxyConfigured = !!(PROXY_CONFIG.BASE_URL && publicKey);
 
-        const currentMode = getPaymentMode() || context.configManager.getConfig().paymentMode || 'apikey';
+        const currentMode =
+          getPaymentMode() || context.configManager.getConfig().paymentMode || 'apikey';
 
         let modeDisplay: string;
         if (currentMode === 'apikey') {

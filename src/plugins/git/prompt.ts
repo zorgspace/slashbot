@@ -21,6 +21,6 @@ export const GIT_PROMPT = [
   '**Guidelines:**',
   '- Always work in a worktree to avoid conflicts.',
   '- Use unique branch names for each task.',
-  '- Push modifications before switching or removing worktrees.',
+  '- Push modifications before switching or removing worktrees. Merge at the end of the work before sending <end>',
   '- Handle all edge cases: existing worktrees, branch conflicts, etc.',
 ].join('\n');

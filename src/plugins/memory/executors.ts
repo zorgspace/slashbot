@@ -47,16 +47,18 @@ export async function executeMemorySearch(
   );
   if (rows.length > 0) {
     const preview = rows.slice(0, 5);
-    const extra = rows.length > preview.length ? `\n- ... +${rows.length - preview.length} more match(es)` : '';
+    const extra =
+      rows.length > preview.length ? `\n- ... +${rows.length - preview.length} more match(es)` : '';
     const snippet = preview
       .map(row => {
-        const text = String(row.text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+        const text = String(row.text || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 240);
         return `- ${row.path}:${row.line}: ${text}`;
       })
       .join('\n');
-    display.appendAssistantMarkdown(
-      `Memory hits (${rows.length} total):\n${snippet}${extra}`,
-    );
+    display.appendAssistantMarkdown(`Memory hits (${rows.length} total):\n${snippet}${extra}`);
   }
   return {
     action: `MemorySearch: ${action.query}`,

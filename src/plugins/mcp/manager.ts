@@ -298,7 +298,11 @@ export class MCPManager {
     client: Client,
     transport: Transport,
   ): Promise<void> {
-    const toolsResult = await withTimeout(client.listTools(), DEFAULT_CONNECT_TIMEOUT, `List tools for ${name}`);
+    const toolsResult = await withTimeout(
+      client.listTools(),
+      DEFAULT_CONNECT_TIMEOUT,
+      `List tools for ${name}`,
+    );
     const tools: MCPToolInfo[] = (toolsResult.tools || []).map((tool: any) => ({
       name: tool.name,
       description: tool.description || '',

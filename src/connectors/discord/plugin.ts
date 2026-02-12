@@ -20,13 +20,7 @@ import { TYPES } from '../../core/di/types';
 import { createConnectorKernelHooks } from '../pluginHooks';
 
 function dedupe(values: string[]): string[] {
-  return Array.from(
-    new Set(
-      values
-        .map(value => value.trim())
-        .filter(Boolean),
-    ),
-  );
+  return Array.from(new Set(values.map(value => value.trim()).filter(Boolean)));
 }
 
 async function executeDiscordConfig(
@@ -93,9 +87,7 @@ async function executeDiscordStatus(
   const payload = await handlers.onDiscordStatus();
   const configured = !!payload?.configured;
   const running = !!payload?.running;
-  const authorized = Array.isArray(payload?.authorizedTargets)
-    ? payload.authorizedTargets
-    : [];
+  const authorized = Array.isArray(payload?.authorizedTargets) ? payload.authorizedTargets : [];
   display.appendAssistantMessage(
     formatToolAction('DiscordStatus', 'runtime', {
       success: configured,
@@ -339,9 +331,7 @@ export class DiscordPlugin implements ConnectorPlugin {
             const cfg = (context.configManager as any)?.getDiscordConfig?.();
             const registry = getRegistry();
             const runtime = registry?.get?.('discord')?.getStatus?.();
-            const configuredTargets = cfg
-              ? dedupe([cfg.channelId, ...(cfg.channelIds || [])])
-              : [];
+            const configuredTargets = cfg ? dedupe([cfg.channelId, ...(cfg.channelIds || [])]) : [];
             const authorizedTargets =
               runtime?.authorizedTargets?.length > 0
                 ? runtime.authorizedTargets
@@ -365,6 +355,15 @@ export class DiscordPlugin implements ConnectorPlugin {
           onDiscordAddChannel: async (channelId: string) => {
             try {
               await (context.configManager as any)?.addDiscordChannel?.(channelId);
+              const registry = getRegistry();
+              const connector = registry?.get?.('discord');
+              if (connector?.isRunning?.() && typeof connector.addChannel === 'function') {
+                connector.addChannel(channelId);
+                return {
+                  success: true,
+                  message: `Added Discord channel ${channelId}.`,
+                };
+              }
               return {
                 success: true,
                 message: `Added Discord channel ${channelId}. Restart slashbot to apply changes.`,
@@ -383,6 +382,15 @@ export class DiscordPlugin implements ConnectorPlugin {
           onDiscordRemoveChannel: async (channelId: string) => {
             try {
               await (context.configManager as any)?.removeDiscordChannel?.(channelId);
+              const registry = getRegistry();
+              const connector = registry?.get?.('discord');
+              if (connector?.isRunning?.() && typeof connector.removeChannel === 'function') {
+                connector.removeChannel(channelId);
+                return {
+                  success: true,
+                  message: `Removed Discord channel ${channelId}.`,
+                };
+              }
               return {
                 success: true,
                 message: `Removed Discord channel ${channelId}. Restart slashbot to apply changes.`,
@@ -401,6 +409,19 @@ export class DiscordPlugin implements ConnectorPlugin {
           onDiscordPrimaryChannel: async (channelId: string) => {
             try {
               await (context.configManager as any)?.setDiscordPrimaryChannel?.(channelId);
+              const registry = getRegistry();
+              const connector = registry?.get?.('discord');
+              if (connector?.isRunning?.()) {
+                if (typeof connector.setPrimaryChannel === 'function') {
+                  connector.setPrimaryChannel(channelId);
+                } else if (typeof connector.addChannel === 'function') {
+                  connector.addChannel(channelId);
+                }
+                return {
+                  success: true,
+                  message: `Primary Discord channel set to ${channelId}.`,
+                };
+              }
               return {
                 success: true,
                 message: `Primary Discord channel set to ${channelId}. Restart slashbot to apply changes.`,
@@ -422,6 +443,15 @@ export class DiscordPlugin implements ConnectorPlugin {
           onDiscordOwner: async (ownerId: string) => {
             try {
               await (context.configManager as any)?.setDiscordOwnerId?.(ownerId);
+              const registry = getRegistry();
+              const connector = registry?.get?.('discord');
+              if (connector?.isRunning?.() && typeof connector.setOwnerId === 'function') {
+                connector.setOwnerId(ownerId);
+                return {
+                  success: true,
+                  message: `Discord owner user id set to ${ownerId}.`,
+                };
+              }
               return {
                 success: true,
                 message: `Discord owner user id set to ${ownerId}. Restart slashbot to apply changes.`,
@@ -442,6 +472,15 @@ export class DiscordPlugin implements ConnectorPlugin {
                 cfg.channelIds,
                 undefined,
               );
+              const registry = getRegistry();
+              const connector = registry?.get?.('discord');
+              if (connector?.isRunning?.() && typeof connector.setOwnerId === 'function') {
+                connector.setOwnerId(null);
+                return {
+                  success: true,
+                  message: 'Discord owner user id cleared.',
+                };
+              }
               return {
                 success: true,
                 message: 'Discord owner user id cleared. Restart slashbot to apply changes.',
@@ -469,6 +508,15 @@ export class DiscordPlugin implements ConnectorPlugin {
                 cfg.channelIds,
                 undefined,
               );
+              const registry = getRegistry();
+              const connector = registry?.get?.('discord');
+              if (connector?.isRunning?.() && typeof connector.setOwnerId === 'function') {
+                connector.setOwnerId(null);
+                return {
+                  success: true,
+                  message: 'Discord owner user id cleared.',
+                };
+              }
               return {
                 success: true,
                 message: 'Discord owner user id cleared. Restart slashbot to apply changes.',
@@ -531,7 +579,10 @@ export class DiscordPlugin implements ConnectorPlugin {
                 message: 'Discord notification failed or target is not authorized',
               };
             } catch (error: any) {
-              return { success: false, message: error?.message || 'Failed to send Discord message' };
+              return {
+                success: false,
+                message: error?.message || 'Failed to send Discord message',
+              };
             }
           },
         },
@@ -606,7 +657,8 @@ export class DiscordPlugin implements ConnectorPlugin {
       },
       {
         name: 'discord_send',
-        description: 'Send a message through Discord connector to active or specific authorized channel.',
+        description:
+          'Send a message through Discord connector to active or specific authorized channel.',
         parameters: z.object({
           message: z.string().describe('Message to send'),
           channel_id: z
@@ -628,7 +680,6 @@ export class DiscordPlugin implements ConnectorPlugin {
       connectorId: 'discord',
       sidebarLabel: 'Discord',
       sidebarOrder: 11,
-      protectedAgentId: 'agent-discordagent',
     });
   }
 

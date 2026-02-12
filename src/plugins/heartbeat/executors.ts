@@ -47,9 +47,7 @@ export async function executeHeartbeat(
     };
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
-    display.appendAssistantMessage(
-      formatToolAction('Heartbeat', mode, { success: false }),
-    );
+    display.appendAssistantMessage(formatToolAction('Heartbeat', mode, { success: false }));
 
     return {
       action: 'heartbeat',

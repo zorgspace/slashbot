@@ -8,7 +8,10 @@ import type { Tool } from 'ai';
 import type { ToolContribution } from '../../plugins/types';
 import type { Action, ActionResult, ActionHandlers } from '../actions/types';
 import { executeActions } from '../actions/executor';
-import { detectEscapedNewlineCorruption } from '../actions/contentGuards';
+import {
+  detectEscapedNewlineCorruption,
+  repairStructuralEscapedNewlines,
+} from '../actions/contentGuards';
 import { display } from '../ui';
 
 /**
@@ -31,6 +34,7 @@ export interface ToolExecContext {
     endMessage?: string;
     pendingSayMessages: string[];
     blockedEndCount: number;
+    pendingVerificationFailure?: string;
   };
   maxBlockedEnds: number;
   cacheFileContents: boolean;
@@ -149,6 +153,13 @@ export class ToolRegistry {
           const failedList = Array.from(ctx.unresolvedEditPaths).join(', ');
           return `BLOCKED: Cannot finish \u2014 unresolved edit failures: ${failedList}. Fix them first.`;
         }
+        if (
+          ctx.signals.pendingVerificationFailure &&
+          ctx.signals.blockedEndCount < ctx.maxBlockedEnds
+        ) {
+          ctx.signals.blockedEndCount++;
+          return `BLOCKED: Cannot finish \u2014 verification command failed: ${ctx.signals.pendingVerificationFailure}. Fix the issue and rerun verification until it passes.`;
+        }
         const action = contrib.toAction(args);
         const message = (action as any).message || '';
         ctx.signals.shouldBreak = true;
@@ -186,7 +197,9 @@ export class ToolRegistry {
 
       // --- Regular action tools ---
       const action = contrib.toAction(args);
-      const normalizedActionType = String(action.type ?? '').trim().toLowerCase();
+      const normalizedActionType = String(action.type ?? '')
+        .trim()
+        .toLowerCase();
       if (ctx.executionPolicy?.blockedActionTypes.has(normalizedActionType)) {
         const msg = `${ctx.executionPolicy.blockReason} Blocked action: ${normalizedActionType}.`;
         ctx.actionResults.push({
@@ -203,7 +216,19 @@ export class ToolRegistry {
         const path = action.path as string | undefined;
         const newString = action.newString;
         if (typeof newString === 'string') {
-          const corruption = detectEscapedNewlineCorruption(newString);
+          let corruption = detectEscapedNewlineCorruption(newString);
+          if (corruption) {
+            const repaired = repairStructuralEscapedNewlines(newString);
+            if (repaired.changed) {
+              const repairedCorruption = detectEscapedNewlineCorruption(repaired.content);
+              if (!repairedCorruption) {
+                (action as any).newString = repaired.content;
+                corruption = null;
+              } else {
+                corruption = repairedCorruption;
+              }
+            }
+          }
           if (corruption) {
             const target = path || 'unknown file';
             const errorMsg = `Cannot edit ${target} — ${corruption}. Use REAL new lines in newString, not literal "\\n".`;
@@ -221,7 +246,19 @@ export class ToolRegistry {
         const path = action.path as string | undefined;
         const content = action.content;
         if (typeof content === 'string') {
-          const corruption = detectEscapedNewlineCorruption(content);
+          let corruption = detectEscapedNewlineCorruption(content);
+          if (corruption) {
+            const repaired = repairStructuralEscapedNewlines(content);
+            if (repaired.changed) {
+              const repairedCorruption = detectEscapedNewlineCorruption(repaired.content);
+              if (!repairedCorruption) {
+                (action as any).content = repaired.content;
+                corruption = null;
+              } else {
+                corruption = repairedCorruption;
+              }
+            }
+          }
           if (corruption) {
             const target = path || 'unknown file';
             const verb = action.type === 'write' ? 'write' : 'create';
@@ -294,6 +331,7 @@ export class ToolRegistry {
         const path = actionStr.replace(/^Write:\s*/, '').trim();
         ctx.unresolvedEditPaths.delete(path);
       }
+      this.trackVerificationFailure(action, result, ctx);
 
       // Cache file contents
       if (ctx.cacheFileContents) {
@@ -305,6 +343,44 @@ export class ToolRegistry {
       const errorNote = result.error ? `\nError: ${result.error}` : '';
       return `[${status}] ${result.result}${errorNote}`;
     });
+  }
+
+  private trackVerificationFailure(
+    action: Action,
+    result: ActionResult,
+    ctx: ToolExecContext,
+  ): void {
+    const actionType = String(action.type || '')
+      .trim()
+      .toLowerCase();
+    if (actionType !== 'bash' && actionType !== 'exec') {
+      return;
+    }
+    const command =
+      typeof (action as any).command === 'string' ? (action as any).command.trim() : '';
+    if (!command || !this.isVerificationCommand(command)) {
+      return;
+    }
+    if (result.success) {
+      ctx.signals.pendingVerificationFailure = undefined;
+      return;
+    }
+    ctx.signals.pendingVerificationFailure = command;
+  }
+
+  private isVerificationCommand(command: string): boolean {
+    const normalized = command.toLowerCase();
+    const patterns = [
+      /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|typecheck|check)\b/,
+      /\bgo\s+test\b/,
+      /\bcargo\s+(?:test|check|clippy|build)\b/,
+      /\b(?:pytest|vitest|jest|mocha|ava)\b/,
+      /\btsc\b/,
+      /\b(?:eslint|ruff|mypy)\b/,
+      /\b(?:gradle|mvn|dotnet)\b.*\b(?:test|build|check)\b/,
+      /\bmake\s+(?:test|lint|build|check)\b/,
+    ];
+    return patterns.some(pattern => pattern.test(normalized));
   }
 
   private async cacheFileContent(

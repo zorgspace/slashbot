@@ -44,6 +44,7 @@ export function buildDelegatedTaskPrompt(options: {
     '- Use agents_status/agents_send/sessions_* only when blocked by missing ownership/context.',
     '- Do not loop on coordination tools.',
     '- For bug/incident tasks: reproduce -> fix -> verify. Do not skip verification.',
+    '- If build/test/lint/typecheck fails, continue working and rerun verification until passing before end_task.',
     '- Include real evidence in final output: files changed + command(s)/test(s) run + result.',
     '- If task is clearly outside your specialization, delegate once to the best specialist with a precise request, then stop.',
     `- Before <end_task>, send completion report to ${task.fromAgentId} via <agent-send>.`,

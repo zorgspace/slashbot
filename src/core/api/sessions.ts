@@ -605,9 +605,13 @@ export class SessionManager {
     let pressure = this.getContextPressureForSession(sessionId, resolved.modelMaxTokens);
 
     if (pressure.ratio >= resolved.pruneRatio) {
-      const pruned = this.pruneOldToolOutputsForSession(sessionId, resolved.protectRecentToolOutputs, {
-        quiet: true,
-      });
+      const pruned = this.pruneOldToolOutputsForSession(
+        sessionId,
+        resolved.protectRecentToolOutputs,
+        {
+          quiet: true,
+        },
+      );
       if (pruned > 0) {
         actions.push(`prune:${pruned}`);
         changed = true;
@@ -647,8 +651,7 @@ export class SessionManager {
       pruneRatio: policy?.pruneRatio ?? COMPACTION.PRUNE_RATIO,
       summaryRatio: policy?.summaryRatio ?? COMPACTION.SUMMARY_RATIO,
       hardResetRatio: policy?.hardResetRatio ?? COMPACTION.HARD_RESET_RATIO,
-      protectRecentToolOutputs:
-        policy?.protectRecentToolOutputs ?? COMPACTION.PRUNE_PROTECT_RECENT,
+      protectRecentToolOutputs: policy?.protectRecentToolOutputs ?? COMPACTION.PRUNE_PROTECT_RECENT,
       keepRecentMessages: policy?.keepRecentMessages ?? COMPACTION.HARD_RESET_KEEP_RECENT_MESSAGES,
     };
   }
@@ -888,7 +891,7 @@ export class SessionManager {
       return false;
     }
     const systemPrompt = history[0];
-    const recent = history.slice(-(Math.max(1, keepRecentMessages)));
+    const recent = history.slice(-Math.max(1, keepRecentMessages));
     session.history = [systemPrompt, ...recent];
     this.noteSessionCompaction(sessionId, {
       kind: 'prune',

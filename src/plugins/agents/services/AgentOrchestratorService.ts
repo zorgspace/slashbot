@@ -19,6 +19,43 @@ import type {
 } from './types';
 
 const DEFAULT_POLL_MS = 5000;
+const DEFAULT_TASK_MAX_RETRIES = 2;
+
+const RECOVERABLE_TASK_FAILURE_PATTERNS: RegExp[] = [
+  /did not finish with an <end_task>/i,
+  /task ended with failed verification/i,
+  /verification command failed/i,
+  /\bverification failed\b/i,
+  /\bbuild failed\b/i,
+  /\btest(?:s)? failed\b/i,
+  /\blint failed\b/i,
+  /\btypecheck failed\b/i,
+  /\bcommand failed\b/i,
+  /\bexit code\b/i,
+  /cannot finish .* unresolved edit failures/i,
+];
+
+const FAILED_COMPLETION_PATTERNS: RegExp[] = [
+  /\bbuild failed\b/i,
+  /\btest(?:s)? failed\b/i,
+  /\bverification failed\b/i,
+  /\blint failed\b/i,
+  /\btypecheck failed\b/i,
+  /\bunable to\b/i,
+  /\bcould not\b/i,
+  /\bblocked\b/i,
+  /\bnot (?:fixed|resolved|verified)\b/i,
+];
+
+const PASSED_COMPLETION_PATTERNS: RegExp[] = [
+  /\bbuild pass(?:ed|es)?\b/i,
+  /\btests? pass(?:ed|es)?\b/i,
+  /\bverification pass(?:ed|es)?\b/i,
+  /\b0 failed\b/i,
+  /\bno (?:tests?\s+)?failed\b/i,
+  /\bno failures\b/i,
+  /\ball checks pass(?:ed|es)?\b/i,
+];
 
 const WORKSPACE_FILES = [
   'AGENTS.md',
@@ -28,6 +65,18 @@ const WORKSPACE_FILES = [
   'USER.md',
   'HEARTBEAT.md',
 ] as const;
+const REMOVED_CONNECTOR_AGENT_SLUGS = new Set(['telegram', 'discord']);
+
+function isRemovedLegacyConnectorAgentId(agentId: string): boolean {
+  const normalized = String(agentId || '')
+    .trim()
+    .toLowerCase();
+  const match = normalized.match(/^agent-([a-z0-9-]+)agent$/);
+  if (!match) {
+    return false;
+  }
+  return REMOVED_CONNECTOR_AGENT_SLUGS.has(match[1]);
+}
 
 type AgentTaskRouter = (request: AgentRoutingRequest) => Promise<AgentRoutingDecision | null>;
 
@@ -49,15 +98,46 @@ function defaultArchitectPrompt(name: string, responsibility: string): string {
     `Responsibility: ${responsibility}.`,
     'CRITICAL: Never implement, edit, or run product code yourself.',
     'Your role is planning, decomposition, delegation, and verification only.',
+    'Do a short preflight analysis in this tab before delegating so you can use the best available specialist.',
     'Before delegating any user request, inspect available agents first (agents_status / agents_list) and choose the most adequate specialist.',
-    'If no adequate specialist exists, create or retask one before delegation.',
-    'Manage agents aggressively: pop dedicated specialists with /agent spawn, delegate via <agent-send>, and tidy up with /agent delete once the work is done.',
+    'Prefer reusing existing specialist tabs/agents when they already match the task.',
+    'If no adequate specialist exists, create or retask one before delegation. Do not spawn a new agent for every request.',
+    'Delegate partial or full tasks to agents. For example if you have a github agent available, wait for the end of Developer agent then process it and send to github agent.',
     '- Never delegate to yourself.',
-    'Track orchestration steps using the todo plugin: create or refresh a <todo-write> list, read it with <todo-read/>, and update statuses as subtasks progress.',
     'Require each worker to report completion evidence back to you before you mark the larger effort complete.',
-    'Assign tasks after assessing queue, blockers, and todo state; reroute quickly when blockers remain.',
+    'Assign tasks after assessing queue and blockers; reroute quickly when blockers remain.',
     'The orchestrator owns the final user-facing completion signal only after verifying worker reports.',
   ].join('\n');
+}
+
+const LEGACY_AGGRESSIVE_ARCHITECT_LINE =
+  'Manage agents aggressively: pop dedicated specialists with /agent spawn, delegate via <agent-send>, and tidy up with /agent delete once the work is done.';
+
+function upgradeLegacyArchitectPrompt(prompt: string): string {
+  let upgraded = prompt;
+
+  // Remove legacy todo-tool steering from architect prompts.
+  upgraded = upgraded
+    .replace(/\n?Track orchestration steps using the todo plugin:[^\n]*\n?/gi, '\n')
+    .replace(/queue,\s*blockers,\s*and\s*todo state/gi, 'queue and blockers')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (upgraded.includes(LEGACY_AGGRESSIVE_ARCHITECT_LINE)) {
+    upgraded = upgraded.replace(
+      LEGACY_AGGRESSIVE_ARCHITECT_LINE,
+      'Prefer reusing existing specialist tabs/agents when they already match the task. If no adequate specialist exists, create or retask one before delegation. Do not spawn a new agent for every request.',
+    );
+  }
+
+  if (upgraded.includes('Do a short preflight analysis in this tab before delegating')) {
+    return upgraded;
+  }
+
+  return upgraded.replace(
+    'Your role is planning, decomposition, delegation, and verification only.',
+    'Your role is planning, decomposition, delegation, and verification only.\nDo a short preflight analysis in this tab before delegating so you can use the best available specialist.',
+  );
 }
 
 function defaultAgentPrompt(name: string, responsibility: string): string {
@@ -410,15 +490,22 @@ export class AgentOrchestratorService {
       kind === 'architect'
         ? defaultArchitectPrompt(name, responsibility)
         : kind === 'connector'
-          ? defaultConnectorPrompt(name, responsibility, id.replace(/^agent-/, '').replace(/agent$/, ''))
+          ? defaultConnectorPrompt(
+              name,
+              responsibility,
+              id.replace(/^agent-/, '').replace(/agent$/, ''),
+            )
           : defaultAgentPrompt(name, responsibility);
+
+    const normalizedPrompt =
+      kind === 'architect' && rawPrompt ? upgradeLegacyArchitectPrompt(rawPrompt) : rawPrompt;
 
     return {
       id,
       name,
       kind,
       responsibility,
-      systemPrompt: rawPrompt || systemPromptDefault,
+      systemPrompt: normalizedPrompt || systemPromptDefault,
       sessionId:
         typeof raw.sessionId === 'string' && raw.sessionId.trim() ? raw.sessionId : `agent:${id}`,
       workspaceDir,
@@ -516,7 +603,11 @@ export class AgentOrchestratorService {
       }
       const raw = (await file.json()) as Partial<AgentWorkspaceState>;
       const rawAgents = Array.isArray(raw.agents) ? raw.agents : [];
-      const agents = rawAgents.map((entry, i) => this.normalizeAgentProfile(entry, i));
+      const filteredRawAgents = rawAgents.filter(entry => {
+        const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+        return !isRemovedLegacyConnectorAgentId(id);
+      });
+      const agents = filteredRawAgents.map((entry, i) => this.normalizeAgentProfile(entry, i));
       this.state = {
         version: 1,
         activeAgentId:
@@ -537,9 +628,15 @@ export class AgentOrchestratorService {
         return;
       }
       const raw = (await file.json()) as Partial<AgentTaskState>;
+      const loadedTasks = Array.isArray(raw.tasks) ? raw.tasks : [];
+      const tasks = loadedTasks.filter(task => {
+        const from = typeof task?.fromAgentId === 'string' ? task.fromAgentId.trim() : '';
+        const to = typeof task?.toAgentId === 'string' ? task.toAgentId.trim() : '';
+        return !isRemovedLegacyConnectorAgentId(from) && !isRemovedLegacyConnectorAgentId(to);
+      });
       this.tasks = {
         version: 1,
-        tasks: Array.isArray(raw.tasks) ? raw.tasks : [],
+        tasks,
       };
     } catch {
       // Keep defaults
@@ -621,7 +718,11 @@ export class AgentOrchestratorService {
         (kind === 'architect'
           ? defaultArchitectPrompt(name, responsibility)
           : kind === 'connector'
-            ? defaultConnectorPrompt(name, responsibility, id.replace(/^agent-/, '').replace(/agent$/, ''))
+            ? defaultConnectorPrompt(
+                name,
+                responsibility,
+                id.replace(/^agent-/, '').replace(/agent$/, ''),
+              )
             : defaultAgentPrompt(name, responsibility)),
       sessionId: `agent:${id}`,
       workspaceDir: this.resolveAgentWorkspaceDir(id),
@@ -676,7 +777,9 @@ export class AgentOrchestratorService {
     connectorId: string;
     label?: string;
   }): Promise<AgentProfile | null> {
-    const connectorId = String(options.connectorId || '').trim().toLowerCase();
+    const connectorId = String(options.connectorId || '')
+      .trim()
+      .toLowerCase();
     if (!connectorId) {
       return null;
     }
@@ -860,6 +963,7 @@ export class AgentOrchestratorService {
       '- Reproduce the issue with concrete commands/steps and expected vs actual behavior.',
       '- Implement a fix (or document exact blocker with evidence).',
       '- Validate with command/test output.',
+      '- If build/test/lint/typecheck fails, do not end_task yet. Fix and rerun verification until passing (or report an explicit blocker).',
       '- Summarize files changed, commands run, results, and residual risk.',
       `- Before end_task, send a completion report to ${params.fromAgentId} via <agent-send>.`,
       '[end-task-contract]',
@@ -1008,6 +1112,8 @@ export class AgentOrchestratorService {
       title: taskTitle,
       content,
       status: 'queued',
+      retryCount: 0,
+      maxRetries: DEFAULT_TASK_MAX_RETRIES,
       createdAt,
       updatedAt: createdAt,
     };
@@ -1048,11 +1154,15 @@ export class AgentOrchestratorService {
   private async poll(): Promise<void> {
     await this.loadTasks();
     const agents = this.listAgents().filter(a => a.enabled && a.autoPoll);
+    const runs: Promise<void>[] = [];
     for (const agent of agents) {
       if (this.inFlightAgents.has(agent.id)) continue;
       const task = this.tasks.tasks.find(t => t.toAgentId === agent.id && t.status === 'queued');
       if (!task) continue;
-      await this.runTask(agent, task);
+      runs.push(this.runTask(agent, task));
+    }
+    if (runs.length > 0) {
+      await Promise.allSettled(runs);
     }
   }
 
@@ -1065,6 +1175,40 @@ export class AgentOrchestratorService {
     if (!task) return false;
     await this.runTask(agent, task);
     return true;
+  }
+
+  private summaryLooksUnverified(summary: string): boolean {
+    const normalized = summary.trim();
+    if (!normalized) {
+      return false;
+    }
+    if (!FAILED_COMPLETION_PATTERNS.some(pattern => pattern.test(normalized))) {
+      return false;
+    }
+    return !PASSED_COMPLETION_PATTERNS.some(pattern => pattern.test(normalized));
+  }
+
+  private shouldRetryTaskFailure(task: AgentTask, errorMessage: string): boolean {
+    const retriesUsed = Math.max(0, Number(task.retryCount || 0));
+    const maxRetries = Math.max(0, Number(task.maxRetries ?? DEFAULT_TASK_MAX_RETRIES));
+    if (retriesUsed >= maxRetries) {
+      return false;
+    }
+    return RECOVERABLE_TASK_FAILURE_PATTERNS.some(pattern => pattern.test(errorMessage));
+  }
+
+  private appendRetryContext(task: AgentTask, errorMessage: string): void {
+    const retriesUsed = Math.max(0, Number(task.retryCount || 0));
+    const maxRetries = Math.max(0, Number(task.maxRetries ?? DEFAULT_TASK_MAX_RETRIES));
+    const compactError = errorMessage.replace(/\s+/g, ' ').trim().slice(0, 600);
+    task.content = [
+      task.content,
+      '',
+      `[retry-attempt ${retriesUsed}/${maxRetries}]`,
+      `Previous attempt ended with recoverable failure: ${compactError}`,
+      'Continue execution, fix the root cause, and rerun verification commands until they pass before end_task.',
+      '[end-retry-attempt]',
+    ].join('\n');
   }
 
   private async runTask(agent: AgentProfile, task: AgentTask): Promise<void> {
@@ -1082,8 +1226,12 @@ export class AgentOrchestratorService {
 
     try {
       const result = await this.taskExecutor(agent, task);
+      if (this.summaryLooksUnverified(result.summary)) {
+        throw new Error(`Task ended with failed verification: ${result.summary.slice(0, 400)}`);
+      }
       task.status = 'done';
       task.resultSummary = result.summary;
+      task.error = undefined;
       task.finishedAt = nowIso();
       task.updatedAt = task.finishedAt;
       agent.lastRunAt = task.finishedAt;
@@ -1093,6 +1241,36 @@ export class AgentOrchestratorService {
       this.eventBus.emit({ type: 'agents:task-done', task, agentId: agent.id });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      if (this.shouldRetryTaskFailure(task, msg)) {
+        task.retryCount = Math.max(0, Number(task.retryCount || 0)) + 1;
+        task.status = 'queued';
+        task.error = undefined;
+        task.startedAt = undefined;
+        task.finishedAt = undefined;
+        task.resultSummary = undefined;
+        task.updatedAt = nowIso();
+        this.appendRetryContext(task, msg);
+        agent.lastRunAt = task.updatedAt;
+        agent.lastError = msg;
+        await this.saveTasks();
+        await this.saveState();
+        this.eventBus.emit({
+          type: 'agents:task-queued',
+          task,
+          agentId: agent.id,
+          retry: true,
+          error: msg,
+        } as any);
+        this.eventBus.emit({
+          type: 'agents:task-retry',
+          task,
+          agentId: agent.id,
+          error: msg,
+          retryCount: task.retryCount,
+          maxRetries: task.maxRetries ?? DEFAULT_TASK_MAX_RETRIES,
+        } as any);
+        return;
+      }
       task.status = 'failed';
       task.error = msg;
       task.finishedAt = nowIso();

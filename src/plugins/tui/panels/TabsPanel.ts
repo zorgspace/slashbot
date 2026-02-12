@@ -191,7 +191,9 @@ export class TabsPanel {
     this.container.borderColor = this.BORDER_COLOR;
     this.titleText.content = t`${bold(fg(this.ACTIVE_ROW_COLOR)('Explorer'))}`;
 
-    const agentCount = this.tabs.filter(tab => tab.section === 'agents' && tab.id !== 'agents').length;
+    const agentCount = this.tabs.filter(
+      tab => tab.section === 'agents' && tab.id !== 'agents',
+    ).length;
     const connectorCount = this.tabs.filter(tab => tab.section === 'connectors').length;
     const counts: string[] = [];
     counts.push(`${Math.max(0, agentCount)} agents`);

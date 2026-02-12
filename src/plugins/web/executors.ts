@@ -22,7 +22,10 @@ export async function executeFetch(
     const charCount = content.length;
 
     display.appendAssistantMessage(
-      formatToolAction('Fetch', detail, { success: true, summary: `${charCount} chars, ${lines} lines` }),
+      formatToolAction('Fetch', detail, {
+        success: true,
+        summary: `${charCount} chars, ${lines} lines`,
+      }),
     );
 
     return {
@@ -64,9 +67,7 @@ export async function executeSearch(
     });
 
     const summary = citations.length > 0 ? `${citations.length} sources` : 'done';
-    display.appendAssistantMessage(
-      formatToolAction('Search', detail, { success: true, summary }),
-    );
+    display.appendAssistantMessage(formatToolAction('Search', detail, { success: true, summary }));
 
     return {
       action: `Search: ${action.query}`,

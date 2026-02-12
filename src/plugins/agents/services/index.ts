@@ -1,4 +1,7 @@
-export { AgentOrchestratorService, createAgentOrchestratorService } from './AgentOrchestratorService';
+export {
+  AgentOrchestratorService,
+  createAgentOrchestratorService,
+} from './AgentOrchestratorService';
 export type {
   AgentProfile,
   AgentTask,

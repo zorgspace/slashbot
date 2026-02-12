@@ -41,11 +41,7 @@ function shouldUnwrapValueObject(obj: Record<string, unknown>): boolean {
   return keys.every(key => WRAPPER_KEYS.has(key));
 }
 
-function normalizeValue(
-  value: unknown,
-  depth: number,
-  seen: WeakSet<object>,
-): unknown {
+function normalizeValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
   if (depth <= 0) {
     if (Array.isArray(value)) return '[Array]';
     if (value && typeof value === 'object') return '[Object]';

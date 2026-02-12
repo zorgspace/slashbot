@@ -76,32 +76,33 @@ export class HeartbeatPlugin implements Plugin {
         throw new Error('Grok client not initialized');
       }
       const safePrompt = `[HEARTBEAT - REFLECTION MODE]\n${prompt}`;
-      const result = await (
-        grokClient as {
-          chatIsolated?: (
-            p: string,
-            opts?: {
-              quiet?: boolean;
-              includeFileContext?: boolean;
-              continueActions?: boolean;
-              executeActions?: boolean;
-              maxIterations?: number;
-            },
-          ) => Promise<{ response?: string; thinking?: string }>;
-          chat: (p: string) => Promise<{ response?: string; thinking?: string }>;
-        }
-      ).chatIsolated?.(safePrompt, {
-        quiet: true,
-        includeFileContext: false,
-        continueActions: false,
-        executeActions: runContext.executeActions,
-        maxIterations: 1,
-      }) ??
-      (await (
-        grokClient as {
-          chat: (p: string) => Promise<{ response?: string; thinking?: string }>;
-        }
-      ).chat(safePrompt));
+      const result =
+        (await (
+          grokClient as {
+            chatIsolated?: (
+              p: string,
+              opts?: {
+                quiet?: boolean;
+                includeFileContext?: boolean;
+                continueActions?: boolean;
+                executeActions?: boolean;
+                maxIterations?: number;
+              },
+            ) => Promise<{ response?: string; thinking?: string }>;
+            chat: (p: string) => Promise<{ response?: string; thinking?: string }>;
+          }
+        ).chatIsolated?.(safePrompt, {
+          quiet: true,
+          includeFileContext: false,
+          continueActions: false,
+          executeActions: runContext.executeActions,
+          maxIterations: 1,
+        })) ??
+        (await (
+          grokClient as {
+            chat: (p: string) => Promise<{ response?: string; thinking?: string }>;
+          }
+        ).chat(safePrompt));
       return { response: result.response || '', thinking: result.thinking };
     });
 
@@ -133,11 +134,13 @@ export class HeartbeatPlugin implements Plugin {
           }
 
           this.hadPendingAgentWork = false;
-          heartbeatService.execute({
-            silent: true,
-            reason: 'agents-drained',
-            force: false,
-          }).catch(() => {});
+          heartbeatService
+            .execute({
+              silent: true,
+              reason: 'agents-drained',
+              force: false,
+            })
+            .catch(() => {});
         },
       },
     ];

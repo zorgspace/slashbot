@@ -11,6 +11,7 @@ import {
   summarizeToolResult,
   humanizeToolName,
   isAssistantToolTranscript,
+  isExploreToolName,
 } from '../ui';
 import type { SidebarData } from '../ui/types';
 import { createGrokClient, GrokClient } from '../api';
@@ -72,6 +73,7 @@ const AGENT_BOOTSTRAP_FILES = [
 ] as const;
 const MAX_AGENT_BOOTSTRAP_FILE_CHARS = 2400;
 const MAX_AGENT_BOOTSTRAP_TOTAL_CHARS = 10000;
+const CONNECTOR_AGENT_MIRROR_DISABLED = new Set(['telegram', 'discord']);
 
 export class Slashbot {
   private grokClient: GrokClient | null = null;
@@ -216,6 +218,34 @@ export class Slashbot {
     return this.tuiApp?.getActiveTabId() || this.agentService?.getActiveAgentId() || 'agents';
   }
 
+  private syncInputAvailabilityForTab(tabId: string): void {
+    if (!this.tuiApp) {
+      return;
+    }
+
+    if (tabId === 'agents') {
+      this.tuiApp.setInputEnabled(false, {
+        placeholder: 'Overview is read-only. Select an agent or connector tab.',
+      });
+      return;
+    }
+
+    const connectorTab = this.resolveConnectorTabInfo(tabId);
+    if (connectorTab) {
+      const summary = getLastPasteSummary();
+      const placeholder = `Send to ${connectorTab.label}...`;
+      this.tuiApp.setInputEnabled(true, {
+        placeholder: summary ? `${summary} ${placeholder}` : placeholder,
+      });
+      return;
+    }
+
+    const summary = getLastPasteSummary();
+    this.tuiApp.setInputEnabled(true, {
+      placeholder: summary ? `${summary} Type your message...` : 'Type your message...',
+    });
+  }
+
   private isConnectorSessionId(value: string): boolean {
     const idx = value.indexOf(':');
     if (idx <= 0 || idx >= value.length - 1) {
@@ -231,13 +261,42 @@ export class Slashbot {
       return true;
     }
 
-    return this.connectorRegistry
-      ?.getSnapshots()
-      .some(snapshot => snapshot.id.toLowerCase() === source) ?? false;
+    return (
+      this.connectorRegistry
+        ?.getSnapshots()
+        .some(snapshot => snapshot.id.toLowerCase() === source) ?? false
+    );
   }
 
   private getConnectorTabInfo(tabId: string): ConnectorTabInfo | null {
     return this.connectorTabs.get(tabId) || null;
+  }
+
+  private resolveConnectorTabInfo(tabId: string): ConnectorTabInfo | null {
+    const mapped = this.getConnectorTabInfo(tabId);
+    if (mapped) {
+      return mapped;
+    }
+
+    const parsed = this.parseConnectorSessionId(tabId);
+    if (!parsed) {
+      return null;
+    }
+
+    const source = parsed.source.trim().toLowerCase();
+    const targetId = parsed.targetId.trim();
+    if (!source || !targetId) {
+      return null;
+    }
+
+    const label = `${source.charAt(0).toUpperCase() + source.slice(1)} ${targetId}`;
+    return {
+      tabId,
+      source,
+      targetId,
+      sessionId: tabId,
+      label,
+    };
   }
 
   private getSessionIdForTab(tabId: string): string | null {
@@ -546,6 +605,17 @@ export class Slashbot {
     return normalized.includes('<session-actions>') || normalized.includes('[ralph-nudge]');
   }
 
+  private extractRenderableUserMessage(text: string): string {
+    const normalized = text.replace(/^\[you\]\s*/i, '').trim();
+    if (!normalized) {
+      return '';
+    }
+    const strippedSystemInstruction = normalized
+      .replace(/^<system-instruction>[\s\S]*?<\/system-instruction>\s*/i, '')
+      .trim();
+    return strippedSystemInstruction || normalized;
+  }
+
   private abortJobsInTab(options?: { tabId?: string; source?: 'ctrl_c' | 'escape' }): boolean {
     const source = options?.source || 'ctrl_c';
     const tabId = options?.tabId || this.getCliActiveTabId();
@@ -620,8 +690,10 @@ export class Slashbot {
       return [
         'Tab mode: ORCHESTRATOR.',
         'Use this tab only for planning, delegation, and verification.',
+        'Run a short preflight analysis in this tab before delegating.',
         'Before delegating for a user request, inspect available agents first (agents_status / agents_list) and choose the most adequate specialist.',
-        'If no adequate specialist exists, create or retask one before delegating.',
+        'Prefer reusing existing specialist tabs/agents when they match the task.',
+        'If no adequate specialist exists, create or retask one before delegating. Do not spawn a new agent for every request.',
         'Never implement directly in this tab. Delegate implementation to specialist agents with agents_send.',
         'Require specialists to report completion evidence back before you close the request.',
       ];
@@ -642,6 +714,50 @@ export class Slashbot {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
     return `agent-${normalized || 'connector'}agent`;
+  }
+
+  private shouldMirrorConnectorAsAgent(connectorId: string): boolean {
+    return !CONNECTOR_AGENT_MIRROR_DISABLED.has(connectorId.trim().toLowerCase());
+  }
+
+  private buildVirtualConnectorProfile(options: {
+    connectorId: string;
+    label: string;
+    sessionId: string;
+  }): AgentProfile {
+    const connectorId = options.connectorId.trim().toLowerCase();
+    const connectorLabel = options.label.trim() || connectorId;
+    const connector = connectorId.toUpperCase();
+    const now = new Date().toISOString();
+    const connectorRoot = path.join(this.basePath || process.cwd(), '.connectors', connectorId);
+
+    return {
+      id: `connector-${connectorId}`,
+      name: `${connectorLabel} Connector`,
+      kind: 'connector',
+      responsibility: `${connectorLabel} connector operations specialist. Handle ${connectorId} requests safely.`,
+      systemPrompt: `You are ${connectorLabel} Connector, the ${connector} connector agent.
+
+Your core responsibility: ${connectorLabel} connector operations specialist. Handle ${connectorId} requests safely.
+
+Execution policy:
+- Handle inbound ${connector} requests directly with available tools.
+- Keep responses concise and platform-safe for connector users.
+- Execute required actions (read/edit/write/bash/tools) without unnecessary delegation.
+- Delegate only when blocked by missing ownership or specialization.
+
+Communication rules:
+- Use clear, short progress/status updates.
+- End with brief plain-language summaries when a request is complete.`,
+      sessionId: options.sessionId,
+      workspaceDir: connectorRoot,
+      agentDir: path.join(connectorRoot, 'agent'),
+      enabled: true,
+      autoPoll: false,
+      removable: true,
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 
   private async readAgentBootstrapSections(agent: AgentProfile): Promise<string[]> {
@@ -757,9 +873,11 @@ export class Slashbot {
   }
 
   private async ensureConnectorSession(source: ConnectorSource, sessionId: string): Promise<void> {
-    if (!this.grokClient || !this.agentService) return;
+    if (!this.grokClient) return;
 
-    const connectorId = String(source || '').trim().toLowerCase();
+    const connectorId = String(source || '')
+      .trim()
+      .toLowerCase();
     if (!connectorId || connectorId === 'cli') return;
 
     const snapshot = this.connectorRegistry
@@ -769,15 +887,26 @@ export class Slashbot {
       ? snapshot.id.charAt(0).toUpperCase() + snapshot.id.slice(1)
       : connectorId.charAt(0).toUpperCase() + connectorId.slice(1);
 
-    let connectorAgent = this.agentService.getAgent(this.connectorAgentIdFromSource(source));
-    if (!connectorAgent || connectorAgent.kind !== 'connector' || connectorAgent.removable !== false) {
-      connectorAgent = await this.agentService.ensureConnectorAgent({
-        connectorId,
-        label,
-      });
+    let connectorAgent: AgentProfile | null = null;
+    if (this.shouldMirrorConnectorAsAgent(connectorId) && this.agentService) {
+      connectorAgent = this.agentService.getAgent(this.connectorAgentIdFromSource(source));
+      if (
+        !connectorAgent ||
+        connectorAgent.kind !== 'connector' ||
+        connectorAgent.removable !== false
+      ) {
+        connectorAgent = await this.agentService.ensureConnectorAgent({
+          connectorId,
+          label,
+        });
+      }
     }
     if (!connectorAgent) {
-      return;
+      connectorAgent = this.buildVirtualConnectorProfile({
+        connectorId,
+        label,
+        sessionId,
+      });
     }
 
     const parsed = this.parseConnectorSessionId(sessionId);
@@ -810,6 +939,9 @@ export class Slashbot {
       .getSnapshots()
       .filter(snapshot => snapshot.configured || snapshot.running);
     for (const snapshot of snapshots) {
+      if (!this.shouldMirrorConnectorAsAgent(snapshot.id)) {
+        continue;
+      }
       const label = snapshot.id.charAt(0).toUpperCase() + snapshot.id.slice(1);
       await this.agentService.ensureConnectorAgent({
         connectorId: snapshot.id,
@@ -857,6 +989,8 @@ export class Slashbot {
       'ORCHESTRATOR PREFLIGHT (apply before acting on this user request):',
       '- Inspect the agent roster snapshot below first.',
       '- Pick the most adequate enabled specialist for the requested task.',
+      '- Prefer existing specialist tabs/agents; do not spawn a new agent for every request.',
+      '- If a specialist already has an implementation+commit role, delegate the full task there and monitor completion.',
       '- If no agent is adequate, create or retask one before delegation.',
       '- Keep this tab orchestration-only (no direct implementation).',
       '',
@@ -1054,51 +1188,9 @@ export class Slashbot {
     return '[non-text content]';
   }
 
-  private renderAssistantToolTranscript(text: string): boolean {
+  private renderAssistantToolTranscript(text: string, tabId?: string): boolean {
     if (!this.tuiApp) return false;
-    return display.renderAssistantTranscript(text);
-  }
-
-  private isExploreTool(toolName: string): boolean {
-    const normalized = toolName.trim().toLowerCase();
-    return (
-      normalized === 'grep' ||
-      normalized === 'ls' ||
-      normalized === 'list' ||
-      normalized === 'glob' ||
-      normalized === 'explore' ||
-      normalized === 'read' ||
-      normalized === 'read_file'
-    );
-  }
-
-  private buildExplorePreview(raw: string, maxLines = 5): { lines: string[]; total: number } {
-    const lines = raw
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean)
-      .map(line => line.replace(/^\[[✓✗]\]\s*/, ''));
-    return {
-      lines: lines.slice(-maxLines),
-      total: lines.length,
-    };
-  }
-
-  private buildExploreSummaryMarkdown(
-    entries: Array<{ toolName: string; success: boolean; lines: string[]; total: number }>,
-  ): string {
-    const total = entries.reduce((sum, e) => sum + e.total, 0);
-    const ok = entries.every(e => e.success);
-    const allPreviewRows = entries.flatMap(entry =>
-      entry.lines.map(line => `- ${entry.toolName}: ${line}`),
-    );
-    const previewRows = allPreviewRows.slice(-5);
-    const hidden = Math.max(0, allPreviewRows.length - previewRows.length);
-    const header = `Explore - ${entries.length} probe(s) ${ok ? '✓' : '✗'} ${total} lines`;
-    if (previewRows.length === 0) {
-      return `${header}\n- no matches`;
-    }
-    return `${header}\n${previewRows.join('\n')}${hidden > 0 ? `\n- ... +${hidden} more line(s)` : ''}`;
+    return display.withOutputTab(tabId, () => display.renderAssistantTranscript(text));
   }
 
   private resolveRenderMetadata(
@@ -1161,8 +1253,22 @@ export class Slashbot {
 
     const existing = msg?._render as { kind?: string; text?: string } | undefined;
     if (existing?.kind && typeof existing.text === 'string') {
+      if (msg?.role === 'user') {
+        const userText = this.extractRenderableUserMessage(raw);
+        if (!userText) {
+          return finalize('skip', '');
+        }
+        if (this.isInternalUserMessage(userText)) {
+          return finalize('skip', '');
+        }
+        if (userText.includes('<session-summary>')) {
+          return finalize('compaction_divider', 'Conversation context compacted');
+        }
+        return finalize('user', userText);
+      }
+
       if (existing.kind === 'user') {
-        const userText = existing.text.replace(/^\[you\]\s*/i, '').trim();
+        const userText = this.extractRenderableUserMessage(existing.text || raw);
         if (this.isInternalUserMessage(userText)) {
           return finalize('skip', '');
         }
@@ -1209,10 +1315,12 @@ export class Slashbot {
     let text = raw;
 
     if (msg?.role === 'user') {
-      const normalizedUserText = raw.replace(/^\[you\]\s*/i, '').trim();
-      if (this.isInternalUserMessage(normalizedUserText)) {
+      const normalizedUserText = this.extractRenderableUserMessage(raw);
+      if (!normalizedUserText) {
         kind = 'skip';
-      } else if (raw.includes('<session-summary>')) {
+      } else if (this.isInternalUserMessage(normalizedUserText)) {
+        kind = 'skip';
+      } else if (normalizedUserText.includes('<session-summary>')) {
         kind = 'compaction_divider';
         text = 'Conversation context compacted';
       } else {
@@ -1240,8 +1348,9 @@ export class Slashbot {
     return finalize(kind, text);
   }
 
-  private renderToolMessage(msg: any): void {
+  private renderToolMessage(msg: any, options?: { tabId?: string }): void {
     if (!this.tuiApp) return;
+    const tabId = options?.tabId;
     const toolResults = Array.isArray(msg?.toolResults) ? msg.toolResults : [];
     const isControlTool = (name: string): boolean => {
       const normalized = name.trim().toLowerCase();
@@ -1251,44 +1360,24 @@ export class Slashbot {
     };
 
     if (toolResults.length > 0) {
-      const regular: any[] = [];
-      const explore: Array<{
-        toolName: string;
-        success: boolean;
-        lines: string[];
-        total: number;
-      }> = [];
-
       for (const item of toolResults) {
         const rawToolName = String(item?.toolName || 'tool');
         if (isControlTool(rawToolName)) continue;
         const toolName = humanizeToolName(rawToolName);
-        const summary = summarizeToolResult(String(item?.result || 'completed'));
-        if (this.isExploreTool(rawToolName)) {
-          const preview = this.buildExplorePreview(String(item?.result || ''));
-          explore.push({
-            toolName,
-            success: summary.success ?? true,
-            lines: preview.lines,
-            total: preview.total,
-          });
-          continue;
+        const rawResult = String(item?.result || 'completed');
+        const summary = summarizeToolResult(rawResult);
+        if (isExploreToolName(rawToolName)) {
+          if (summary.success ?? true) {
+            display.pushExploreProbe(toolName, rawResult, true, undefined, tabId);
+            continue;
+          }
         }
-        regular.push(item);
-      }
-
-      for (const item of regular) {
-        const toolName = humanizeToolName(String(item?.toolName || 'tool'));
-        const summary = summarizeToolResult(String(item?.result || 'completed'));
         this.tuiApp.appendAssistantChat(
           formatToolAction(toolName, summary.detail, {
             success: summary.success ?? true,
           }),
+          tabId,
         );
-      }
-
-      if (explore.length > 0) {
-        this.tuiApp.appendAssistantMarkdown(this.buildExploreSummaryMarkdown(explore));
       }
       return;
     }
@@ -1297,30 +1386,27 @@ export class Slashbot {
     if (isControlTool(fallback.toolName)) return;
     const toolName = humanizeToolName(fallback.toolName);
     const summary = summarizeToolResult(fallback.result);
-    if (this.isExploreTool(fallback.toolName)) {
-      const preview = this.buildExplorePreview(fallback.result);
-      this.tuiApp.appendAssistantMarkdown(
-        this.buildExploreSummaryMarkdown([
-          {
-            toolName,
-            success: summary.success ?? true,
-            lines: preview.lines,
-            total: preview.total,
-          },
-        ]),
-      );
-      return;
+    if (isExploreToolName(fallback.toolName)) {
+      if (summary.success ?? true) {
+        display.pushExploreProbe(toolName, fallback.result, true, undefined, tabId);
+        return;
+      }
     }
     this.tuiApp.appendAssistantChat(
       formatToolAction(toolName, summary.detail, {
         success: summary.success ?? true,
       }),
+      tabId,
     );
   }
 
-  private renderAgentHistoryMessage(msg: any, options?: { includeUser?: boolean }): boolean {
+  private renderAgentHistoryMessage(
+    msg: any,
+    options?: { includeUser?: boolean; tabId?: string },
+  ): boolean {
     if (!this.tuiApp) return false;
     const includeUser = options?.includeUser ?? true;
+    const tabId = options?.tabId;
     const raw = this.toTextContent(msg.content, msg.role).trim();
     if (!raw) return false;
     const render = this.resolveRenderMetadata(msg, raw);
@@ -1338,7 +1424,7 @@ export class Slashbot {
     if (render.kind === 'skip') return finalize(false);
 
     if (render.kind === 'assistant_tool_transcript') {
-      return finalize(this.renderAssistantToolTranscript(render.text));
+      return finalize(this.renderAssistantToolTranscript(render.text, tabId));
     }
     if (render.kind === 'compaction_divider') {
       this.tuiApp.appendAssistantChat(
@@ -1346,24 +1432,25 @@ export class Slashbot {
           success: true,
           summary: 'summary inserted',
         }),
+        tabId,
       );
       return finalize(true);
     }
     if (render.kind === 'assistant_markdown') {
-      this.tuiApp.appendAssistantMarkdown(render.text);
+      this.tuiApp.appendAssistantMarkdown(render.text, tabId);
       return finalize(true);
     }
     if (render.kind === 'user') {
       if (!includeUser) return finalize(false);
-      this.tuiApp.appendUserChat(render.text);
+      this.tuiApp.appendUserChat(render.text, tabId);
       return finalize(true);
     }
     if (render.kind === 'tool') {
-      this.renderToolMessage(msg);
+      this.renderToolMessage(msg, { tabId });
       return finalize(true);
     }
 
-    this.tuiApp.appendStyledChat(`[${msg.role}] ${render.text}`);
+    this.tuiApp.appendStyledChat(`[${msg.role}] ${render.text}`, tabId);
     return finalize(true);
   }
 
@@ -1406,7 +1493,7 @@ export class Slashbot {
     const history = this.grokClient.getHistoryForSession(sessionId);
     const historyWithoutSystem = history.filter(msg => msg.role !== 'system');
     for (const msg of historyWithoutSystem.slice(-40)) {
-      this.renderAgentHistoryMessage(msg, { includeUser: true });
+      this.renderAgentHistoryMessage(msg, { includeUser: true, tabId });
     }
   }
 
@@ -1427,7 +1514,7 @@ export class Slashbot {
       const history = this.grokClient.getHistoryForSession(agent.sessionId);
       const historyWithoutSystem = history.filter(msg => msg.role !== 'system');
       for (const msg of historyWithoutSystem.slice(-40)) {
-        this.renderAgentHistoryMessage(msg, { includeUser: true });
+        this.renderAgentHistoryMessage(msg, { includeUser: true, tabId });
       }
       return;
     }
@@ -1442,7 +1529,7 @@ export class Slashbot {
       const history = this.grokClient.getHistoryForSession('cli');
       const historyWithoutSystem = history.filter(msg => msg.role !== 'system');
       for (const msg of historyWithoutSystem.slice(-40)) {
-        this.renderAgentHistoryMessage(msg, { includeUser: true });
+        this.renderAgentHistoryMessage(msg, { includeUser: true, tabId });
       }
       return;
     }
@@ -1693,8 +1780,11 @@ export class Slashbot {
       }
     }
     this.tuiApp.updateTabs(tabs, active);
+    this.syncInputAvailabilityForTab(active);
     if (active !== previousActive) {
-      this.renderTabSession(active);
+      if (!this.tuiApp.hasTabHistory(active)) {
+        this.renderTabSession(active);
+      }
       if (active === 'agents') {
         this.startAgentsManagerRealtime();
       } else {
@@ -1731,7 +1821,9 @@ export class Slashbot {
     this.tuiApp.setActiveTab(tabId);
     this.refreshAgentTabs();
     const activeTabId = this.getCliActiveTabId();
-    this.renderTabSession(activeTabId);
+    if (!this.tuiApp.hasTabHistory(activeTabId)) {
+      this.renderTabSession(activeTabId);
+    }
     this.syncActiveTabReticulatingIndicator();
     if (activeTabId === 'agents') {
       this.startAgentsManagerRealtime();
@@ -1759,142 +1851,6 @@ export class Slashbot {
     });
     await this.ensureAgentSession(created);
     await this.switchTab(created.id);
-  }
-
-  private buildDelegationTaskTitle(userTask: string): string {
-    const compact = userTask.replace(/\s+/g, ' ').trim();
-    if (!compact) {
-      return 'User task';
-    }
-    return compact.length > 96 ? `${compact.slice(0, 93)}...` : compact;
-  }
-
-  private getArchitectDelegationCandidates(architectId: string): AgentProfile[] {
-    if (!this.agentService) {
-      return [];
-    }
-    return this.agentService
-      .listAgents()
-      .filter(
-        agent =>
-          agent.enabled &&
-          agent.id !== architectId &&
-          !this.isOrchestratorAgent(agent) &&
-          agent.kind !== 'connector',
-      );
-  }
-
-  private pickArchitectDelegationCandidate(candidates: AgentProfile[]): AgentProfile {
-    if (!this.agentService || candidates.length === 0) {
-      throw new Error('No delegation candidates available');
-    }
-    const ranked = [...candidates].sort((a, b) => {
-      const aStats = this.agentService!.getTaskStatsForAgent(a.id);
-      const bStats = this.agentService!.getTaskStatsForAgent(b.id);
-      const aLoad = aStats.running + aStats.queued;
-      const bLoad = bStats.running + bStats.queued;
-      if (aLoad !== bLoad) {
-        return aLoad - bLoad;
-      }
-      return a.createdAt.localeCompare(b.createdAt);
-    });
-    return ranked[0];
-  }
-
-  private async ensureArchitectDelegationTarget(
-    architect: AgentProfile,
-    uiTabId?: string,
-  ): Promise<AgentProfile> {
-    const candidates = this.getArchitectDelegationCandidates(architect.id);
-    if (candidates.length > 0) {
-      return this.pickArchitectDelegationCandidate(candidates);
-    }
-    if (!this.agentService) {
-      throw new Error('Agent service is unavailable');
-    }
-
-    const workerCount = this.agentService
-      .listAgents()
-      .filter(agent => !this.isOrchestratorAgent(agent)).length;
-    const created = await this.agentService.createAgent({
-      name: `Worker ${workerCount + 1}`,
-      kind: 'worker',
-      responsibility:
-        'General implementation specialist. Execute delegated tasks end-to-end and report verification evidence.',
-      autoPoll: true,
-    });
-    await this.ensureAgentSession(created);
-    this.refreshAgentTabs();
-    display.withOutputTab(uiTabId, () =>
-      display.appendAssistantMessage(
-        formatToolAction('AgentsCreate', created.name, {
-          success: true,
-          summary: 'auto-created delegation worker',
-        }),
-      ),
-    );
-    return created;
-  }
-
-  private async delegateArchitectPromptToSubagent(
-    architect: AgentProfile,
-    userTask: string,
-    uiTabId?: string,
-  ): Promise<boolean> {
-    if (!this.agentService) {
-      return false;
-    }
-    const requested = await this.ensureArchitectDelegationTarget(architect, uiTabId);
-    const delegatedTask = await this.agentService.sendTask({
-      fromAgentId: architect.id,
-      toAgentId: requested.id,
-      title: this.buildDelegationTaskTitle(userTask),
-      content: userTask,
-    });
-    const startedNow = await this.agentService.runNextForAgent(delegatedTask.toAgentId);
-    const targetAgent = this.agentService.getAgent(delegatedTask.toAgentId);
-    if (targetAgent) {
-      await this.ensureAgentSession(targetAgent);
-    }
-
-    // Persist this delegated turn in the architect session so tab re-renders
-    // (switch away/back) keep the user prompt visible.
-    if (this.grokClient) {
-      const summary = targetAgent
-        ? `Delegated to ${targetAgent.name} (${targetAgent.id}) · ${delegatedTask.id}`
-        : `Delegated to ${delegatedTask.toAgentId} · ${delegatedTask.id}`;
-      this.grokClient.addMessageToSession(architect.sessionId, {
-        role: 'user',
-        content: userTask,
-        _render: {
-          kind: 'user',
-          text: userTask,
-        },
-      } as any);
-      this.grokClient.addMessageToSession(architect.sessionId, {
-        role: 'assistant',
-        content: summary,
-        _render: {
-          kind: 'assistant_markdown',
-          text: summary,
-        },
-      } as any);
-    }
-
-    display.withOutputTab(uiTabId, () => {
-      display.appendAssistantMessage(
-        formatToolAction('Delegation', `${architect.id} -> ${delegatedTask.toAgentId}`, {
-          success: true,
-          summary: startedNow ? `${delegatedTask.id} started` : `${delegatedTask.id} queued`,
-        }),
-      );
-      if (targetAgent) {
-        display.muted(
-          `Delegated to ${targetAgent.name} (${targetAgent.id}). Track implementation in that tab.`,
-        );
-      }
-    });
-    return true;
   }
 
   private async runDelegatedTask(
@@ -1931,6 +1887,10 @@ export class Slashbot {
         this.grokClient = createGrokClient(apiKey, {
           provider: savedConfig.provider,
           model: savedConfig.model,
+        });
+        this.grokClient.setSessionRunCallbacks({
+          onSessionRunStart: sessionId => this.beginReticulatingSession(sessionId),
+          onSessionRunEnd: sessionId => this.endReticulatingSession(sessionId),
         });
 
         // Load all saved provider credentials into the registry
@@ -2101,6 +2061,38 @@ export class Slashbot {
         return;
       }
 
+      // In connector tabs, plain CLI input is treated as outbound platform message.
+      if (source === 'cli') {
+        const activeTabId = this.getCliActiveTabId();
+        const connectorTab = this.resolveConnectorTabInfo(activeTabId);
+        if (connectorTab) {
+          const outcome = await this.connectorRegistry.notify(
+            trimmed,
+            connectorTab.source,
+            connectorTab.targetId,
+          );
+          if (outcome.sent.includes(connectorTab.source)) {
+            this.tuiApp?.logConnectorOut(connectorTab.source, trimmed);
+            hookHandled = true;
+            return;
+          }
+
+          const runtime = this.connectorRegistry.get(connectorTab.source);
+          const sourceLabel =
+            connectorTab.source.charAt(0).toUpperCase() + connectorTab.source.slice(1);
+          const status = runtime?.getStatus?.();
+          const errorMsg = !runtime || !status?.configured
+            ? `${sourceLabel} connector is not configured`
+            : !runtime.isRunning()
+              ? `${sourceLabel} connector is not running`
+              : `Failed to send message to ${sourceLabel} ${connectorTab.targetId}. Ensure this chat started the bot and is authorized.`;
+          this.tuiApp?.appendAssistantChat(errorMsg, connectorTab.sessionId);
+          hookHandled = true;
+          hookError = errorMsg;
+          return;
+        }
+      }
+
       // Handle natural language - send to Grok
       if (!this.grokClient) {
         const msg = 'Not connected to Grok. Use /login to enter your API key.';
@@ -2144,151 +2136,167 @@ export class Slashbot {
       }
       const uiTabId = source === 'cli' ? cliOriginTabId || this.getCliActiveTabId() : undefined;
 
-    try {
-      // For external connectors (Telegram, Discord), collect the response
-      if (source !== 'cli') {
-        const effectiveConnectorSessionId = sessionId || source;
-        await this.ensureConnectorSession(source, effectiveConnectorSessionId);
-        const connectorTabId =
-          sessionId && this.isConnectorSessionId(sessionId) ? sessionId : undefined;
-        if (connectorTabId) {
-          this.tuiApp?.appendUserChat(trimmed, connectorTabId);
-        }
-        const { response } = await this.grokClient.chatWithResponse(
-          trimmed,
-          source,
-          120000, // timeout
-          effectiveConnectorSessionId, // channel/chat-specific session
-          {
-            quiet: true,
-            displayResult: false,
-            outputTabId: connectorTabId,
-          },
-        );
-        if (connectorTabId && response.trim()) {
-          this.tuiApp?.appendAssistantMarkdown(response, connectorTabId);
-          if (this.getCliActiveTabId() !== connectorTabId) {
-            this.bumpTabUnread(connectorTabId, 1);
+      try {
+        // For external connectors (Telegram, Discord), collect the response
+        if (source !== 'cli') {
+          const effectiveConnectorSessionId = sessionId || source;
+          await this.ensureConnectorSession(source, effectiveConnectorSessionId);
+          const connectorTabId =
+            sessionId && this.isConnectorSessionId(sessionId) ? sessionId : undefined;
+          const connectorExecutionPolicy =
+            source === 'telegram' || source === 'discord'
+              ? {
+                  blockedToolNames: [`${source}_send`],
+                  blockedActionTypes: [`${source}-send`],
+                  blockReason:
+                    `Do not call ${source} send tools while handling an inbound ${source} message. ` +
+                    'Return plain response text instead.',
+                }
+              : undefined;
+          if (connectorTabId) {
+            this.tuiApp?.appendUserChat(trimmed, connectorTabId);
           }
-        }
-        await this.dumpContext();
-        hookResponse = response;
-        return hookResponse;
-      }
-      display.beginUserTurn(uiTabId);
-      startedUserTurn = true;
-
-      if (cliExecutionPolicy === 'orchestrator' && cliAgent) {
-        const delegated = await this.delegateArchitectPromptToSubagent(cliAgent, trimmed, uiTabId);
-        if (delegated) {
+          const { response } = await this.grokClient.chatWithResponse(
+            trimmed,
+            source,
+            120000, // timeout
+            effectiveConnectorSessionId, // channel/chat-specific session
+            {
+              quiet: true,
+              displayResult: false,
+              outputTabId: connectorTabId,
+              executionPolicy: connectorExecutionPolicy,
+            },
+          );
+          if (connectorTabId && response.trim()) {
+            this.tuiApp?.appendAssistantMarkdown(response, connectorTabId);
+            if (this.getCliActiveTabId() !== connectorTabId) {
+              this.bumpTabUnread(connectorTabId, 1);
+            }
+          }
           await this.dumpContext();
-          return;
+          hookResponse = response;
+          return hookResponse;
         }
-      }
+        display.beginUserTurn(uiTabId);
+        startedUserTurn = true;
 
-      let llmUserMessage = trimmed;
-      if (cliExecutionPolicy === 'orchestrator' && cliAgent) {
-        llmUserMessage = this.buildOrchestratorRequestPayload(cliAgent, trimmed);
-      }
+        let llmUserMessage = trimmed;
+        if (cliExecutionPolicy === 'orchestrator' && cliAgent) {
+          llmUserMessage = this.buildOrchestratorRequestPayload(cliAgent, trimmed);
+        }
 
-      // For CLI tabbed chat, pin to the originating session and keep output local.
-      cliRequestSessionId = cliTargetSessionId || 'cli';
-      this.activeCliRequestSessionId = cliRequestSessionId;
-      this.beginReticulatingSession(cliRequestSessionId);
-      cliReticulating = true;
-      const chatResult = await display.withOutputTab(uiTabId, () =>
-        this.grokClient!.chat(llmUserMessage, {
-          sessionId: cliTargetSessionId || undefined,
-          displayResult: false,
-          quiet: true,
-          outputTabId: uiTabId,
-          executionPolicy: cliExecutionPolicy,
-        }),
-      );
-      if (cliReticulating && cliRequestSessionId) {
-        this.endReticulatingSession(cliRequestSessionId);
-        cliReticulating = false;
-      }
-      if (source === 'cli' && cliOriginTabId && cliTargetSessionId) {
-        const startIdx = Math.max(0, cliHistoryStart);
-        let history = this.grokClient.getHistoryForSession(cliTargetSessionId);
-        let newMessages = history.slice(startIdx);
-
-        // If the model produced a non-empty response but no renderable replay items,
-        // persist a deterministic assistant markdown fallback so switching tabs never
-        // hides the completion.
-        const addedFallback = this.ensureRenderableAssistantFallback(
-          cliTargetSessionId,
-          newMessages,
-          chatResult.response,
+        // For CLI tabbed chat, pin to the originating session and keep output local.
+        cliRequestSessionId = cliTargetSessionId || 'cli';
+        this.activeCliRequestSessionId = cliRequestSessionId;
+        this.beginReticulatingSession(cliRequestSessionId);
+        cliReticulating = true;
+        const chatResult = await display.withOutputTab(uiTabId, () =>
+          this.grokClient!.chat(llmUserMessage, {
+            sessionId: cliTargetSessionId || undefined,
+            displayResult: false,
+            quiet: true,
+            outputTabId: uiTabId,
+            executionPolicy: cliExecutionPolicy,
+          }),
         );
-        if (addedFallback) {
-          history = this.grokClient.getHistoryForSession(cliTargetSessionId);
-          newMessages = history.slice(startIdx);
+        if (cliReticulating && cliRequestSessionId) {
+          this.endReticulatingSession(cliRequestSessionId);
+          cliReticulating = false;
         }
+        if (source === 'cli' && cliOriginTabId && cliTargetSessionId) {
+          const startIdx = Math.max(0, cliHistoryStart);
+          let history = this.grokClient.getHistoryForSession(cliTargetSessionId);
+          let newMessages = history.slice(startIdx);
 
-        if (this.getCliActiveTabId() === cliOriginTabId) {
-          let rendered = false;
-          for (const msg of newMessages) {
-            // User message is already shown instantly in input submit path.
-            if (msg.role === 'user') continue;
-            // Tool actions are already surfaced live while executing.
-            if (msg.role === 'tool') continue;
-            rendered = this.renderAgentHistoryMessage(msg, { includeUser: false }) || rendered;
+          // If the model produced a non-empty response but no renderable replay items,
+          // persist a deterministic assistant markdown fallback so switching tabs never
+          // hides the completion.
+          const addedFallback = this.ensureRenderableAssistantFallback(
+            cliTargetSessionId,
+            newMessages,
+            chatResult.response,
+          );
+          if (addedFallback) {
+            history = this.grokClient.getHistoryForSession(cliTargetSessionId);
+            newMessages = history.slice(startIdx);
           }
-          if (!rendered && chatResult.response.trim()) {
-            this.tuiApp?.appendAssistantMarkdown(chatResult.response);
-          }
-        } else {
-          const renderableCount = this.countRenderableAgentMessages(newMessages);
-          const unreadDelta = Math.max(1, renderableCount);
-          this.bumpTabUnread(cliOriginTabId, unreadDelta);
-          const targetAgent = this.getAgentForTab(cliOriginTabId);
-          if (targetAgent) {
-            display.showNotification(
-              `${targetAgent.name}: ${unreadDelta} new message${unreadDelta > 1 ? 's' : ''}`,
-            );
+
+          if (this.getCliActiveTabId() === cliOriginTabId) {
+            let rendered = false;
+            for (const msg of newMessages) {
+              // User message is already shown instantly in input submit path.
+              if (msg.role === 'user') continue;
+              // Tool actions are already surfaced live while executing.
+              if (msg.role === 'tool') continue;
+              rendered =
+                this.renderAgentHistoryMessage(msg, {
+                  includeUser: false,
+                  tabId: cliOriginTabId,
+                }) || rendered;
+            }
+            if (!rendered && chatResult.response.trim()) {
+              this.tuiApp?.appendAssistantMarkdown(chatResult.response);
+            }
           } else {
-            const connectorTab = this.getConnectorTabInfo(cliOriginTabId);
-            if (connectorTab) {
+            const renderableCount = this.countRenderableAgentMessages(newMessages);
+            const unreadDelta = Math.max(1, renderableCount);
+            this.bumpTabUnread(cliOriginTabId, unreadDelta);
+            const targetAgent = this.getAgentForTab(cliOriginTabId);
+            if (targetAgent) {
               display.showNotification(
-                `${connectorTab.label}: ${unreadDelta} new message${unreadDelta > 1 ? 's' : ''}`,
+                `${targetAgent.name}: ${unreadDelta} new message${unreadDelta > 1 ? 's' : ''}`,
               );
+            } else {
+              const connectorTab = this.getConnectorTabInfo(cliOriginTabId);
+              if (connectorTab) {
+                display.showNotification(
+                  `${connectorTab.label}: ${unreadDelta} new message${unreadDelta > 1 ? 's' : ''}`,
+                );
+              }
             }
           }
         }
+        await this.dumpContext();
+      } catch (error) {
+        // Don't show error for aborted requests
+        if (error instanceof Error && error.name === 'AbortError') {
+          if (source !== 'cli') {
+            hookResponse = 'Error: request timed out. Please retry.';
+            return hookResponse;
+          }
+          return;
+        }
+        // TokenModeError is already displayed in violet by the client
+        if (error instanceof Error && error.name === 'TokenModeError') {
+          if (source !== 'cli') {
+            const tokenMsg = error.message?.trim() || 'Token mode is not available.';
+            hookResponse = `Error: ${tokenMsg}`;
+            return hookResponse;
+          }
+          return;
+        }
+        const errorMsg = this.formatLLMErrorMessage(error);
+        hookError = errorMsg;
+        if (source !== 'cli') {
+          hookResponse = `Error: ${errorMsg}`;
+          return hookResponse;
+        }
+        this.surfaceLLMErrorInChat(error, {
+          sessionId: cliTargetSessionId || cliRequestSessionId || 'cli',
+          tabId: uiTabId,
+        });
+      } finally {
+        if (cliReticulating && cliRequestSessionId) {
+          this.endReticulatingSession(cliRequestSessionId);
+        }
+        if (cliRequestSessionId && this.activeCliRequestSessionId === cliRequestSessionId) {
+          this.activeCliRequestSessionId = null;
+        }
+        if (startedUserTurn) {
+          display.endUserTurn(uiTabId);
+        }
       }
-      await this.dumpContext();
-    } catch (error) {
-      // Don't show error for aborted requests
-      if (error instanceof Error && error.name === 'AbortError') {
-        return;
-      }
-      // TokenModeError is already displayed in violet by the client
-      if (error instanceof Error && error.name === 'TokenModeError') {
-        return;
-      }
-      const errorMsg = this.formatLLMErrorMessage(error);
-      hookError = errorMsg;
-      if (source !== 'cli') {
-        hookResponse = `Error: ${errorMsg}`;
-        return hookResponse;
-      }
-      this.surfaceLLMErrorInChat(error, {
-        sessionId: cliTargetSessionId || cliRequestSessionId || 'cli',
-        tabId: uiTabId,
-      });
-    } finally {
-      if (cliReticulating && cliRequestSessionId) {
-        this.endReticulatingSession(cliRequestSessionId);
-      }
-      if (cliRequestSessionId && this.activeCliRequestSessionId === cliRequestSessionId) {
-        this.activeCliRequestSessionId = null;
-      }
-      if (startedUserTurn) {
-        display.endUserTurn(uiTabId);
-      }
-    }
     } catch (error) {
       hookError = this.formatLLMErrorMessage(error);
       throw error;
@@ -2482,13 +2490,7 @@ export class Slashbot {
             this.tuiApp.pushInputHistory(expandedTrimmed);
           }
           rebuildSidebar();
-          // Update input placeholder for persistent paste
-          const summary = getLastPasteSummary();
-          if (summary && this.tuiApp) {
-            this.tuiApp.setInputPlaceholder(`${summary} Type your message...`);
-          } else if (this.tuiApp) {
-            this.tuiApp.setInputPlaceholder('Type your message...');
-          }
+          this.syncInputAvailabilityForTab(this.getCliActiveTabId());
         },
         onTabChange: async (tabId: string) => {
           await this.switchTab(tabId);

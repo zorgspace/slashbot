@@ -110,9 +110,7 @@ export function listConnectorCatalogEntries(): ConnectorCatalogEntry[] {
   return Object.values(CATALOG_BY_ID);
 }
 
-export function getConnectorCatalogEntry(
-  source: ConnectorSource,
-): ConnectorCatalogEntry | null {
+export function getConnectorCatalogEntry(source: ConnectorSource): ConnectorCatalogEntry | null {
   return CATALOG_BY_ID[String(source)] || null;
 }
 

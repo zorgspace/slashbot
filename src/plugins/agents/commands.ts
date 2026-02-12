@@ -52,9 +52,12 @@ export const agentCommand: CommandHandler = {
       const summary = service.getSummary();
       const agents = service.listAgents();
       display.append('');
-      display.violet(`Agents: ${summary.totalAgents} (active: ${summary.activeAgentId || 'none'})`, {
-        bold: true,
-      });
+      display.violet(
+        `Agents: ${summary.totalAgents} (active: ${summary.activeAgentId || 'none'})`,
+        {
+          bold: true,
+        },
+      );
       display.append(
         `Queue: ${summary.queued} queued, ${summary.running} running, ${summary.done} done, ${summary.failed} failed`,
       );
@@ -260,9 +263,7 @@ export const agentCommand: CommandHandler = {
           typeof msg.content === 'string'
             ? msg.content
             : Array.isArray(msg.content)
-              ? msg.content
-                  .map((p: any) => (typeof p?.text === 'string' ? p.text : ''))
-                  .join(' ')
+              ? msg.content.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join(' ')
               : '[non-text]';
         display.append(`${msg.role}: ${content.replace(/\s+/g, ' ').slice(0, 240)}`);
       }

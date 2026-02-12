@@ -325,9 +325,7 @@ export class AgentsPlugin implements Plugin {
             | undefined;
           const refreshTabs = payload.refreshTabs as (() => void) | undefined;
           const getActiveTabId = payload.getActiveTabId as (() => string) | undefined;
-          const renderAgentsManagerTab = payload.renderAgentsManagerTab as
-            | (() => void)
-            | undefined;
+          const renderAgentsManagerTab = payload.renderAgentsManagerTab as (() => void) | undefined;
           const notifyAgentTab = payload.notifyAgentTab as ((agentId: string) => void) | undefined;
           const handleAgentTaskFailed = payload.handleAgentTaskFailed as
             | ((event: any) => void)
@@ -350,7 +348,11 @@ export class AgentsPlugin implements Plugin {
               renderAgentsManagerTab();
             }
           });
-          for (const eventName of ['agents:task-queued', 'agents:task-running', 'agents:task-done']) {
+          for (const eventName of [
+            'agents:task-queued',
+            'agents:task-running',
+            'agents:task-done',
+          ]) {
             eventBus.on(eventName, (event: any) => {
               const agentId = typeof event?.agentId === 'string' ? event.agentId : '';
               if (agentId) {
@@ -379,12 +381,14 @@ export class AgentsPlugin implements Plugin {
 
           const refreshTabs = payload.refreshTabs as (() => void) | undefined;
           const getActiveTabId = payload.getActiveTabId as (() => string) | undefined;
-          const renderAgentsManagerTab = payload.renderAgentsManagerTab as
-            | (() => void)
+          const renderAgentsManagerTab = payload.renderAgentsManagerTab as (() => void) | undefined;
+          const renderTabSession = payload.renderTabSession as
+            | ((tabId: string) => void)
             | undefined;
-          const renderTabSession = payload.renderTabSession as ((tabId: string) => void) | undefined;
           const hasAgentTab = payload.hasAgentTab as ((tabId: string) => boolean) | undefined;
-          const hasConnectorTab = payload.hasConnectorTab as ((tabId: string) => boolean) | undefined;
+          const hasConnectorTab = payload.hasConnectorTab as
+            | ((tabId: string) => boolean)
+            | undefined;
           const switchTab = payload.switchTab as ((tabId: string) => Promise<void>) | undefined;
           const getActiveAgentId = payload.getActiveAgentId as (() => string | null) | undefined;
 
@@ -401,7 +405,9 @@ export class AgentsPlugin implements Plugin {
           }
 
           const shouldRenderCurrent =
-            currentTab === 'main' || hasAgentTab?.(currentTab) === true || hasConnectorTab?.(currentTab) === true;
+            currentTab === 'main' ||
+            hasAgentTab?.(currentTab) === true ||
+            hasConnectorTab?.(currentTab) === true;
           if (shouldRenderCurrent) {
             renderTabSession?.(currentTab);
             return;
@@ -465,7 +471,6 @@ export class AgentsPlugin implements Plugin {
           '',
           'Use XML tags directly for declarative agent management; fallback to tools (e.g., agents_create) if needed.',
         ].join('\n'),
-
       },
     ];
   }

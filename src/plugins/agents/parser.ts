@@ -50,10 +50,8 @@ export function getAgentsParserConfigs(): ActionParserConfig[] {
             name: extractAttr(fullTag, 'name') || undefined,
             responsibility: extractAttr(fullTag, 'responsibility') || undefined,
             systemPrompt: extractAttr(fullTag, 'prompt') || undefined,
-            enabled:
-              enabledRaw === 'true' ? true : enabledRaw === 'false' ? false : undefined,
-            autoPoll:
-              autoPollRaw === 'true' ? true : autoPollRaw === 'false' ? false : undefined,
+            enabled: enabledRaw === 'true' ? true : enabledRaw === 'false' ? false : undefined,
+            autoPoll: autoPollRaw === 'true' ? true : autoPollRaw === 'false' ? false : undefined,
           });
         }
         return actions;

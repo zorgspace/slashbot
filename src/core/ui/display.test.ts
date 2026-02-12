@@ -84,7 +84,9 @@ describe('DisplayService tab scoping', () => {
       }),
     ]);
 
-    const calls = (tui.appendAssistantChat as any).mock.calls as Array<[string, string | undefined]>;
+    const calls = (tui.appendAssistantChat as any).mock.calls as Array<
+      [string, string | undefined]
+    >;
     expect(calls).toContainEqual(['msg-1', 'agent-1']);
     expect(calls).toContainEqual(['msg-2', 'agent-2']);
   });
@@ -120,5 +122,36 @@ describe('DisplayService tab scoping', () => {
 
     expect(showSpinner).toHaveBeenCalledWith('Working: grep src/main.ts', 'agent-1');
     setTUISpinnerCallbacks(null);
+  });
+});
+
+describe('DisplayService explore probes', () => {
+  it('animates live explore updates sequentially', () => {
+    vi.useFakeTimers();
+    const tui = createMockTui();
+    display.bindTUI(tui);
+
+    display.beginUserTurn('agent-7');
+    display.pushExploreProbe('Read', 'src/a.ts\nsrc/b.ts', true, undefined, 'agent-7');
+    display.pushExploreProbe('LS', 'src\npackage.json', true, undefined, 'agent-7');
+    display.pushExploreProbe('Glob', 'src/core/ui/display.ts', true, undefined, 'agent-7');
+
+    const upsertCalls = (tui.upsertAssistantMarkdownBlock as any).mock.calls;
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0][1]).toContain('Latest updates:');
+    expect(upsertCalls[0][1]).toContain('#1 Read');
+    expect(upsertCalls[0][1]).not.toContain('#2 LS');
+
+    vi.advanceTimersByTime(90);
+    expect(upsertCalls).toHaveLength(2);
+    expect(upsertCalls[1][1]).toContain('#2 LS');
+    expect(upsertCalls[1][1]).not.toContain('#3 Glob');
+
+    vi.advanceTimersByTime(90);
+    expect(upsertCalls).toHaveLength(3);
+    expect(upsertCalls[2][1]).toContain('#3 Glob');
+
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
   });
 });

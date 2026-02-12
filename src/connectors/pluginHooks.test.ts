@@ -29,7 +29,7 @@ describe('createConnectorKernelHooks', () => {
       connectorId: 'telegram',
       sidebarLabel: 'Telegram',
       sidebarOrder: 10,
-      protectedAgentId: 'agent-telegramagent',
+      protectedAgentId: 'agent-protected',
     });
     const sidebarHook = hooks.find(h => h.event === 'sidebar:before');
     expect(sidebarHook).toBeDefined();
@@ -60,7 +60,7 @@ describe('createConnectorKernelHooks', () => {
       connectorId: 'telegram',
       sidebarLabel: 'Telegram',
       sidebarOrder: 10,
-      protectedAgentId: 'agent-telegramagent',
+      protectedAgentId: 'agent-protected',
     });
     const tabsHook = hooks.find(h => h.event === 'tabs:before');
     expect(tabsHook).toBeDefined();
@@ -69,8 +69,8 @@ describe('createConnectorKernelHooks', () => {
       {
         tabs: [
           {
-            id: 'agent-telegramagent',
-            label: 'Telegram Agent',
+            id: 'agent-protected',
+            label: 'Protected Agent',
             section: 'agents',
             editable: true,
             removable: true,

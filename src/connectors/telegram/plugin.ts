@@ -20,13 +20,7 @@ import { TYPES } from '../../core/di/types';
 import { createConnectorKernelHooks } from '../pluginHooks';
 
 function dedupe(values: string[]): string[] {
-  return Array.from(
-    new Set(
-      values
-        .map(value => value.trim())
-        .filter(Boolean),
-    ),
-  );
+  return Array.from(new Set(values.map(value => value.trim()).filter(Boolean)));
 }
 
 async function executeTelegramConfig(
@@ -41,9 +35,16 @@ async function executeTelegramConfig(
     const result = await handlers.onTelegramConfig(action.botToken, action.chatId);
 
     if (result.success) {
-      display.appendAssistantMessage(formatToolAction('TelegramConfig', detail, { success: true, summary: `Chat ID: ${result.chatId || action.chatId}` }));
+      display.appendAssistantMessage(
+        formatToolAction('TelegramConfig', detail, {
+          success: true,
+          summary: `Chat ID: ${result.chatId || action.chatId}`,
+        }),
+      );
     } else {
-      display.appendAssistantMessage(formatToolAction('TelegramConfig', detail, { success: false, summary: result.message }));
+      display.appendAssistantMessage(
+        formatToolAction('TelegramConfig', detail, { success: false, summary: result.message }),
+      );
     }
 
     return {
@@ -72,9 +73,7 @@ async function executeTelegramStatus(
   const payload = await handlers.onTelegramStatus();
   const configured = !!payload?.configured;
   const running = !!payload?.running;
-  const authorized = Array.isArray(payload?.authorizedTargets)
-    ? payload.authorizedTargets
-    : [];
+  const authorized = Array.isArray(payload?.authorizedTargets) ? payload.authorizedTargets : [];
   display.appendAssistantMessage(
     formatToolAction('TelegramStatus', 'runtime', {
       success: configured,
@@ -305,6 +304,28 @@ export class TelegramPlugin implements ConnectorPlugin {
           onTelegramAddChat: async (chatId: string) => {
             try {
               await (context.configManager as any)?.addTelegramChat?.(chatId);
+              const registry = getRegistry();
+              const connector = registry?.get?.('telegram');
+              if (connector?.isRunning?.() && connector?.sendMessageTo) {
+                connector.addChat?.(chatId);
+                try {
+                  await connector.sendMessageTo(
+                    chatId,
+                    `✅ Slashbot authorized this chat (${chatId}). You can start messaging the bot here.`,
+                  );
+                  return {
+                    success: true,
+                    message: `Added Telegram chat ${chatId} and sent confirmation via bot.`,
+                  };
+                } catch {
+                  return {
+                    success: true,
+                    message:
+                      `Added Telegram chat ${chatId}, but could not send confirmation to that chat. ` +
+                      'Ensure the chat has started the bot, then retry.',
+                  };
+                }
+              }
               return {
                 success: true,
                 message: `Added Telegram chat ${chatId}. Restart slashbot to apply changes.`,
@@ -323,6 +344,15 @@ export class TelegramPlugin implements ConnectorPlugin {
           onTelegramRemoveChat: async (chatId: string) => {
             try {
               await (context.configManager as any)?.removeTelegramChat?.(chatId);
+              const registry = getRegistry();
+              const connector = registry?.get?.('telegram');
+              if (connector?.isRunning?.() && typeof connector.removeChat === 'function') {
+                connector.removeChat(chatId);
+                return {
+                  success: true,
+                  message: `Removed Telegram chat ${chatId}.`,
+                };
+              }
               return {
                 success: true,
                 message: `Removed Telegram chat ${chatId}. Restart slashbot to apply changes.`,
@@ -341,6 +371,19 @@ export class TelegramPlugin implements ConnectorPlugin {
           onTelegramPrimaryChat: async (chatId: string) => {
             try {
               await (context.configManager as any)?.setTelegramPrimaryChat?.(chatId);
+              const registry = getRegistry();
+              const connector = registry?.get?.('telegram');
+              if (connector?.isRunning?.()) {
+                if (typeof connector.setPrimaryChat === 'function') {
+                  connector.setPrimaryChat(chatId);
+                } else if (typeof connector.addChat === 'function') {
+                  connector.addChat(chatId);
+                }
+                return {
+                  success: true,
+                  message: `Primary Telegram chat set to ${chatId}.`,
+                };
+              }
               return {
                 success: true,
                 message: `Primary Telegram chat set to ${chatId}. Restart slashbot to apply changes.`,
@@ -403,7 +446,10 @@ export class TelegramPlugin implements ConnectorPlugin {
                 message: 'Telegram notification failed or target is not authorized',
               };
             } catch (error: any) {
-              return { success: false, message: error?.message || 'Failed to send Telegram message' };
+              return {
+                success: false,
+                message: error?.message || 'Failed to send Telegram message',
+              };
             }
           },
         },
@@ -461,7 +507,8 @@ export class TelegramPlugin implements ConnectorPlugin {
       },
       {
         name: 'telegram_send',
-        description: 'Send a message through Telegram connector to active or specific authorized chat.',
+        description:
+          'Send a message through Telegram connector to active or specific authorized chat.',
         parameters: z.object({
           message: z.string().describe('Message to send'),
           chat_id: z
@@ -483,7 +530,6 @@ export class TelegramPlugin implements ConnectorPlugin {
       connectorId: 'telegram',
       sidebarLabel: 'Telegram',
       sidebarOrder: 10,
-      protectedAgentId: 'agent-telegramagent',
     });
   }
 

@@ -191,7 +191,6 @@ export async function streamResponse(
           withOutputTab(() => display.logAction((event as any).toolName));
         }
       }
-
     }
 
     // ===== Extract all data from AI SDK normalized promises =====
@@ -386,7 +385,8 @@ function resolveUsage(usage: unknown): {
   const promptTokens =
     pickNumber(raw, ['promptTokens', 'inputTokens', 'input_tokens', 'prompt_tokens']) ?? 0;
   const completionTokens =
-    pickNumber(raw, ['completionTokens', 'outputTokens', 'output_tokens', 'completion_tokens']) ?? 0;
+    pickNumber(raw, ['completionTokens', 'outputTokens', 'output_tokens', 'completion_tokens']) ??
+    0;
   const totalTokens = pickNumber(raw, ['totalTokens', 'total_tokens']);
 
   if (promptTokens <= 0 && completionTokens <= 0 && (!totalTokens || totalTokens <= 0)) {

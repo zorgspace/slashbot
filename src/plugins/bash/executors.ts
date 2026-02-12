@@ -41,7 +41,10 @@ export async function executeShellCommand(
 
   const desc = options?.description ? ` (${options.description})` : '';
   display.appendAssistantMessage(
-    formatToolAction('Exec', command + desc, { success: !isError, summary: isError ? 'exit 1' : undefined }),
+    formatToolAction('Exec', command + desc, {
+      success: !isError,
+      summary: isError ? 'exit 1' : undefined,
+    }),
   );
 
   return {

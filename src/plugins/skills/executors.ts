@@ -26,7 +26,9 @@ export async function executeSkill(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.appendAssistantMessage(formatToolAction('Skill', detail, { success: false, summary: errorMsg }));
+    display.appendAssistantMessage(
+      formatToolAction('Skill', detail, { success: false, summary: errorMsg }),
+    );
     return {
       action: `Skill: ${action.name}`,
       success: false,
@@ -58,7 +60,9 @@ export async function executeSkillInstall(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.appendAssistantMessage(formatToolAction('SkillInstall', detail, { success: false, summary: errorMsg }));
+    display.appendAssistantMessage(
+      formatToolAction('SkillInstall', detail, { success: false, summary: errorMsg }),
+    );
     return {
       action: `SkillInstall: ${action.url}`,
       success: false,

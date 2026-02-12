@@ -18,7 +18,4 @@ export {
   humanizeToolName,
 } from './toolTranscript';
 export type { ToolTranscriptEntry } from './toolTranscript';
-
-/* TUIApp moved to plugins/tui but directory missing - temporarily disable */
-// export { TUIApp } from '../../plugins/tui/TUIApp';
-// export type { HeaderOptions } from '../../plugins/tui/panels/HeaderPanel';
+export { isExploreToolName } from './exploreTools';

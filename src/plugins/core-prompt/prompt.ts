@@ -84,5 +84,5 @@ export const CORE_PROMPT = [
   '- Do not claim completion while tool errors remain unresolved.',
   '- If blocked and needing user input, ask a focused question via `end_task`.',
   '',
-  MASTER_PROMPT
+  MASTER_PROMPT,
 ].join('\n');

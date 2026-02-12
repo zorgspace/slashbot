@@ -52,7 +52,9 @@ export function formatToolAction(
  */
 export function formatToolName(name: string, result?: ToolActionResult): StyledText {
   const failed = result?.success === false;
-  const parts: StyledText[] = [failed ? t`${bold(fg(theme.error)(name))}` : t`${bold(fg(theme.accent)(name))}`];
+  const parts: StyledText[] = [
+    failed ? t`${bold(fg(theme.error)(name))}` : t`${bold(fg(theme.accent)(name))}`,
+  ];
 
   if (result) {
     if (result.success) {

@@ -62,7 +62,11 @@ function stringifyContextDumpContent(content: Message['content']): string {
 
 function formatContextDumpMessage(msg: Message): string {
   const roleLabel =
-    msg.role === 'user' ? '### User' : msg.role === 'assistant' ? '### Assistant' : '### Tool/System';
+    msg.role === 'user'
+      ? '### User'
+      : msg.role === 'assistant'
+        ? '### Assistant'
+        : '### Tool/System';
 
   let body = stringifyContextDumpContent(msg.content);
   if (!body) body = '[Empty message]';

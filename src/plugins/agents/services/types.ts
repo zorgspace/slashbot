@@ -27,6 +27,8 @@ export interface AgentTask {
   title: string;
   content: string;
   status: AgentTaskStatus;
+  retryCount?: number;
+  maxRetries?: number;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;

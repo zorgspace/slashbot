@@ -19,6 +19,7 @@ import { CODE_EDITOR_PROMPT } from './prompt';
 import { getCodeEditorToolContributions } from './tools';
 import { createCodeEditor } from './services/CodeEditor';
 import { TYPES } from '../../core/di/types';
+import path from 'path';
 
 const getCodeEditor = (context: PluginContext) => {
   return context.container.get<any>(TYPES.CodeEditor);
@@ -97,24 +98,40 @@ export class CodeEditorPlugin implements Plugin {
         type: 'ls',
         tagName: 'ls',
         handler: {
-          onLS: async (path: string, ignore?: string[]) => {
+          onLS: async (target: string, ignore?: string[]) => {
             const codeEditor = getCodeEditor(context);
             const workDir = codeEditor.getWorkDir();
-            const targetPath = path.startsWith('/') ? path : `${workDir}/${path}`;
+            const requestedPath = String(target || '.').trim() || '.';
+            const targetPath = path.isAbsolute(requestedPath)
+              ? requestedPath
+              : path.join(workDir, requestedPath);
             const ignoreSet = new Set(ignore || ['node_modules', '.git', 'dist']);
+
+            const fs = await import('fs/promises');
+
             try {
-              const fs = await import('fs/promises');
-              const entries = await fs.readdir(targetPath, { withFileTypes: true });
-              const results: string[] = [];
-              for (const entry of entries) {
-                if (ignoreSet.has(entry.name)) continue;
-                const type = entry.isDirectory() ? '/' : '';
-                results.push(`${entry.name}${type}`);
+              const stat = await fs.stat(targetPath);
+              if (stat.isFile()) {
+                return [path.basename(targetPath)];
               }
-              return results.sort();
+              if (!stat.isDirectory()) {
+                throw new Error(`Path is neither a file nor a directory: ${requestedPath}`);
+              }
             } catch (error: any) {
-              return [`Error: ${error.message}`];
+              if (error?.code === 'ENOENT') {
+                throw new Error(`Path not found: ${requestedPath}`);
+              }
+              throw error;
             }
+
+            const entries = await fs.readdir(targetPath, { withFileTypes: true });
+            const results: string[] = [];
+            for (const entry of entries) {
+              if (ignoreSet.has(entry.name)) continue;
+              const type = entry.isDirectory() ? '/' : '';
+              results.push(`${entry.name}${type}`);
+            }
+            return results.sort();
           },
         },
         execute: executeLS,

@@ -76,7 +76,11 @@ function resolveModelChoice(input: string, providerId: string, fallbackModel: st
   return trimmed;
 }
 
-async function promptText(context: CommandContext, label: string, initialValue?: string): Promise<string> {
+async function promptText(
+  context: CommandContext,
+  label: string,
+  initialValue?: string,
+): Promise<string> {
   if (context.tuiApp) {
     return context.tuiApp.promptInput(label, {
       initialValue: initialValue ?? '',
@@ -150,15 +154,12 @@ async function promptSecret(context: CommandContext, label: string): Promise<str
 }
 
 function renderProviderWizardBlock(currentProvider: string, configuredProviders: string[]): string {
-  const lines = [
-    'Login Wizard',
-    '',
-    'Step 1/3 - Choose provider:',
-  ];
+  const lines = ['Login Wizard', '', 'Step 1/3 - Choose provider:'];
   for (let i = 0; i < SUPPORTED_PROVIDER_IDS.length; i += 1) {
     const id = SUPPORTED_PROVIDER_IDS[i];
     const info = PROVIDERS[id];
-    const marker = id === currentProvider ? '[*]' : configuredProviders.includes(id) ? '[+]' : '[ ]';
+    const marker =
+      id === currentProvider ? '[*]' : configuredProviders.includes(id) ? '[+]' : '[ ]';
     lines.push(`  ${i + 1}. ${marker} ${id} (${info.name})`);
   }
   lines.push('');
@@ -170,9 +171,7 @@ function renderProviderWizardBlock(currentProvider: string, configuredProviders:
 function renderModelWizardBlock(providerId: string, defaultModel: string): string {
   const providerInfo = PROVIDERS[providerId];
   const models = getModelsForProviders([providerId]);
-  const lines = [
-    `Step 3/3 - Choose model for ${providerInfo?.name || providerId}:`,
-  ];
+  const lines = [`Step 3/3 - Choose model for ${providerInfo?.name || providerId}:`];
   for (let i = 0; i < models.length; i += 1) {
     const model = models[i];
     const marker = model.id === defaultModel ? '[*]' : '[ ]';
@@ -256,7 +255,10 @@ async function applyLoginSelection(
   return true;
 }
 
-async function runLoginWizard(context: CommandContext, requestedProvider?: string): Promise<boolean> {
+async function runLoginWizard(
+  context: CommandContext,
+  requestedProvider?: string,
+): Promise<boolean> {
   const canPrompt = !!context.tuiApp || (process.stdin.isTTY && process.stdout.isTTY);
   if (!canPrompt) {
     display.appendAssistantMessage(renderLoginHelp());
@@ -266,14 +268,12 @@ async function runLoginWizard(context: CommandContext, requestedProvider?: strin
   const configuredProviders = Object.keys(context.configManager.getAllProviderCredentials());
   const currentProvider = context.configManager.getProvider() || 'xai';
   const providerSeed =
-    requestedProvider && isSupportedProvider(requestedProvider) ? requestedProvider : currentProvider;
+    requestedProvider && isSupportedProvider(requestedProvider)
+      ? requestedProvider
+      : currentProvider;
 
   display.appendAssistantMessage(renderProviderWizardBlock(currentProvider, configuredProviders));
-  const providerInput = await promptText(
-    context,
-    'Provider [number|id]',
-    providerSeed,
-  );
+  const providerInput = await promptText(context, 'Provider [number|id]', providerSeed);
   const providerId = normalizeProviderChoice(providerInput, providerSeed);
   if (!providerId) {
     display.errorText(`Unknown provider selection: "${providerInput}"`);
@@ -298,11 +298,7 @@ async function runLoginWizard(context: CommandContext, requestedProvider?: strin
 
   const defaultModel = resolveDefaultModel(context, providerId);
   display.appendAssistantMessage(renderModelWizardBlock(providerId, defaultModel));
-  const modelInput = await promptText(
-    context,
-    'Model [number|id]',
-    defaultModel,
-  );
+  const modelInput = await promptText(context, 'Model [number|id]', defaultModel);
   const modelId = resolveModelChoice(modelInput, providerId, defaultModel);
 
   return await applyLoginSelection(context, providerId, apiKey, modelId);

@@ -33,7 +33,10 @@ export function getSessionToolContributions(): ToolContribution[] {
       parameters: z.object({
         sessionId: z.string().describe('Target session id'),
         message: z.string().describe('Message to send'),
-        run: z.boolean().optional().describe('Execute immediately in target session (default false)'),
+        run: z
+          .boolean()
+          .optional()
+          .describe('Execute immediately in target session (default false)'),
       }),
       toAction: args => ({
         type: 'sessions-send',

@@ -2,11 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Plugin } from './types';
 import { PluginRegistry } from './registry';
 
-function createHookPlugin(options: {
-  id: string;
-  order: number;
-  suffix: string;
-}): Plugin {
+function createHookPlugin(options: { id: string; order: number; suffix: string }): Plugin {
   return {
     metadata: {
       id: options.id,

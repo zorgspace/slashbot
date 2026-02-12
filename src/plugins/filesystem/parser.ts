@@ -1,7 +1,10 @@
 import type { ActionParserConfig } from '../../core/actions/parser';
 import type { Action } from '../../core/actions/types';
 import { display } from '../../core/ui';
-import { detectEscapedNewlineCorruption } from '../../core/actions/contentGuards';
+import {
+  detectEscapedNewlineCorruption,
+  repairStructuralEscapedNewlines,
+} from '../../core/actions/contentGuards';
 
 // Quote pattern: matches both single and double quotes
 const Q = `["']`;
@@ -62,6 +65,14 @@ function detectContentCorruption(content: string, targetPath: string): string | 
   }
 
   return null;
+}
+
+function normalizePotentialEscapedNewlineCorruption(content: string): string {
+  const repaired = repairStructuralEscapedNewlines(content);
+  if (!repaired.changed) {
+    return content;
+  }
+  return detectEscapedNewlineCorruption(repaired.content) ? content : repaired.content;
 }
 
 /**
@@ -148,7 +159,9 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
 
         while ((outerMatch = outerRegex.exec(content)) !== null) {
           const path = outerMatch[1];
-          const innerContent = decodeEntities(outerMatch[2]);
+          const innerContent = normalizePotentialEscapedNewlineCorruption(
+            decodeEntities(outerMatch[2]),
+          );
 
           // Reject edits whose content is corrupted with raw action tags
           const corruption = detectContentCorruption(innerContent, path);
@@ -185,7 +198,9 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         let match;
         while ((match = regex.exec(content)) !== null) {
           const [, path, fileContent] = match;
-          const decoded = decodeEntities(fileContent.trim());
+          const decoded = normalizePotentialEscapedNewlineCorruption(
+            decodeEntities(fileContent.trim()),
+          );
           const corruption = detectContentCorruption(decoded, path);
           if (corruption) {
             display.errorText(`Rejected corrupted write for ${path}: ${corruption}`);
@@ -213,7 +228,9 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         let match;
         while ((match = regex.exec(content)) !== null) {
           const [, path, fileContent] = match;
-          const decoded = decodeEntities(fileContent.trim());
+          const decoded = normalizePotentialEscapedNewlineCorruption(
+            decodeEntities(fileContent.trim()),
+          );
           const corruption = detectContentCorruption(decoded, path);
           if (corruption) {
             display.errorText(`Rejected corrupted create for ${path}: ${corruption}`);

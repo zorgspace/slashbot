@@ -29,7 +29,14 @@ import {
   clearLastPaste,
 } from './pasteHandler';
 import { addImage, imageBuffer } from '../filesystem/services/ImageBuffer';
-import { spawn } from 'child_process';
+import { spawnSync } from 'child_process';
+import {
+  appendResponseStreamChunk,
+  appendTabBufferAction,
+  hasBufferedHistory,
+  startResponseStream,
+  type TabBufferAction,
+} from './historyBuffer';
 
 /**
  * Copy text to system clipboard using available tool (xclip, xsel, wl-copy, pbcopy)
@@ -43,14 +50,12 @@ function copyToClipboard(text: string): void {
   ];
 
   for (const tool of tools) {
-    try {
-      const proc = spawn(tool.cmd, tool.args, { stdio: ['pipe', 'ignore', 'ignore'] });
-      proc.stdin.write(text);
-      proc.stdin.end();
-      proc.on('error', () => {});
+    const result = spawnSync(tool.cmd, tool.args, {
+      input: text,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    if (!result.error && result.status === 0) {
       return;
-    } catch {
-      continue;
     }
   }
 }
@@ -74,7 +79,7 @@ export class TUIApp implements UIOutput {
   private lastSelectedText = '';
   private ignoreNextPaste = false;
 
-  private tabBuffers: { [key: string]: any[] } = {};
+  private tabBuffers: Record<string, TabBufferAction[]> = {};
   private tabInputDrafts: Record<string, string> = {};
   constructor(
     callbacks: TUIAppCallbacks,
@@ -116,12 +121,9 @@ export class TUIApp implements UIOutput {
       onSelect: async (tabId, previousTabId) => {
         this.captureInputDraft(previousTabId);
         this.restoreInputDraft(tabId);
+        this.renderTabHistory(tabId);
         try {
           await this.callbacks.onTabChange?.(tabId);
-          const buffered = this.tabBuffers[tabId];
-          if (buffered && buffered.length > 0) {
-            this.renderTabHistory(tabId);
-          }
         } catch (error) {
           this.captureInputDraft(tabId);
           this.restoreInputDraft(previousTabId);
@@ -273,8 +275,6 @@ export class TUIApp implements UIOutput {
         return;
       }
 
-
-
       // Ctrl+V (without Shift) - image paste from clipboard
       if (key.ctrl && key.name === 'v' && !key.shift) {
         key.stopPropagation();
@@ -321,6 +321,14 @@ export class TUIApp implements UIOutput {
       if (this.inputPanel.isFocused()) {
         // When a prompt (password/text) is active, let InputPanel handle everything
         if (this.inputPanel.isPromptActive()) {
+          return;
+        }
+        if (!this.inputPanel.isEnabled()) {
+          if (key.name === 'return') {
+            key.stopPropagation();
+            key.preventDefault();
+            this.inputPanel.clear();
+          }
           return;
         }
 
@@ -395,7 +403,13 @@ export class TUIApp implements UIOutput {
 
     // Intercept paste events: compress pasted content into a placeholder
     keyHandler.on('paste', event => {
-      if (!this.inputPanel.isFocused()) return;
+      if (!this.inputPanel.isFocused() || !this.inputPanel.isEnabled()) return;
+      if (this.ignoreNextPaste) {
+        this.ignoreNextPaste = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       // New paste replaces any persistent paste
@@ -417,6 +431,7 @@ export class TUIApp implements UIOutput {
 
   updateTabs(tabs: TabItem[], activeTabId: string): void {
     this.tabsPanel.setTabs(tabs, activeTabId);
+    this.pruneTabState(new Set(tabs.map(tab => tab.id)));
   }
 
   setActiveTab(tabId: string): void {
@@ -425,6 +440,10 @@ export class TUIApp implements UIOutput {
 
   getActiveTabId(): string {
     return this.tabsPanel.getActiveTabId();
+  }
+
+  hasTabHistory(tabId: string): boolean {
+    return hasBufferedHistory(this.tabBuffers[tabId]);
   }
 
   private captureInputDraft(tabId: string): void {
@@ -437,30 +456,84 @@ export class TUIApp implements UIOutput {
     this.inputPanel.setValue(this.tabInputDrafts[tabId] || '');
   }
 
+  private pruneTabState(validTabIds: Set<string>): void {
+    for (const tabId of Object.keys(this.tabBuffers)) {
+      if (!validTabIds.has(tabId)) {
+        delete this.tabBuffers[tabId];
+      }
+    }
+    for (const tabId of Object.keys(this.tabInputDrafts)) {
+      if (!validTabIds.has(tabId)) {
+        delete this.tabInputDrafts[tabId];
+      }
+    }
+  }
+
+  private replayAction(action: TabBufferAction): void {
+    switch (action.type) {
+      case 'append':
+        this.chatPanel.append(action.content);
+        break;
+      case 'appendStyled':
+        this.chatPanel.appendStyled(action.content);
+        break;
+      case 'appendUserMessage':
+        this.chatPanel.appendUserMessage(action.content);
+        break;
+      case 'appendAssistantMessage':
+        this.chatPanel.appendAssistantMessage(action.content);
+        break;
+      case 'appendAssistantMarkdown':
+        this.chatPanel.appendAssistantMarkdown(action.text);
+        break;
+      case 'upsertAssistantMarkdownBlock':
+        this.chatPanel.upsertAssistantMarkdownBlock(action.key, action.text);
+        break;
+      case 'removeAssistantMarkdownBlock':
+        this.chatPanel.removeAssistantMarkdownBlock(action.key);
+        break;
+      case 'addCodeBlock':
+        this.chatPanel.addCodeBlock(action.content, action.filetype);
+        break;
+      case 'addDiffBlock':
+        this.chatPanel.addDiffBlock(action.diff, action.filetype);
+        break;
+      case 'responseStream':
+        this.chatPanel.startResponse();
+        if (action.content) {
+          this.chatPanel.appendResponse(action.content);
+        }
+        break;
+    }
+  }
+
   private renderTabHistory(tabId: string): void {
     this.chatPanel.clear();
     const buffer = this.tabBuffers[tabId] || [];
     for (const action of buffer) {
-      const { method, args } = action as any;
-      (this.chatPanel as any)[method](...args);
+      this.replayAction(action);
     }
     this.chatPanel.scrollToBottom();
   }
 
-  private bufferAction(targetTabId: string, method: string, args: any[]): void {
-    let buffer = this.tabBuffers[targetTabId];
-    if (!buffer) {
-      buffer = this.tabBuffers[targetTabId] = [];
-    }
-    buffer.push({ method, args });
-    if (buffer.length > 400) {
-      buffer.splice(0, buffer.length - 400);
-    }
+  private bufferAction(targetTabId: string, action: TabBufferAction): void {
+    const current = this.tabBuffers[targetTabId] || [];
+    this.tabBuffers[targetTabId] = appendTabBufferAction(current, action);
+  }
+
+  private bufferResponseStart(targetTabId: string): void {
+    const current = this.tabBuffers[targetTabId] || [];
+    this.tabBuffers[targetTabId] = startResponseStream(current);
+  }
+
+  private bufferResponseChunk(targetTabId: string, chunk: string): void {
+    const current = this.tabBuffers[targetTabId] || [];
+    this.tabBuffers[targetTabId] = appendResponseStreamChunk(current, chunk);
   }
 
   appendChat(content: string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'append', [content]);
+    this.bufferAction(targetTab, { type: 'append', content });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.append(content);
     }
@@ -468,7 +541,7 @@ export class TUIApp implements UIOutput {
 
   appendStyledChat(content: StyledText | string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'appendStyled', [content]);
+    this.bufferAction(targetTab, { type: 'appendStyled', content });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.appendStyled(content);
     }
@@ -476,7 +549,7 @@ export class TUIApp implements UIOutput {
 
   appendUserChat(content: string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'appendUserMessage', [content]);
+    this.bufferAction(targetTab, { type: 'appendUserMessage', content });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.appendUserMessage(content);
     }
@@ -484,7 +557,7 @@ export class TUIApp implements UIOutput {
 
   appendAssistantChat(content: StyledText | string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'appendAssistantMessage', [content]);
+    this.bufferAction(targetTab, { type: 'appendAssistantMessage', content });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.appendAssistantMessage(content);
     }
@@ -492,7 +565,7 @@ export class TUIApp implements UIOutput {
 
   appendAssistantMarkdown(text: string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'appendAssistantMarkdown', [text]);
+    this.bufferAction(targetTab, { type: 'appendAssistantMarkdown', text });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.appendAssistantMarkdown(text);
     }
@@ -500,7 +573,7 @@ export class TUIApp implements UIOutput {
 
   upsertAssistantMarkdownBlock(key: string, text: string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'upsertAssistantMarkdownBlock', [key, text]);
+    this.bufferAction(targetTab, { type: 'upsertAssistantMarkdownBlock', key, text });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.upsertAssistantMarkdownBlock(key, text);
     }
@@ -508,7 +581,7 @@ export class TUIApp implements UIOutput {
 
   removeAssistantMarkdownBlock(key: string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'removeAssistantMarkdownBlock', [key]);
+    this.bufferAction(targetTab, { type: 'removeAssistantMarkdownBlock', key });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.removeAssistantMarkdownBlock(key);
     }
@@ -516,7 +589,7 @@ export class TUIApp implements UIOutput {
 
   startResponse(tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'startResponse', []);
+    this.bufferResponseStart(targetTab);
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.startResponse();
     }
@@ -524,7 +597,7 @@ export class TUIApp implements UIOutput {
 
   appendResponse(chunk: string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'appendResponse', [chunk]);
+    this.bufferResponseChunk(targetTab, chunk);
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.appendResponse(chunk);
     }
@@ -532,7 +605,7 @@ export class TUIApp implements UIOutput {
 
   appendCodeBlock(content: string, filetype?: string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'addCodeBlock', [content, filetype]);
+    this.bufferAction(targetTab, { type: 'addCodeBlock', content, filetype });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.addCodeBlock(content, filetype);
     }
@@ -540,13 +613,18 @@ export class TUIApp implements UIOutput {
 
   appendDiffBlock(diff: string, filetype?: string, tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
-    this.bufferAction(targetTab, 'addDiffBlock', [diff, filetype]);
+    this.bufferAction(targetTab, { type: 'addDiffBlock', diff, filetype });
     if (targetTab === this.tabsPanel.getActiveTabId()) {
       this.chatPanel.addDiffBlock(diff, filetype);
     }
   }
 
-  addDiffEntry(filePath: string, beforeContent: string, afterContent: string, tabId?: string): void {
+  addDiffEntry(
+    filePath: string,
+    beforeContent: string,
+    afterContent: string,
+    tabId?: string,
+  ): void {
     const diff = buildUnifiedDiff({ filePath, beforeContent, afterContent });
     if (!diff) return;
     this.appendDiffBlock(diff, 'diff', tabId);
@@ -577,6 +655,13 @@ export class TUIApp implements UIOutput {
 
   setInputPlaceholder(text: string): void {
     this.inputPanel.setPlaceholder(text);
+  }
+
+  setInputEnabled(enabled: boolean, options?: { placeholder?: string }): void {
+    this.inputPanel.setEnabled(enabled, options);
+    if (enabled) {
+      this.inputPanel.focus();
+    }
   }
 
   pushInputHistory(entry: string): void {
@@ -629,8 +714,6 @@ export class TUIApp implements UIOutput {
   ): Promise<string> {
     return this.inputPanel.promptInput(label, options);
   }
-
-
 
   clearChat(tabId?: string): void {
     const targetTab = tabId ?? this.tabsPanel.getActiveTabId();

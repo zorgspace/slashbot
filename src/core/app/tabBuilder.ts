@@ -58,13 +58,7 @@ export function collectConnectorTargets(snapshot: ConnectorSnapshot): string[] {
     snapshot.status.activeTarget || '',
     ...(Array.isArray(snapshot.status.authorizedTargets) ? snapshot.status.authorizedTargets : []),
   ];
-  return Array.from(
-    new Set(
-      rawTargets
-        .map(target => String(target || '').trim())
-        .filter(Boolean),
-    ),
-  );
+  return Array.from(new Set(rawTargets.map(target => String(target || '').trim()).filter(Boolean)));
 }
 
 export function buildConnectorTabs(options: {

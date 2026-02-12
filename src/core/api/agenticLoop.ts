@@ -56,7 +56,10 @@ export async function runAgenticLoop(
         return typeof msg.content === 'string'
           ? msg.content
           : Array.isArray(msg.content)
-            ? msg.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join(' ')
+            ? msg.content
+                .filter((p: any) => p.type === 'text')
+                .map((p: any) => p.text)
+                .join(' ')
             : '';
       }
     }
@@ -91,6 +94,7 @@ export async function runAgenticLoop(
       shouldResetIteration: false,
       pendingSayMessages: [],
       blockedEndCount: 0,
+      pendingVerificationFailure: undefined,
     },
     maxBlockedEnds: MAX_BLOCKED_ENDS,
     cacheFileContents: opts.cacheFileContents,
@@ -973,6 +977,26 @@ function extractToolResultText(tr: any): string {
   return 'No result';
 }
 
+function pushAssistantSnapshotIfDistinct(history: Message[], responseContent: string): void {
+  const normalized = (responseContent || '').trim();
+  if (!normalized) {
+    return;
+  }
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== 'assistant') {
+      continue;
+    }
+    if (typeof msg.content === 'string' && msg.content.trim() === normalized) {
+      return;
+    }
+    break;
+  }
+
+  history.push({ role: 'assistant', content: responseContent });
+}
+
 type RalphMode = 'tool' | 'xml';
 
 function applyRalphRecovery(params: {
@@ -1008,7 +1032,7 @@ function applyRalphRecovery(params: {
 
   if (retries >= params.maxRalphRetries) {
     if (params.pushAssistantSnapshot && params.responseContent.trim()) {
-      params.history.push({ role: 'assistant', content: params.responseContent });
+      pushAssistantSnapshotIfDistinct(params.history, params.responseContent);
     }
     return {
       shouldContinue: false,
@@ -1026,7 +1050,7 @@ function applyRalphRecovery(params: {
   params.history.push(...cleaned);
 
   if (params.pushAssistantSnapshot && sameStreak === 1 && params.responseContent.trim()) {
-    params.history.push({ role: 'assistant', content: params.responseContent });
+    pushAssistantSnapshotIfDistinct(params.history, params.responseContent);
   }
 
   const modeInstruction =
