@@ -25,6 +25,9 @@ import { imageBuffer } from '../../plugins/filesystem/services/ImageBuffer';
 import { acquireLock, releaseLock } from '../locks';
 import type { EventBus } from '../../core/events/EventBus';
 import { getConnectorActionSpecs, getConnectorCapabilities } from '../catalog';
+import fs from 'node:fs';
+import { promises as fsp } from 'node:fs';
+import path from 'node:path';
 
 export interface TelegramConfig {
   botToken: string;
@@ -43,6 +46,9 @@ export class TelegramConnector implements Connector {
   private messageHandler: MessageHandler | null = null;
   private eventBus: EventBus | null = null;
   private running = false;
+  private stateFile: string;
+  private enabledChats: Set<string> = new Set<string>();
+  private requireChatMode: boolean = false;
 
   constructor(config: TelegramConfig) {
     this.bot = new Telegraf(config.botToken);
@@ -55,6 +61,8 @@ export class TelegramConnector implements Connector {
       }
     }
     this.replyTargetChatId = config.chatId; // Default to primary chatId
+    this.stateFile = path.join(process.env.HOME ?? process.cwd(), '.slashbot', 'telegram-chat-state.json');
+    this.loadChatState();
     this.setupHandlers();
   }
 
@@ -69,6 +77,34 @@ export class TelegramConnector implements Connector {
       await next();
     });
 
+    // Chat mode commands
+    this.bot.command('chat', async (ctx) => {
+      const chatIdStr = ctx.chat?.id?.toString();
+      if (!chatIdStr || !this.authorizedChatIds.has(chatIdStr)) {
+        await ctx.reply?.('❌ Unauthorized chat.');
+        return;
+      }
+      this.enabledChats.add(chatIdStr);
+      await this.saveChatState();
+      await ctx.reply?.('✅ Chatting enabled! Send your messages.');
+    });
+
+    this.bot.command('chatmode', async (ctx) => {
+      const chatIdStr = ctx.chat?.id?.toString();
+      if (!chatIdStr || !this.authorizedChatIds.has(chatIdStr)) {
+        await ctx.reply?.('❌ Unauthorized.');
+        return;
+      }
+      if (chatIdStr !== this.primaryChatId) {
+        await ctx.reply?.('❌ Only primary chat can toggle chat mode.');
+        return;
+      }
+      this.requireChatMode = !this.requireChatMode;
+      await this.saveChatState();
+      const status = this.requireChatMode ? 'ON' : 'OFF';
+      await ctx.reply?.(`🔧 Require /chat mode: ${status}`);
+    });
+
     // Handle text messages
     this.bot.on('text', async ctx => {
       const message = ctx.message.text;
@@ -81,6 +117,11 @@ export class TelegramConnector implements Connector {
       const chatId = ctx.chat.id.toString();
       // Track the chat to reply to (same chat that sent the message)
       this.replyTargetChatId = chatId;
+
+      if (this.requireChatMode && !this.enabledChats.has(chatId)) {
+        await ctx.reply('👋 Please type `/chat` to enable chatting.', { parse_mode: 'Markdown' });
+        return;
+      }
 
       try {
         // Start continuous typing indicator (Telegram typing expires after ~5s)
@@ -125,6 +166,11 @@ export class TelegramConnector implements Connector {
       const chatId = ctx.chat.id.toString();
       // Track the chat to reply to (same chat that sent the message)
       this.replyTargetChatId = chatId;
+
+      if (this.requireChatMode && !this.enabledChats.has(chatId)) {
+        await ctx.reply('👋 Please type `/chat` to enable chatting.', { parse_mode: 'Markdown' });
+        return;
+      }
 
       const transcriptionService = getTranscriptionService();
       if (!transcriptionService) {
@@ -188,6 +234,11 @@ export class TelegramConnector implements Connector {
       const chatId = ctx.chat.id.toString();
       // Track the chat to reply to
       this.replyTargetChatId = chatId;
+
+      if (this.requireChatMode && !this.enabledChats.has(chatId)) {
+        await ctx.reply('👋 Please type `/chat` to enable chatting.', { parse_mode: 'Markdown' });
+        return;
+      }
 
       try {
         // Start continuous typing indicator
@@ -333,6 +384,34 @@ export class TelegramConnector implements Connector {
     releaseLock('telegram').catch(() => {});
     if (this.eventBus) {
       this.eventBus.emit({ type: 'connector:disconnected', source: 'telegram' });
+    }
+    void this.saveChatState().catch(() => {});
+  }
+
+  private loadChatState(): void {
+    try {
+      const content = fs.readFileSync(this.stateFile, 'utf8');
+      const state = JSON.parse(content) as { requireChatMode?: boolean; enabledChats?: string[] };
+      this.requireChatMode = state.requireChatMode ?? false;
+      if (Array.isArray(state.enabledChats)) {
+        state.enabledChats.forEach((id: string) => this.enabledChats.add(id));
+      }
+    } catch {
+      // defaults
+    }
+  }
+
+  private async saveChatState(): Promise<void> {
+    const state = {
+      requireChatMode: this.requireChatMode,
+      enabledChats: Array.from(this.enabledChats),
+      lastUpdate: new Date().toISOString(),
+    };
+    try {
+      await fsp.mkdir(path.dirname(this.stateFile), { recursive: true });
+      await fsp.writeFile(this.stateFile, JSON.stringify(state, null, 2));
+    } catch (err) {
+      console.warn('[Telegram] Failed to save chat state:', err);
     }
   }
 
