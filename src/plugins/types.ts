@@ -72,6 +72,39 @@ export interface ToolContribution {
   controlFlow?: 'say' | 'end' | 'continue';
 }
 
+export type KernelHookEvent =
+  | 'startup:after-grok-ready'
+  | 'startup:after-connectors-ready'
+  | 'startup:after-ui-ready'
+  | 'input:before'
+  | 'input:after-command'
+  | 'input:after'
+  | 'run:noninteractive:before'
+  | 'render:before'
+  | 'render:after'
+  | 'tabs:before'
+  | 'tabs:after'
+  | 'sidebar:before'
+  | 'sidebar:after'
+  | 'shutdown:before';
+
+export type KernelHookPayload = Record<string, unknown>;
+
+export interface KernelHookContribution {
+  event: KernelHookEvent;
+  /**
+   * Lower number runs first. Defaults to 100.
+   */
+  order?: number;
+  /**
+   * Return a shallow patch object to update payload for downstream hooks/callers.
+   */
+  handler: (
+    payload: KernelHookPayload,
+    context: PluginContext,
+  ) => void | Partial<KernelHookPayload> | Promise<void | Partial<KernelHookPayload>>;
+}
+
 export interface Plugin {
   readonly metadata: PluginMetadata;
 
@@ -92,6 +125,8 @@ export interface Plugin {
   getSidebarContributions?(): SidebarContribution[];
 
   getToolContributions?(): ToolContribution[];
+
+  getKernelHooks?(): KernelHookContribution[];
 
   onBeforeGrokInit?(context: PluginContext): Promise<void>;
 

@@ -92,7 +92,7 @@ export class SkillsPlugin implements Plugin {
                 content += '\n\n[AVAILABLE RULE FILES]:\n';
                 content += 'The following documentation files are available locally. ';
                 content +=
-                  'Use <read path="~/.slashbot/skills/' +
+                  'Use <read path=".slashbot/skills/' +
                   name +
                   '/FILENAME"/> to load specific rules when needed:\n';
                 availableFiles.forEach(file => {

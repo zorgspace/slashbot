@@ -4,7 +4,12 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { ReadAction, EditAction, WriteAction, CreateAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
+import { buildUnifiedDiff } from '../../core/utils/diffBuilder';
+
+function formatEditWithDiff(path: string, unifiedDiff: string): string {
+  return [`### Edit - ${path} - OK`, '```diff', unifiedDiff, '```'].join('\n');
+}
 
 export async function executeRead(
   action: ReadAction,
@@ -12,12 +17,10 @@ export async function executeRead(
 ): Promise<ActionResult | null> {
   if (!handlers.onRead) return null;
 
-  // Display action in Claude Code style
   const rangeInfo =
     action.offset || action.limit
       ? ` (offset: ${action.offset || 0}, limit: ${action.limit || 'all'})`
       : '';
-  display.read(action.path + rangeInfo);
 
   const fileContent = await handlers.onRead(action.path, {
     offset: action.offset,
@@ -27,7 +30,10 @@ export async function executeRead(
   if (fileContent) {
     const lines = fileContent.split('\n');
     const lineCount = lines.length;
-    display.readResult(lineCount);
+    display.pushExploreProbe('Read', `${action.path}${rangeInfo} (${lineCount} lines)`, true);
+    display.appendAssistantMessage(
+      formatToolAction('Read', action.path + rangeInfo, { success: true, summary: lineCount + ' lines' }),
+    );
     // Detect language from file extension so the LLM knows the syntax
     const ext = action.path.split('.').pop()?.toLowerCase() || '';
     const langMap: Record<string, string> = {
@@ -79,14 +85,14 @@ export async function executeRead(
     };
     const lang = langMap[ext] || ext;
     // Send full content to LLM with language header and line numbers
-    const startLine = (action.offset || 0) + 1;
+    const startLine = action.offset && action.offset > 0 ? action.offset : 1;
     const endLine = startLine + lines.length - 1;
     // Include range info in header when partial read, so LLM knows the visible window
     const rangeNote = action.offset || action.limit ? ` (lines ${startLine}-${endLine})` : '';
     const header = lang ? `[${lang}] ${action.path}${rangeNote}` : `${action.path}${rangeNote}`;
     const pad = String(endLine).length;
     const numberedContent = lines
-      .map((line, i) => `${String(startLine + i).padStart(pad, ' ')}│${line}`)
+      .map((line, i) => `${String(startLine + i).padStart(pad, ' ')}\u2502${line}`)
       .join('\n');
     return {
       action: `Read: ${action.path}`,
@@ -94,7 +100,10 @@ export async function executeRead(
       result: `${header}\n${numberedContent}`,
     };
   } else {
-    display.error('File not found');
+    display.pushExploreProbe('Read', `${action.path}: not found`, false);
+    display.appendAssistantMessage(
+      formatToolAction('Read', action.path + rangeInfo, { success: false, summary: 'not found' }),
+    );
     return {
       action: `Read: ${action.path}`,
       success: false,
@@ -110,38 +119,60 @@ export async function executeEdit(
 ): Promise<ActionResult | null> {
   if (!handlers.onEdit) return null;
 
-  display.update(action.path);
-
-  const result = await handlers.onEdit(action.path, action.mode, action.content, action.blocks);
+  const result = await handlers.onEdit(
+    action.path,
+    action.oldString,
+    action.newString,
+    action.replaceAll,
+  );
 
   if (result.status === 'applied') {
-    display.updateResult(true, 0, 0);
+    const unifiedDiff =
+      typeof result.beforeContent === 'string' && typeof result.afterContent === 'string'
+        ? buildUnifiedDiff({
+            filePath: action.path,
+            beforeContent: result.beforeContent,
+            afterContent: result.afterContent,
+          })
+        : null;
+
+    if (unifiedDiff) {
+      display.appendAssistantMarkdown(formatEditWithDiff(action.path, unifiedDiff));
+    } else {
+      display.appendAssistantMessage(
+        formatToolAction('Edit', action.path, { success: true }),
+      );
+    }
   } else if (result.status === 'already_applied') {
-    display.success('Already applied (skipped)');
-  } else if (result.status === 'conflict') {
-    display.updateResult(true, 0, 0);
-    const conflictCount = result.conflicts?.length || 0;
-    display.warning(`Applied with ${conflictCount} conflict(s) — LLM version used for conflicts`);
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: true, summary: 'already applied' }),
+    );
   } else if (result.status === 'not_found') {
-    display.updateResult(false, 0, 0);
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: false, summary: 'not found' }),
+    );
     display.error(
       result.message?.includes('File not found')
-        ? `File not found: ${action.path}. Use <read> to check if file exists, or <write> to make a new file.`
+        ? `File not found: ${action.path}. Use read_file to check if file exists, or write_file to make a new file.`
         : `${result.message}`,
     );
   } else if (result.status === 'no_match') {
-    display.updateResult(false, 0, 0);
-    display.error(`Search block not found in ${action.path} — re-read and retry.`);
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: false, summary: 'no match' }),
+    );
+    display.error(`Search string not found in ${action.path} — re-read and retry.`);
   } else {
-    display.updateResult(false, 0, 0);
+    display.appendAssistantMessage(
+      formatToolAction('Edit', action.path, { success: false }),
+    );
   }
 
   let errorMsg = result.message;
   if (!result.success) {
     if (result.status === 'not_found') {
       errorMsg = result.message?.includes('File not found')
-        ? `${result.message} - Use <read> to verify path or <write> to make new file`
-        : `${result.message} - Use <read path="${action.path}"/> first to see actual content`;
+        ? `${result.message} - Use read_file to verify path or write_file to make new file`
+        : `${result.message} - Use read_file("${action.path}") first to see actual content`;
     } else if (result.status === 'no_match') {
       errorMsg = `${result.message}`;
     }
@@ -167,12 +198,12 @@ export async function executeWrite(
   const handler = handlers.onWrite || handlers.onCreate;
   if (!handler) return null;
 
-  display.write(action.path);
-
   const success = await handler(action.path, action.content);
   const lineCount = action.content.split('\n').length;
 
-  display.writeResult(success, lineCount);
+  display.appendAssistantMessage(
+    formatToolAction('Create', action.path, { success, summary: success ? lineCount + ' lines' : 'failed' }),
+  );
 
   return {
     action: `Write: ${action.path}`,
@@ -189,12 +220,12 @@ export async function executeCreate(
   const handler = handlers.onCreate || handlers.onWrite;
   if (!handler) return null;
 
-  display.write(action.path);
-
   const success = await handler(action.path, action.content);
   const lineCount = action.content.split('\n').length;
 
-  display.writeResult(success, lineCount);
+  display.appendAssistantMessage(
+    formatToolAction('Create', action.path, { success, summary: success ? lineCount + ' lines' : 'failed' }),
+  );
 
   return {
     action: `Write: ${action.path}`,

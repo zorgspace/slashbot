@@ -12,6 +12,7 @@ import type {
   ActionContribution,
   PromptContribution,
   ContextProvider,
+  EventSubscription,
 } from '../types';
 import { CORE_PROMPT } from './prompt';
 import { getProviderHints } from './provider-hints';
@@ -26,8 +27,10 @@ export class CorePromptPlugin implements Plugin {
   };
 
   private provider = 'xai';
+  private context!: PluginContext;
 
   async init(context: PluginContext): Promise<void> {
+    this.context = context;
     // Read current provider from config
     try {
       const { TYPES } = await import('../../core/di/types');
@@ -62,6 +65,25 @@ export class CorePromptPlugin implements Plugin {
         priority: 999, // Lowest priority - appears last
         getContext: async () => {
           return getProviderHints(this.provider) || null;
+        },
+      },
+    ];
+  }
+
+  getEventSubscriptions(): EventSubscription[] {
+    return [
+      {
+        event: 'prompt:redraw',
+        handler: async () => {
+          try {
+            const client = this.context?.getGrokClient?.() as
+              | { buildAssembledPrompt?: () => Promise<void> }
+              | null
+              | undefined;
+            await client?.buildAssembledPrompt?.();
+          } catch {
+            // Best-effort redraw hook.
+          }
         },
       },
     ];

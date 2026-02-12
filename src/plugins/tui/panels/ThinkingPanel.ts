@@ -6,13 +6,7 @@
  * Spinner uses primary (amber) color for warmth.
  */
 
-import {
-  BoxRenderable,
-  TextRenderable,
-  t,
-  fg,
-  type CliRenderer,
-} from '@opentui/core';
+import { BoxRenderable, TextRenderable, t, fg, type CliRenderer } from '@opentui/core';
 import { theme } from '../../../core/ui/theme';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

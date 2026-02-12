@@ -16,20 +16,27 @@ export interface ActionHandlers {
 }
 
 export interface GrepOptions {
+  path?: string;
   glob?: string;
+  outputMode?: 'content' | 'files_with_matches' | 'count';
+  context?: number;
+  contextBefore?: number;
+  contextAfter?: number;
   caseInsensitive?: boolean;
   lineNumbers?: boolean;
+  headLimit?: number;
   multiline?: boolean;
   [key: string]: unknown;
 }
 
-export type EditStatus = 'applied' | 'no_match' | 'error' | 'not_found' | 'already_applied' | 'conflict';
+export type EditStatus = 'applied' | 'no_match' | 'error' | 'not_found' | 'already_applied';
 
 export interface EditResult {
   status: EditStatus;
   path?: string;
   message?: string;
   success?: boolean;
-  conflicts?: { oursLines: string[]; theirsLines: string[] }[];
+  beforeContent?: string;
+  afterContent?: string;
   [key: string]: unknown;
 }

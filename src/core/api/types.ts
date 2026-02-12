@@ -11,6 +11,18 @@ export interface Message {
   toolResults?: Array<{ toolCallId: string; toolName: string; result: string }>;
   /** For assistant messages with tool calls: raw AI SDK format for history replay */
   _rawAIMessage?: any;
+  /** Optional UI replay metadata for deterministic tab rendering */
+  _render?: {
+    kind:
+      | 'skip'
+      | 'user'
+      | 'assistant_markdown'
+      | 'assistant_tool_transcript'
+      | 'compaction_divider'
+      | 'tool'
+      | 'plain';
+    text?: string;
+  };
 }
 
 export interface LLMConfig {
@@ -63,8 +75,10 @@ export interface ToolCallResult {
 export interface StreamOptions {
   showThinking?: boolean;
   displayStream?: boolean;
+  quiet?: boolean;
   timeout?: number;
   thinkingLabel?: string;
+  outputTabId?: string;
   /** AI SDK tools map to pass to generateText(). When set, enables native tool calling. */
   tools?: Record<string, any>;
 }
@@ -76,9 +90,9 @@ export interface StreamResult {
   content: string;
   thinking: string;
   finishReason: string | null;
-  /** Tool calls from native AI SDK tool calling (when tools are enabled) */
-  toolCalls?: ToolCallResult[];
-  /** Full response messages including assistant + tool-call parts (for history reconstruction) */
+  /** Whether the model made tool calls that were executed via AI SDK execute callbacks */
+  hasToolCalls: boolean;
+  /** Full response messages from AI SDK (assistant + tool-result pairs) for history reconstruction */
   responseMessages?: any[];
 }
 
@@ -87,6 +101,9 @@ export interface StreamResult {
  */
 export interface AgenticLoopOptions {
   displayStream: boolean;
+  quiet?: boolean;
+  executeActions?: boolean;
+  outputTabId?: string;
   maxIterations: number;
   iterationTimeout?: number;
   overallTimeout?: number;
@@ -98,6 +115,7 @@ export interface AgenticLoopOptions {
   editTagDebug: boolean;
   continueActions: boolean;
   maxConsecutiveErrors?: number;
+  executionPolicy?: ExecutionPolicy;
 }
 
 /**
@@ -113,17 +131,33 @@ export interface AgenticLoopResult {
   endMessage?: string;
 }
 
+export type ExecutionPolicyMode = 'default' | 'orchestrator';
+
+export interface ExecutionPolicy {
+  mode?: ExecutionPolicyMode;
+  blockedToolNames?: string[];
+  blockedActionTypes?: string[];
+  blockReason?: string;
+}
+
 /**
  * Internal context interface for extracted streaming/loop functions.
  * LLMClient implements this to pass its state without exposing private fields.
  */
 export interface ClientContext {
   authProvider: ApiAuthProvider;
-  sessionManager: import('./sessions').SessionManager;
+  sessionManager: import('./sessions').SessionScope;
+  /** Session currently being executed (for scoped abort wiring) */
+  sessionId?: string;
+  /** Optional UI tab id for deterministic output routing */
+  outputTabId?: string;
+  executionPolicy?: ExecutionPolicy;
   config: LLMConfig;
   usage: UsageStats;
   thinkingActive: boolean;
   abortController: AbortController | null;
+  /** Optional hook called when streamResponse swaps/clears the abort controller */
+  onAbortControllerChange?: (controller: AbortController | null) => void;
   rawOutputCallback: ((text: string) => void) | null;
   actionHandlers: import('../actions').ActionHandlers;
   providerRegistry: import('../../plugins/providers/registry').ProviderRegistry;

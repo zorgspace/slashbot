@@ -12,28 +12,24 @@ export async function executeGlob(
 ): Promise<ActionResult | null> {
   if (!handlers.onGlob) return null;
 
-  const pathInfo = action.path ? `, "${action.path}"` : '';
-  display.tool('Glob', `"${action.pattern}"${pathInfo}`);
-
   try {
     const files = await handlers.onGlob(action.pattern, action.path);
-
-    if (files.length === 0) {
-      display.result('No files found');
-    } else {
-      display.result(
-        `Found ${files.length} file${files.length > 1 ? 's' : ''}\n${files.join('\n')}`,
-      );
-    }
+    const meta = `pattern="${action.pattern}"${action.path ? ` path="${action.path}"` : ''}`;
+    const fileList = files.join('\n');
+    const hasFiles = files.length > 0;
+    const globPayload = hasFiles ? fileList : 'No files found';
+    const globResult = hasFiles ? fileList : `No files found (${meta})`;
+    display.pushExploreProbe('Glob', globPayload, true, meta);
 
     return {
       action: `Glob: ${action.pattern}`,
       success: true,
-      result: files.length > 0 ? files.join('\n') : 'No files found',
+      result: globResult,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Glob failed: ${errorMsg}`);
+    const meta = `pattern="${action.pattern}"${action.path ? ` path="${action.path}"` : ''}`;
+    display.pushExploreProbe('Glob', errorMsg, false, meta);
     return {
       action: `Glob: ${action.pattern}`,
       success: false,
@@ -48,21 +44,6 @@ export async function executeGrep(
   handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
   if (!handlers.onGrep) return null;
-
-  // Build options display string
-  const opts: string[] = [];
-  if (action.context) opts.push(`-C${action.context}`);
-  if (action.contextBefore) opts.push(`-B${action.contextBefore}`);
-  if (action.contextAfter) opts.push(`-A${action.contextAfter}`);
-  if (action.caseInsensitive) opts.push('-i');
-  if (action.lineNumbers) opts.push('-n');
-  if (action.multiline) opts.push('-U');
-  if (action.headLimit) opts.push(`limit:${action.headLimit}`);
-  const optsStr = opts.length > 0 ? ` ${opts.join(' ')}` : '';
-  const pathInfo = action.path ? ` in ${action.path}` : '';
-  const globInfo = action.glob ? ` (${action.glob})` : '';
-
-  display.grep(action.pattern + optsStr + pathInfo + globInfo);
 
   // Build options for handler
   const grepOptions: GrepOptions = {
@@ -79,9 +60,7 @@ export async function executeGrep(
   };
 
   const grepResults = await handlers.onGrep(action.pattern, grepOptions);
-  const lines = grepResults ? grepResults.split('\n').filter(l => l.trim()) : [];
-
-  display.grepResult(lines.length, grepResults || undefined);
+  display.pushExploreProbe('Grep', grepResults || 'No results', true);
 
   return {
     action: `Grep: ${action.pattern}`,
@@ -96,19 +75,10 @@ export async function executeLS(
 ): Promise<ActionResult | null> {
   if (!handlers.onLS) return null;
 
-  const ignoreInfo = action.ignore?.length ? ` (ignore: ${action.ignore.join(', ')})` : '';
-  display.tool('LS', `${action.path}${ignoreInfo}`);
-
   try {
     const entries = await handlers.onLS(action.path, action.ignore);
-
-    if (entries.length === 0) {
-      display.result('Empty directory');
-    } else {
-      const preview = entries.slice(0, 3);
-      const more = entries.length > 3 ? `\n  ... and ${entries.length - 3} more` : '';
-      display.result(`${entries.length} entries\n${preview.join('\n')}${more}`);
-    }
+    const lsPayload = entries.length > 0 ? entries.join('\n') : 'No entries found';
+    display.pushExploreProbe('LS', lsPayload, true);
 
     return {
       action: `LS: ${action.path}`,
@@ -117,9 +87,9 @@ export async function executeLS(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`LS failed: ${errorMsg}`);
+    display.pushExploreProbe('LS', errorMsg, false);
     return {
-      action: `LS: ${action.path}`,
+      action: `ls: ${action.path}`,
       success: false,
       result: 'Failed',
       error: errorMsg,

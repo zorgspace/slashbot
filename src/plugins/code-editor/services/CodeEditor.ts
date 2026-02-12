@@ -9,8 +9,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import type { EditResult, GrepOptions } from '../../../core/actions/types';
-import { EXCLUDED_DIRS, EXCLUDED_FILES } from '../../../core/config/constants';
-import { merge3 } from './diff3';
+import { EXCLUDED_DIRS, EXCLUDED_FILES, EXEC, FILE_LIMITS } from '../../../core/config/constants';
 import { replace } from './replacers';
 import type { EventBus } from '../../../core/events/EventBus';
 
@@ -19,13 +18,7 @@ import type { EventBus } from '../../../core/events/EventBus';
  * This catches corruption that slipped past the parser (defense in depth).
  */
 function hasActionTagCorruption(content: string): boolean {
-  const patterns = [
-    /<edit\s+path\s*=/i,
-    /<\/edit>/i,
-    /<end>/i,
-    /<bash>/i,
-    /<say>/i,
-  ];
+  const patterns = [/<edit\s+path\s*=/i, /<\/edit>/i, /<end>/i, /<bash>/i, /<say>/i];
   let count = 0;
   for (const p of patterns) {
     if (p.test(content)) count++;
@@ -33,16 +26,68 @@ function hasActionTagCorruption(content: string): boolean {
   return count >= 3;
 }
 
+function globSegmentToRegex(segment: string): string {
+  let out = '';
+  for (let i = 0; i < segment.length; i += 1) {
+    const ch = segment[i];
+    if (ch === '*') {
+      out += '[^/]*';
+      continue;
+    }
+    if (ch === '?') {
+      out += '[^/]';
+      continue;
+    }
+    if ('\\^$+?.()|{}[]'.includes(ch)) {
+      out += `\\${ch}`;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function fallbackMatchesGlob(filePath: string, globPattern: string): boolean {
+  const normalizedPath = filePath.split(path.sep).join('/');
+  const normalizedPattern = globPattern.split(path.sep).join('/');
+  const segments = normalizedPattern.split('/');
+  let regexSrc = '^';
+
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i];
+    if (segment === '**') {
+      regexSrc += '(?:[^/]+/)*';
+      continue;
+    }
+    regexSrc += globSegmentToRegex(segment);
+    if (i < segments.length - 1) {
+      regexSrc += '/';
+    }
+  }
+
+  regexSrc += '$';
+  return new RegExp(regexSrc).test(normalizedPath);
+}
+
+function matchesGlob(filePath: string, globPattern: string): boolean {
+  const withNativeGlob = (path as any).matchesGlob as
+    | ((candidate: string, pattern: string) => boolean)
+    | undefined;
+  if (typeof withNativeGlob === 'function') {
+    try {
+      return withNativeGlob(filePath, globPattern);
+    } catch {
+      // Fall through to regex fallback.
+    }
+  }
+  return fallbackMatchesGlob(filePath, globPattern);
+}
+
 export interface SearchResult {
   file: string;
   line: number;
   content: string;
   match: string;
-}
-
-interface SearchReplaceBlock {
-  search: string;
-  replace: string;
 }
 
 export class CodeEditor {
@@ -83,78 +128,329 @@ export class CodeEditor {
     return this.snapshots.get(key);
   }
 
+  async glob(pattern: string, basePath?: string): Promise<string[]> {
+    const searchDir = this.resolveSearchTarget(basePath);
+    const normalizedPattern = this.normalizeGlobPattern(pattern);
+
+    try {
+      const stat = await fsPromises.stat(searchDir);
+      if (stat.isFile()) {
+        const candidate = this.normalizeResultPath(searchDir);
+        const basename = path.basename(candidate);
+        if (
+          matchesGlob(candidate, normalizedPattern) ||
+          matchesGlob(basename, normalizedPattern)
+        ) {
+          return [candidate];
+        }
+        return [];
+      }
+      if (!stat.isDirectory()) {
+        return [];
+      }
+    } catch {
+      return [];
+    }
+
+    const limit = FILE_LIMITS.GLOB_MAX_FILES;
+    const rgMatches = await this.globWithRipgrep(normalizedPattern, searchDir);
+    if (rgMatches !== null) {
+      return rgMatches.slice(0, limit).sort();
+    }
+
+    const fsMatches = await this.globWithFilesystemWalk(normalizedPattern, searchDir, limit);
+    return fsMatches.slice(0, limit).sort();
+  }
+
   async grep(
     pattern: string,
     filePattern?: string,
     options?: GrepOptions,
   ): Promise<SearchResult[]> {
-    const results: SearchResult[] = [];
+    const searchPath = this.resolveSearchTarget(
+      typeof options?.path === 'string' ? options.path : undefined,
+    );
+    const exists = await this.pathExists(searchPath);
+    if (!exists) {
+      return [];
+    }
 
+    const hasLineNumbers = options?.lineNumbers !== false;
+    const rawGlobPattern =
+      typeof options?.glob === 'string' && options.glob.trim() ? options.glob : filePattern;
+    const globPattern = rawGlobPattern ? this.normalizeGlobPattern(rawGlobPattern) : undefined;
+    const limit = options?.headLimit || FILE_LIMITS.GREP_MAX_LINES;
+
+    const rgResults = await this.grepWithRipgrep(
+      pattern,
+      searchPath,
+      hasLineNumbers,
+      globPattern,
+      options,
+    );
+    if (rgResults !== null) {
+      return rgResults.slice(0, limit);
+    }
+
+    const grepResults = await this.grepWithClassicGrep(
+      pattern,
+      searchPath,
+      hasLineNumbers,
+      globPattern,
+      options,
+    );
+    return grepResults.slice(0, limit);
+  }
+
+  private buildIgnoreGlobArgs(): string[] {
+    const args: string[] = [];
+    for (const dir of EXCLUDED_DIRS) {
+      args.push('--glob', `!**/${dir}/**`);
+    }
+    for (const filePattern of EXCLUDED_FILES) {
+      args.push('--glob', `!**/${filePattern}`);
+    }
+    return args;
+  }
+
+  private async globWithRipgrep(pattern: string, searchDir: string): Promise<string[] | null> {
     try {
-      const { exec } = await import('child_process');
+      const { execFile } = await import('child_process');
       const { promisify } = await import('util');
-      const execAsync = promisify(exec);
+      const execFileAsync = promisify(execFile);
+      const args = [
+        '--files',
+        '--color',
+        'never',
+        '--glob',
+        pattern,
+        ...this.buildIgnoreGlobArgs(),
+        searchDir,
+      ];
+      const { stdout } = await execFileAsync('rg', args, {
+        cwd: this.workDir,
+        maxBuffer: EXEC.MAX_BUFFER,
+      });
+      let matches = stdout
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(file => this.normalizeResultPath(file));
+      if (matches.length === 0 && pattern.startsWith('**/')) {
+        const retryArgs = [
+          '--files',
+          '--color',
+          'never',
+          '--glob',
+          pattern.slice(3),
+          ...this.buildIgnoreGlobArgs(),
+          searchDir,
+        ];
+        const retry = await execFileAsync('rg', retryArgs, {
+          cwd: this.workDir,
+          maxBuffer: EXEC.MAX_BUFFER,
+        });
+        matches = retry.stdout
+          .split('\n')
+          .map(line => line.trim())
+          .filter(Boolean)
+          .map(file => this.normalizeResultPath(file));
+      }
+      return [...new Set(matches)];
+    } catch (error: any) {
+      if (error?.code === 1) {
+        return [];
+      }
+      if (error?.code === 'ENOENT') {
+        return null;
+      }
+      return [];
+    }
+  }
 
-      // Build grep command with options - exclude build dirs and generated files
-      const dirExcludes = EXCLUDED_DIRS.map(d => `--exclude-dir=${d}`).join(' ');
-      const fileExcludes = EXCLUDED_FILES.map(f => `--exclude=${f}`).join(' ');
-      const excludes = `${dirExcludes} ${fileExcludes}`;
-      const fileArg = filePattern ? `--include="${filePattern}"` : '';
+  private async globWithFilesystemWalk(
+    pattern: string,
+    searchDir: string,
+    limit: number,
+  ): Promise<string[]> {
+    const matches: string[] = [];
+    const stack = [searchDir];
 
-      // Context options
-      let contextArg = '';
-      if (options?.context) {
-        contextArg = `-C ${options.context}`;
+    while (stack.length > 0 && matches.length < limit) {
+      const currentDir = stack.pop() as string;
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = await fsPromises.readdir(currentDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (matches.length >= limit) break;
+        const fullPath = path.join(currentDir, entry.name);
+
+        if (entry.isDirectory()) {
+          if (EXCLUDED_DIRS.includes(entry.name)) continue;
+          stack.push(fullPath);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        if (this.isExcludedFileName(entry.name)) continue;
+
+        const relativeToSearch = path.relative(searchDir, fullPath).split(path.sep).join('/');
+        if (!matchesGlob(relativeToSearch, pattern)) continue;
+
+        matches.push(this.normalizeResultPath(fullPath));
+      }
+    }
+
+    return matches;
+  }
+
+  private async grepWithRipgrep(
+    pattern: string,
+    searchPath: string,
+    hasLineNumbers: boolean,
+    globPattern: string | undefined,
+    options?: GrepOptions,
+  ): Promise<SearchResult[] | null> {
+    try {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+
+      const args: string[] = ['--no-heading', '--color', 'never'];
+      if (hasLineNumbers) args.push('--line-number');
+      if (options?.caseInsensitive) args.push('-i');
+      if (options?.multiline) args.push('-U');
+
+      if (typeof options?.context === 'number') {
+        args.push('-C', String(options.context));
       } else {
-        if (options?.contextBefore) contextArg += `-B ${options.contextBefore} `;
-        if (options?.contextAfter) contextArg += `-A ${options.contextAfter} `;
+        if (typeof options?.contextBefore === 'number') {
+          args.push('-B', String(options.contextBefore));
+        }
+        if (typeof options?.contextAfter === 'number') {
+          args.push('-A', String(options.contextAfter));
+        }
       }
 
-      // Case insensitivity
-      const caseArg = options?.caseInsensitive ? '-i' : '';
-
-      // Determine search path - can be a specific file or directory
-      let searchPath = this.workDir;
-      const pathOpt = options?.path;
-      if (pathOpt && typeof pathOpt === 'string') {
-        searchPath = pathOpt.startsWith('/') ? pathOpt : `${this.workDir}/${pathOpt}`;
+      if (globPattern) {
+        args.push('--glob', globPattern);
       }
+      args.push(...this.buildIgnoreGlobArgs());
+      args.push('--', pattern, searchPath);
 
-      // Use -r only for directories, not files
+      const { stdout } = await execFileAsync('rg', args, {
+        cwd: this.workDir,
+        maxBuffer: EXEC.MAX_BUFFER,
+      });
+      return this.parseGrepOutput(stdout, pattern, hasLineNumbers);
+    } catch (error: any) {
+      if (error?.code === 1) {
+        return [];
+      }
+      if (error?.code === 'ENOENT') {
+        return null;
+      }
+      return [];
+    }
+  }
+
+  private async grepWithClassicGrep(
+    pattern: string,
+    searchPath: string,
+    hasLineNumbers: boolean,
+    globPattern: string | undefined,
+    options?: GrepOptions,
+  ): Promise<SearchResult[]> {
+    try {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
       const isFile = fs.existsSync(searchPath) && fs.statSync(searchPath).isFile();
-      const recursiveArg = isFile ? '' : '-r';
 
-      const limit = (options as any)?.headLimit || 10;
-      const cmd = `grep ${recursiveArg} -n ${caseArg} ${contextArg} ${isFile ? '' : excludes} ${fileArg} "${pattern}" "${searchPath}" 2>/dev/null | head -${limit}`;
+      const args: string[] = [];
+      if (!isFile) args.push('-r');
+      if (hasLineNumbers) args.push('-n');
+      if (options?.caseInsensitive) args.push('-i');
+      if (options?.multiline) args.push('-U');
 
-      const { stdout } = await execAsync(cmd);
+      if (typeof options?.context === 'number') {
+        args.push('-C', String(options.context));
+      } else {
+        if (typeof options?.contextBefore === 'number') {
+          args.push('-B', String(options.contextBefore));
+        }
+        if (typeof options?.contextAfter === 'number') {
+          args.push('-A', String(options.contextAfter));
+        }
+      }
 
-      for (const line of stdout.split('\n').filter(l => l.trim())) {
-        // Handle context separator lines (--)
-        if (line === '--') continue;
+      if (!isFile) {
+        for (const dir of EXCLUDED_DIRS) {
+          args.push(`--exclude-dir=${dir}`);
+        }
+      }
+      for (const fileExclude of EXCLUDED_FILES) {
+        args.push(`--exclude=${fileExclude}`);
+      }
+      if (globPattern) {
+        args.push(`--include=${globPattern}`);
+      }
 
-        const match = line.match(/^(.+?):(\d+):(.*)$/);
-        if (match) {
+      args.push(pattern, searchPath);
+      const { stdout } = await execFileAsync('grep', args, {
+        cwd: this.workDir,
+        maxBuffer: EXEC.MAX_BUFFER,
+      });
+      return this.parseGrepOutput(stdout, pattern, hasLineNumbers);
+    } catch (error: any) {
+      if (error?.code === 1 || error?.code === 'ENOENT') {
+        return [];
+      }
+      return [];
+    }
+  }
+
+  private parseGrepOutput(output: string, pattern: string, hasLineNumbers: boolean): SearchResult[] {
+    const results: SearchResult[] = [];
+    for (const line of output.split('\n').filter(Boolean)) {
+      if (line === '--') continue;
+
+      if (hasLineNumbers) {
+        const matchLine = line.match(/^(.+?):(\d+):(.*)$/);
+        if (matchLine) {
           results.push({
-            file: match[1].replace(this.workDir + '/', ''),
-            line: parseInt(match[2]),
-            content: match[3], // Preserve indentation
+            file: this.normalizeResultPath(matchLine[1]),
+            line: parseInt(matchLine[2], 10),
+            content: matchLine[3],
             match: pattern,
           });
+          continue;
         }
-        // Also handle context lines (file-linenum-content format)
-        const contextMatch = line.match(/^(.+?)-(\d+)-(.*)$/);
-        if (contextMatch) {
+
+        const contextLine = line.match(/^(.+?)-(\d+)-(.*)$/);
+        if (contextLine) {
           results.push({
-            file: contextMatch[1].replace(this.workDir + '/', ''),
-            line: parseInt(contextMatch[2]),
-            content: contextMatch[3], // Preserve indentation
-            match: '', // Context line, not a match
+            file: this.normalizeResultPath(contextLine[1]),
+            line: parseInt(contextLine[2], 10),
+            content: contextLine[3],
+            match: '',
           });
         }
+        continue;
       }
-    } catch {
-      // No results or grep error
+
+      const matchLine = line.match(/^(.+?):(.*)$/);
+      if (matchLine) {
+        results.push({
+          file: this.normalizeResultPath(matchLine[1]),
+          line: 0,
+          content: matchLine[2],
+          match: pattern,
+        });
+      }
     }
 
     return results;
@@ -176,35 +472,86 @@ export class CodeEditor {
    * Resolve a file path, expanding ~ to home directory
    */
   private resolvePath(filePath: string): string {
+    const normalizedPath = this.normalizeInputPath(filePath);
     // Expand tilde to home directory
-    if (filePath.startsWith('~/')) {
-      return path.join(os.homedir(), filePath.slice(2));
+    if (normalizedPath.startsWith('~/')) {
+      return path.join(os.homedir(), normalizedPath.slice(2));
     }
-    if (filePath === '~') {
+    if (normalizedPath === '~') {
       return os.homedir();
     }
     // Handle absolute paths
-    if (path.isAbsolute(filePath)) {
-      return filePath;
+    if (path.isAbsolute(normalizedPath)) {
+      return normalizedPath;
     }
     // Relative path - join with workDir
-    return path.join(this.workDir, filePath);
+    return path.join(this.workDir, normalizedPath);
+  }
+
+  private resolveSearchTarget(searchPath?: string): string {
+    if (!searchPath || !searchPath.trim()) {
+      return this.workDir;
+    }
+    return this.resolvePath(searchPath);
+  }
+
+  private normalizeResultPath(foundPath: string): string {
+    const normalized = path.normalize(foundPath);
+    const workDirNormalized = path.normalize(this.workDir);
+    const workDirPrefix = `${workDirNormalized}${path.sep}`;
+    if (normalized === workDirNormalized) {
+      return '.';
+    }
+    if (normalized.startsWith(workDirPrefix)) {
+      return normalized.slice(workDirPrefix.length).split(path.sep).join('/');
+    }
+    return normalized.split(path.sep).join('/');
+  }
+
+  private async pathExists(targetPath: string): Promise<boolean> {
+    try {
+      await fsPromises.access(targetPath, fs.constants.F_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private isExcludedFileName(fileName: string): boolean {
+    return EXCLUDED_FILES.some(pattern => matchesGlob(fileName, pattern));
+  }
+
+  private normalizeInputPath(value: string): string {
+    let normalized = value.trim();
+    if (
+      (normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")) ||
+      (normalized.startsWith('`') && normalized.endsWith('`'))
+    ) {
+      normalized = normalized.slice(1, -1).trim();
+    }
+    return normalized;
+  }
+
+  private normalizeGlobPattern(pattern: string): string {
+    let normalized = this.normalizeInputPath(pattern).replace(/\\/g, '/');
+    if (!normalized) {
+      return '**/*';
+    }
+    if (normalized.startsWith('./')) {
+      normalized = normalized.slice(2);
+    }
+    return normalized;
   }
 
   /**
-   * Apply a merge-based edit. Supports two modes:
-   *
-   * - 'full': LLM provides the complete intended file content.
-   *   Uses diff3 merge if the file changed since read.
-   *
-   * - 'search-replace': LLM provides search/replace blocks.
-   *   Finds each search block in the file and replaces it.
+   * Apply a single search/replace edit using the cascading replacer system.
    */
-  async applyMergeEdit(
+  async applyEdit(
     filePath: string,
-    mode: 'full' | 'search-replace',
-    content?: string,
-    blocks?: SearchReplaceBlock[],
+    oldString: string,
+    newString: string,
+    replaceAll?: boolean,
   ): Promise<EditResult> {
     try {
       const fullPath = this.resolvePath(filePath);
@@ -221,11 +568,63 @@ export class CodeEditor {
 
       const currentContent = await fsPromises.readFile(fullPath, 'utf8');
 
-      if (mode === 'full') {
-        return await this.applyFullEdit(filePath, fullPath, currentContent, content || '');
-      } else {
-        return await this.applySearchReplaceEdit(filePath, fullPath, currentContent, blocks || []);
+      // Safety net: reject newString corrupted with raw action tags
+      if (hasActionTagCorruption(newString)) {
+        display.errorText(
+          `Blocked corrupted edit to ${filePath}: content contains raw action tags`,
+        );
+        return {
+          success: false,
+          status: 'error',
+          path: filePath,
+          message: `Edit rejected: newString for ${filePath} is corrupted with raw action tags. The LLM malfunctioned — retry the edit.`,
+        };
       }
+
+      // Apply replacement using cascading replacer system
+      let newContent: string;
+      try {
+        newContent = replace(currentContent, oldString, newString, replaceAll);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes('not found')) {
+          return {
+            success: false,
+            status: 'no_match',
+            path: filePath,
+            message: `${filePath}: ${msg}`,
+          };
+        }
+        return {
+          success: false,
+          status: 'error',
+          path: filePath,
+          message: `${filePath}: ${msg}`,
+        };
+      }
+
+      // Idempotency check
+      if (newContent === currentContent) {
+        display.muted(`Edit already applied: ${filePath}`);
+        return {
+          success: true,
+          status: 'already_applied',
+          path: filePath,
+          message: 'Edit already applied',
+        };
+      }
+
+      await fsPromises.writeFile(fullPath, newContent, 'utf8');
+      this.snapshots.set(fullPath, newContent);
+      this.emitEditApplied(filePath, currentContent, newContent);
+      return {
+        success: true,
+        status: 'applied',
+        path: filePath,
+        message: `Updated`,
+        beforeContent: currentContent,
+        afterContent: newContent,
+      };
     } catch (error) {
       display.errorText(`Edit error: ${error}`);
       return {
@@ -237,168 +636,6 @@ export class CodeEditor {
     }
   }
 
-  /**
-   * Full-file edit: diff3 merge between snapshot, current disk, and LLM output.
-   */
-  private async applyFullEdit(
-    filePath: string,
-    fullPath: string,
-    currentContent: string,
-    newContent: string,
-  ): Promise<EditResult> {
-    // Safety net: reject content corrupted with raw action tags
-    if (hasActionTagCorruption(newContent)) {
-      display.errorText(`Blocked corrupted write to ${filePath}: content contains raw action tags`);
-      return {
-        success: false,
-        status: 'error',
-        path: filePath,
-        message: `Edit rejected: content for ${filePath} is corrupted with raw action tags (nested <edit>/<end>/<bash>/<say> detected). The LLM malfunctioned — retry the edit.`,
-      };
-    }
-
-    // Idempotency: if new content matches current, nothing to do
-    if (newContent === currentContent) {
-      display.muted(`Edit already applied: ${filePath}`);
-      return {
-        success: true,
-        status: 'already_applied',
-        path: filePath,
-        message: 'Edit already applied',
-      };
-    }
-
-    const snapshot = this.snapshots.get(fullPath);
-
-    // Fast path: no snapshot (file was never read) or snapshot matches current disk
-    if (!snapshot || snapshot === currentContent) {
-      await fsPromises.writeFile(fullPath, newContent, 'utf8');
-      // Update snapshot to new content
-      this.snapshots.set(fullPath, newContent);
-      this.emitEditApplied(filePath, currentContent, newContent);
-      display.successText(`Modified: ${filePath}`);
-      return {
-        success: true,
-        status: 'applied',
-        path: filePath,
-        message: `Modified: ${filePath}`,
-      };
-    }
-
-    // Merge path: file changed since read — three-way merge
-    const baseLines = snapshot.split('\n');
-    const oursLines = currentContent.split('\n');
-    const theirsLines = newContent.split('\n');
-
-    const result = merge3(baseLines, oursLines, theirsLines);
-
-    if (result.success) {
-      const mergedContent = result.merged.join('\n');
-
-      if (mergedContent === currentContent) {
-        display.muted(`Edit already applied: ${filePath}`);
-        return {
-          success: true,
-          status: 'already_applied',
-          path: filePath,
-          message: 'Edit already applied',
-        };
-      }
-
-      await fsPromises.writeFile(fullPath, mergedContent, 'utf8');
-      this.snapshots.set(fullPath, mergedContent);
-      this.emitEditApplied(filePath, currentContent, mergedContent);
-      display.warningText(`Merged (file changed since read): ${filePath}`);
-      return {
-        success: true,
-        status: 'applied',
-        path: filePath,
-        message: `Merged: ${filePath} (${result.conflictCount} conflicts resolved)`,
-      };
-    }
-
-    // Conflict path: apply with conflicts (favor LLM intent) but report
-    const mergedContent = result.merged.join('\n');
-    await fsPromises.writeFile(fullPath, mergedContent, 'utf8');
-    this.snapshots.set(fullPath, mergedContent);
-    this.emitEditApplied(filePath, currentContent, mergedContent);
-    display.warningText(`Applied with ${result.conflictCount} conflict(s): ${filePath}`);
-    return {
-      success: true,
-      status: 'conflict',
-      path: filePath,
-      message: `Applied with ${result.conflictCount} conflict(s) in ${filePath}. The LLM's version was used for conflicting regions.`,
-      conflicts: result.conflicts,
-    };
-  }
-
-  /**
-   * Search/Replace edit: cascading replacer system with 9 strategies.
-   */
-  private async applySearchReplaceEdit(
-    filePath: string,
-    fullPath: string,
-    currentContent: string,
-    blocks: SearchReplaceBlock[],
-  ): Promise<EditResult> {
-    if (blocks.length === 0) {
-      return {
-        success: false,
-        status: 'error',
-        path: filePath,
-        message: 'No search/replace blocks provided',
-      };
-    }
-
-    let content = currentContent;
-
-    for (const block of blocks) {
-      if (typeof block.search !== 'string' || typeof block.replace !== 'string') {
-        return {
-          success: false,
-          status: 'error',
-          path: filePath,
-          message: `${filePath}: Invalid search/replace block — search and replace must be strings`,
-        };
-      }
-      const result = replace(content, block.search, block.replace);
-
-      if (!result.ok) {
-        return {
-          success: false,
-          status: 'no_match',
-          path: filePath,
-          message: `${filePath}: ${result.message}`,
-        };
-      }
-
-      content = result.content;
-    }
-
-    // Idempotency check
-    if (content === currentContent) {
-      display.muted(`Edit already applied: ${filePath}`);
-      return {
-        success: true,
-        status: 'already_applied',
-        path: filePath,
-        message: 'Edit already applied',
-      };
-    }
-
-    await fsPromises.writeFile(fullPath, content, 'utf8');
-    // Update snapshot
-    this.snapshots.set(fullPath, content);
-    this.emitEditApplied(filePath, currentContent, content);
-    display.successText(`Modified: ${filePath}`);
-    return {
-      success: true,
-      status: 'applied',
-      path: filePath,
-      message: `Modified: ${filePath}`,
-    };
-  }
-
   private emitEditApplied(filePath: string, beforeContent: string, afterContent: string): void {
     this.eventBus?.emit({ type: 'edit:applied', filePath, beforeContent, afterContent });
   }
@@ -406,7 +643,9 @@ export class CodeEditor {
   async createFile(filePath: string, content: string): Promise<boolean> {
     // Safety net: reject content corrupted with raw action tags
     if (hasActionTagCorruption(content)) {
-      display.errorText(`Blocked corrupted create for ${filePath}: content contains raw action tags`);
+      display.errorText(
+        `Blocked corrupted create for ${filePath}: content contains raw action tags`,
+      );
       return false;
     }
 

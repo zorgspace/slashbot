@@ -8,7 +8,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { WalletStatusAction, WalletSendAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction, formatToolName } from '../../core/ui';
 
 /**
  * Execute a wallet-status action - check wallet and balances
@@ -17,8 +17,6 @@ export async function executeWalletStatus(
   action: WalletStatusAction,
   handlers: ActionHandlers,
 ): Promise<ActionResult> {
-  display.tool('WalletStatus');
-
   try {
     if (!handlers.onWalletStatus) {
       return {
@@ -32,7 +30,7 @@ export async function executeWalletStatus(
     const status = await handlers.onWalletStatus();
 
     if (!status.exists) {
-      display.result('No wallet configured');
+      display.appendAssistantMessage(formatToolName('WalletStatus', { success: true, summary: 'not configured' }));
       return {
         action: 'wallet-status',
         success: true,
@@ -52,7 +50,7 @@ export async function executeWalletStatus(
     }
 
     const result = lines.join('\n');
-    display.result(result);
+    display.appendAssistantMessage(formatToolName('WalletStatus', { success: true }));
 
     return {
       action: 'wallet-status',
@@ -61,7 +59,7 @@ export async function executeWalletStatus(
     };
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
-    display.error(errorMsg);
+    display.appendAssistantMessage(formatToolName('WalletStatus', { success: false, summary: errorMsg }));
 
     return {
       action: 'wallet-status',
@@ -79,7 +77,7 @@ export async function executeWalletSend(
   action: WalletSendAction,
   handlers: ActionHandlers,
 ): Promise<ActionResult> {
-  display.tool('WalletSend', `${action.amount} ${action.token} → ${action.toAddress}`);
+  const detail = `${action.amount} ${action.token} \u2192 ${action.toAddress}`;
 
   try {
     if (!handlers.onWalletSend) {
@@ -95,14 +93,18 @@ export async function executeWalletSend(
 
     if (result.success) {
       const msg = `Sent ${action.amount} ${action.token.toUpperCase()} to ${action.toAddress}\nSignature: ${result.signature}\nExplorer: https://solscan.io/tx/${result.signature}`;
-      display.success(`Sent ${action.amount} ${action.token.toUpperCase()}`);
+      display.appendAssistantMessage(
+        formatToolAction('WalletSend', detail, { success: true }),
+      );
       return {
         action: 'wallet-send',
         success: true,
         result: msg,
       };
     } else {
-      display.error(result.error || 'Transfer failed');
+      display.appendAssistantMessage(
+        formatToolAction('WalletSend', detail, { success: false, summary: result.error || 'failed' }),
+      );
       return {
         action: 'wallet-send',
         success: false,
@@ -112,7 +114,9 @@ export async function executeWalletSend(
     }
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
-    display.error(errorMsg);
+    display.appendAssistantMessage(
+      formatToolAction('WalletSend', detail, { success: false, summary: errorMsg }),
+    );
 
     return {
       action: 'wallet-send',

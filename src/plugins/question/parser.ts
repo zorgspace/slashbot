@@ -15,10 +15,13 @@ export function getQuestionParserConfigs(): ActionParserConfig[] {
 
           // Parse question text
           const questionTextMatch = inner.match(/<text>([\s\S]*?)<\/text>/i);
-          const questionText = questionTextMatch ? questionTextMatch[1].trim() : inner.split('<option')[0].trim();
+          const questionText = questionTextMatch
+            ? questionTextMatch[1].trim()
+            : inner.split('<option')[0].trim();
 
           // Parse options
-          const optionRegex = /<option\s*(?:description=["']([^"']*)["'])?\s*>([\s\S]*?)<\/option>/gi;
+          const optionRegex =
+            /<option\s*(?:description=["']([^"']*)["'])?\s*>([\s\S]*?)<\/option>/gi;
           const options: { label: string; description?: string }[] = [];
           let optMatch;
           while ((optMatch = optionRegex.exec(inner)) !== null) {
@@ -29,16 +32,19 @@ export function getQuestionParserConfigs(): ActionParserConfig[] {
           }
 
           // Check for multiSelect attribute
-          const multiSelect = /multiSelect=["']true["']/i.test(match[0]) || /multi-select/i.test(match[0]);
+          const multiSelect =
+            /multiSelect=["']true["']/i.test(match[0]) || /multi-select/i.test(match[0]);
 
           if (questionText && options.length >= 2) {
             actions.push({
               type: 'question',
-              questions: [{
-                question: questionText,
-                options,
-                multiSelect,
-              }],
+              questions: [
+                {
+                  question: questionText,
+                  options,
+                  multiSelect,
+                },
+              ],
             } as Action);
           }
         }

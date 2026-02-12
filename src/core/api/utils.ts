@@ -2,6 +2,9 @@
  * Grok API Utilities
  */
 
+import type { ActionResult } from '../actions/types';
+import { buildContinuationActionOutput } from './historyPolicy';
+
 /**
  * Simple LRU cache with max entries - evicts oldest on overflow
  */
@@ -65,32 +68,10 @@ export class LRUCache<K, V> {
   }
 }
 
-/**
- * Format action results for LLM context
- * Truncates long results to limit token usage
- */
-const MAX_RESULT_CHARS = 2000;
-
 export function compressActionResults(
   results: Array<{ action?: string; result: string; success?: boolean; error?: string }>,
 ): string {
-  const formattedResults = results
-    .map(r => {
-      const action = r.action ?? '';
-      const success = r.success ?? false;
-      const status = success ? '✓' : '✗';
-      const errorNote = r.error ? ` (${r.error})` : '';
-      let result = r.result;
-      if (result.length > MAX_RESULT_CHARS) {
-        result =
-          result.slice(0, MAX_RESULT_CHARS) +
-          `\n... (truncated ${result.length - MAX_RESULT_CHARS} chars)`;
-      }
-      return `[${status}] ${action}${errorNote}\n${result}`;
-    })
-    .join('\n\n');
-
-  return `<action-output>\n${formattedResults}\n</action-output>`;
+  return buildContinuationActionOutput(results as ActionResult[]);
 }
 
 /**

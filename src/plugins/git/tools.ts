@@ -8,48 +8,44 @@ import type { ToolContribution } from '../types';
 export function getGitToolContributions(): ToolContribution[] {
   return [
     {
-      name: 'git_status',
-      description: 'Show working tree status (staged, unstaged, untracked files).',
+      name: 'git_worktree_list',
+      description: 'List all git worktrees in the repository.',
       parameters: z.object({}),
       toAction: () => ({
-        type: 'git-status',
+        type: 'bash',
+        command: 'git worktree list',
       }),
     },
     {
-      name: 'git_diff',
-      description: 'Show changes between working tree and index, or between refs.',
+      name: 'git_worktree_add',
+      description: 'Add a new git worktree for a branch.',
       parameters: z.object({
-        ref: z.string().optional().describe('Git ref to diff against (e.g. "HEAD~1", "main")'),
-        staged: z.boolean().optional().describe('Show staged changes only'),
+        path: z.string().describe('Path for the new worktree'),
+        branch: z.string().describe('Branch name for the worktree'),
       }),
-      toAction: (args) => ({
-        type: 'git-diff',
-        ref: args.ref as string | undefined,
-        staged: args.staged as boolean | undefined,
+      toAction: args => ({
+        type: 'bash',
+        command: `git worktree add "${args.path}" "${args.branch}"`,
       }),
     },
     {
-      name: 'git_log',
-      description: 'Show recent commit history.',
+      name: 'git_worktree_remove',
+      description: 'Remove a git worktree.',
       parameters: z.object({
-        count: z.number().optional().describe('Number of commits to show (default: 10)'),
+        path: z.string().describe('Path of the worktree to remove'),
       }),
-      toAction: (args) => ({
-        type: 'git-log',
-        count: args.count as number | undefined,
+      toAction: args => ({
+        type: 'bash',
+        command: `git worktree remove "${args.path}"`,
       }),
     },
     {
-      name: 'git_commit',
-      description: 'Create a git commit with the specified message and optional file list.',
-      parameters: z.object({
-        message: z.string().describe('Commit message'),
-        files: z.array(z.string()).optional().describe('Specific files to stage and commit (default: all staged)'),
-      }),
-      toAction: (args) => ({
-        type: 'git-commit',
-        message: args.message as string,
-        files: args.files as string[] | undefined,
+      name: 'git_worktree_prune',
+      description: 'Prune removed git worktrees.',
+      parameters: z.object({}),
+      toAction: () => ({
+        type: 'bash',
+        command: 'git worktree prune',
       }),
     },
   ];

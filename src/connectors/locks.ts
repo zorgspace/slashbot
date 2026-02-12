@@ -2,12 +2,11 @@
  * Connector Lock Manager
  * Ensures only one instance of Telegram/Discord connector runs at a time
  *
- * Uses PID-based lock files stored in ~/.slashbot/locks/
+ * Uses PID-based lock files stored in ./.slashbot/locks/
  */
 
-import { HOME_LOCKS_DIR } from '../core/config/constants';
+import { getLocalLocksDir } from '../core/config/constants';
 import * as path from 'path';
-import * as fs from 'fs';
 
 export type ConnectorType = 'telegram' | 'discord';
 
@@ -21,7 +20,7 @@ interface LockInfo {
  * Get the lock file path for a connector
  */
 function getLockFile(connector: ConnectorType): string {
-  return path.join(HOME_LOCKS_DIR, `${connector}.lock`);
+  return path.join(getLocalLocksDir(), `${connector}.lock`);
 }
 
 /**
@@ -48,7 +47,7 @@ export async function acquireLock(
   const lockFile = getLockFile(connector);
 
   // Ensure locks directory exists
-  await mkdir(HOME_LOCKS_DIR, { recursive: true });
+  await mkdir(getLocalLocksDir(), { recursive: true });
 
   // Check if lock file exists
   try {

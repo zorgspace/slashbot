@@ -1,0 +1,16 @@
+{
+  "plugins": {
+    "feature.transcription": {
+      "enabled": false
+    },
+    "feature.subagent": {
+      "enabled": false
+    },
+    "core.web": {
+      "enabled": true,
+      "metadata": {
+        "description": "Web search + xSearch (runtime override)"
+      }
+    }
+  }
+}

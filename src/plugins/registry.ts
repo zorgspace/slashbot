@@ -12,6 +12,9 @@ import type {
   EventSubscription,
   SidebarContribution,
   ToolContribution,
+  KernelHookContribution,
+  KernelHookEvent,
+  KernelHookPayload,
 } from './types';
 import type { CommandHandler } from '../core/commands/registry';
 
@@ -226,6 +229,86 @@ export class PluginRegistry {
       contributions.push(...tools);
     }
     return contributions;
+  }
+
+  /**
+   * Collect all kernel hook contributions from initialized plugins.
+   */
+  getKernelHooks(event?: KernelHookEvent): KernelHookContribution[] {
+    const contributions: Array<KernelHookContribution & { _pluginId: string }> = [];
+    for (const [id, plugin] of this.plugins) {
+      if (!this.initialized.has(id)) continue;
+      const hooks = plugin.getKernelHooks?.() || [];
+      for (const hook of hooks) {
+        if (!event || hook.event === event) {
+          contributions.push({ ...hook, _pluginId: id });
+        }
+      }
+    }
+    contributions.sort((a, b) => {
+      const orderA = a.order ?? 100;
+      const orderB = b.order ?? 100;
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      return a._pluginId.localeCompare(b._pluginId);
+    });
+    return contributions.map(({ _pluginId: _, ...hook }) => hook);
+  }
+
+  /**
+   * Run all hooks for a kernel event and return the merged payload.
+   * Hook handlers can return a shallow patch object to mutate downstream payload.
+   */
+  applyKernelHooks<T extends KernelHookPayload>(event: KernelHookEvent, payload: T): T {
+    if (!this.context) {
+      return payload;
+    }
+    let current = { ...payload } as T;
+    const hooks = this.getKernelHooks(event);
+    for (const hook of hooks) {
+      try {
+        const patch = hook.handler(current, this.context);
+        if (patch && typeof (patch as Promise<unknown>).then === 'function') {
+          void (patch as Promise<unknown>).catch(() => undefined);
+          continue;
+        }
+        if (patch && typeof patch === 'object') {
+          current = { ...current, ...(patch as Partial<T>) };
+        }
+      } catch {
+        // Keep kernel resilient: a faulty plugin hook must not break core flows.
+        continue;
+      }
+    }
+    return current;
+  }
+
+  /**
+   * Async variant of applyKernelHooks.
+   * Use this when hooks may perform async side effects and/or return async patches.
+   */
+  async applyKernelHooksAsync<T extends KernelHookPayload>(
+    event: KernelHookEvent,
+    payload: T,
+  ): Promise<T> {
+    if (!this.context) {
+      return payload;
+    }
+    let current = { ...payload } as T;
+    const hooks = this.getKernelHooks(event);
+    for (const hook of hooks) {
+      try {
+        const patch = await hook.handler(current, this.context);
+        if (patch && typeof patch === 'object') {
+          current = { ...current, ...(patch as Partial<T>) };
+        }
+      } catch {
+        // Keep kernel resilient: a faulty plugin hook must not break core flows.
+        continue;
+      }
+    }
+    return current;
   }
 
   /**

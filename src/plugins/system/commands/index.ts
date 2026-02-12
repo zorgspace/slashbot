@@ -5,7 +5,14 @@
 import type { CommandHandler } from '../../../core/commands/registry';
 
 // System
-export { helpCommand, clearCommand, historyCommand, exitCommand, bannerCommand } from './system';
+export {
+  helpCommand,
+  clearCommand,
+  historyCommand,
+  exitCommand,
+  bannerCommand,
+  connectorsCommand,
+} from './system';
 
 // Personality
 export {
@@ -31,15 +38,26 @@ export { todoWriteCommand } from './todo';
 
 // Plugin
 export { pluginCommand } from './plugin';
+export { promptCommand } from './prompt';
+export { usageCommand } from './usage';
 
 // Aggregate all commands
-import { helpCommand, clearCommand, historyCommand, exitCommand, bannerCommand } from './system';
+import {
+  helpCommand,
+  clearCommand,
+  historyCommand,
+  exitCommand,
+  bannerCommand,
+  connectorsCommand,
+} from './system';
 import { depressedCommand, sarcasmCommand, normalCommand, unhingedCommand } from './personality';
 import { pasteImageCommand, initCommand } from './code';
 import { updateCommand } from './update';
 import { psCommand, killCommand } from './process';
 import { todoWriteCommand } from './todo';
 import { pluginCommand } from './plugin';
+import { promptCommand } from './prompt';
+import { usageCommand } from './usage';
 
 export const systemPluginCommands: CommandHandler[] = [
   // System
@@ -48,6 +66,7 @@ export const systemPluginCommands: CommandHandler[] = [
   historyCommand,
   exitCommand,
   bannerCommand,
+  connectorsCommand,
   // Personality
   depressedCommand,
   sarcasmCommand,
@@ -66,4 +85,8 @@ export const systemPluginCommands: CommandHandler[] = [
   todoWriteCommand,
   // Plugins
   pluginCommand,
+  // Prompt diagnostics
+  promptCommand,
+  // Usage diagnostics
+  usageCommand,
 ];

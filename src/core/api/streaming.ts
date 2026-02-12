@@ -1,16 +1,20 @@
 /**
  * Streaming - Unified LLM response via Vercel AI SDK
+ *
+ * Uses streamText() with tool execute callbacks. The fullStream is consumed
+ * only for real-time display control (spinner, tool-call logging). All data
+ * extraction uses the AI SDK's normalized promise properties, keeping this
+ * code fully provider-agnostic.
  */
 
-import { generateText } from 'ai';
+import { streamText } from 'ai';
 import { display } from '../ui';
 import { cleanXmlTags } from '../utils/xml';
-import type { ClientContext, StreamOptions, StreamResult, ToolCallResult } from './types';
+import type { ClientContext, StreamOptions, StreamResult } from './types';
 import { getModelInfo, PROVIDERS } from '../../plugins/providers/models';
 
 /**
- * Get a response from the LLM, handling thinking/reasoning and content display.
- * Uses Vercel AI SDK's generateText() for provider-agnostic non-streaming calls.
+ * Get a response from the LLM via Vercel AI SDK's streamText().
  */
 export async function streamResponse(
   ctx: ClientContext,
@@ -18,25 +22,25 @@ export async function streamResponse(
 ): Promise<StreamResult> {
   const showThinking = options?.showThinking ?? true;
   const displayStream = options?.displayStream ?? true;
+  const quiet = options?.quiet ?? false;
   const timeout = options?.timeout;
-  const thinkingLabel = options?.thinkingLabel ?? 'Thinking...';
+  const thinkingLabel = options?.thinkingLabel ?? 'Reticulating...';
+  const outputTabId = options?.outputTabId || ctx.outputTabId;
+  const withOutputTab = <T>(fn: () => T): T => display.withOutputTab(outputTabId, fn);
 
   if (ctx.authProvider.beforeRequest) {
     await ctx.authProvider.beforeRequest();
   }
 
-  if (displayStream) {
-    display.newline();
-  }
-
   let responseContent = '';
   let thinkingContent = '';
   let finishReason: string | null = null;
-  const toolCalls: ToolCallResult[] = [];
+  let hasToolCalls = false;
   let responseMessages: any[] = [];
   ctx.thinkingActive = true;
 
   ctx.abortController = new AbortController();
+  ctx.onAbortControllerChange?.(ctx.abortController);
 
   let fetchTimeout: ReturnType<typeof setTimeout> | undefined;
   if (timeout) {
@@ -44,9 +48,11 @@ export async function streamResponse(
   }
 
   // Always show spinner while waiting for API response
-  display.startThinking(thinkingLabel);
-  if (showThinking) {
-    display.startThinkingStream();
+  if (!quiet) {
+    withOutputTab(() => display.startThinking(thinkingLabel));
+  }
+  if (showThinking && !quiet) {
+    withOutputTab(() => display.startThinkingStream());
   }
 
   const callNum = ++ctx.usage.requests;
@@ -63,8 +69,8 @@ export async function streamResponse(
       const textPart = lastMsg.content.find((p: any) => p.type === 'text');
       promptText = textPart?.text || '';
     }
-    if (promptText) {
-      display.logPrompt(promptText);
+    if (promptText && !quiet) {
+      withOutputTab(() => display.logPrompt(promptText));
     }
   }
 
@@ -80,7 +86,7 @@ export async function streamResponse(
       if (msg.role === 'assistant' && (msg as any)._toolCalls) {
         const parts: any[] = [];
         const text = typeof msg.content === 'string' ? msg.content : '';
-        if (text && text !== '[tool calls]') {
+        if (text) {
           parts.push({ type: 'text', text });
         }
         for (const tc of (msg as any)._toolCalls) {
@@ -93,20 +99,18 @@ export async function streamResponse(
         }
         return { role: 'assistant', content: parts };
       }
-      // Legacy: _rawAIMessage from older history entries — extract tool calls if possible
+      // Legacy: _rawAIMessage from older history entries
       if ((msg as any)._rawAIMessage) {
         const raw = (msg as any)._rawAIMessage;
-        // Try to extract tool-call parts from the raw message
         if (raw.content && Array.isArray(raw.content)) {
           const hasTool = raw.content.some((p: any) => p.type === 'tool-call');
           if (hasTool) {
             return { role: 'assistant', content: raw.content };
           }
         }
-        // Fallback: use as plain text
         return { role: 'assistant', content: typeof msg.content === 'string' ? msg.content : '' };
       }
-      // Tool-result messages (AI SDK v6: 'output' as { type: 'text', value } not 'result')
+      // Tool-result messages
       if (msg.role === 'tool' && (msg as any).toolResults) {
         return {
           role: 'tool',
@@ -118,7 +122,7 @@ export async function streamResponse(
           })),
         };
       }
-      // Safety: tool messages without toolResults are invalid for the AI SDK — convert to user role
+      // Safety: tool messages without toolResults — convert to user role
       if (msg.role === 'tool') {
         const content = typeof msg.content === 'string' ? msg.content : '[tool output]';
         return { role: 'user', content: `<tool-output-summary>${content}</tool-output-summary>` };
@@ -126,7 +130,7 @@ export async function streamResponse(
       if (typeof msg.content === 'string') {
         return { role: msg.role, content: msg.content };
       }
-      // Handle multimodal messages - convert to AI SDK format
+      // Multimodal messages
       const parts = (msg.content as any[]).map((part: any) => {
         if (part.type === 'text') {
           return { type: 'text' as const, text: part.text || '' };
@@ -139,7 +143,7 @@ export async function streamResponse(
       return { role: msg.role, content: parts };
     });
 
-    // Cap maxOutputTokens to the model's actual limit (prevents errors with providers like OpenAI)
+    // Cap maxOutputTokens to the model's actual limit
     const modelInfo = getModelInfo(modelId);
     const providerInfo = PROVIDERS[providerId];
     const modelMaxOutput = modelInfo?.maxOutputTokens ?? providerInfo?.capabilities.maxOutputTokens;
@@ -147,10 +151,10 @@ export async function streamResponse(
       ? Math.min(ctx.config.maxTokens ?? modelMaxOutput, modelMaxOutput)
       : ctx.config.maxTokens;
 
-    // Reasoning models (like grok-code-fast-1, o3) reject temperature and maxOutputTokens
+    // Reasoning models reject temperature and maxOutputTokens
     const isReasoning = modelInfo?.reasoning ?? false;
 
-    const generateParams: any = {
+    const streamParams: any = {
       model,
       messages,
       ...(!isReasoning && maxOutputTokens ? { maxOutputTokens } : {}),
@@ -158,88 +162,159 @@ export async function streamResponse(
       abortSignal: ctx.abortController.signal,
     };
 
-    // Pass tools if provided (native AI SDK tool calling)
+    // Pass tools if provided (native AI SDK tool calling with execute callbacks)
     if (options?.tools && Object.keys(options.tools).length > 0) {
-      generateParams.tools = options.tools;
-      // maxSteps=1: we handle the loop ourselves, just get one set of tool calls
-      generateParams.maxSteps = 1;
+      streamParams.tools = options.tools;
+      // maxSteps=1: AI SDK executes tools but doesn't loop back to LLM.
+      streamParams.maxSteps = 1;
     }
 
-    const result = await generateText(generateParams);
+    const stream = streamText(streamParams);
 
-    // Extract results from the atomic response
-    responseContent = result.text ?? '';
-    thinkingContent = (result as any).reasoning ?? '';
-    finishReason = result.finishReason ?? null;
+    // Consume fullStream only for real-time display control.
+    // Data extraction uses AI SDK's normalized promise properties below.
+    for await (const event of stream.fullStream) {
+      const type = (event as any).type;
 
-    // Update token usage
-    if (result.usage) {
-      ctx.usage.promptTokens += result.usage.inputTokens || 0;
-      ctx.usage.completionTokens += result.usage.outputTokens || 0;
-      ctx.usage.totalTokens += (result.usage.inputTokens || 0) + (result.usage.outputTokens || 0);
+      // Stop spinner on first content event
+      if (ctx.thinkingActive && (type === 'text-delta' || type === 'tool-call')) {
+        withOutputTab(() => display.stopThinking());
+        ctx.thinkingActive = false;
+        if (showThinking && !quiet) {
+          withOutputTab(() => display.endThinkingStream());
+        }
+      }
+
+      if (type === 'tool-call') {
+        hasToolCalls = true;
+        if (!quiet) {
+          withOutputTab(() => display.logAction((event as any).toolName));
+        }
+      }
+
     }
 
-    // Extract tool calls if present
-    if (result.toolCalls && result.toolCalls.length > 0) {
-      for (const tc of result.toolCalls as any[]) {
-        toolCalls.push({
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          args: (tc.input ?? tc.args ?? {}) as Record<string, unknown>,
-        });
+    // ===== Extract all data from AI SDK normalized promises =====
+
+    responseContent = await stream.text;
+    finishReason = await stream.finishReason;
+
+    // Reasoning / thinking (provider-agnostic — AI SDK normalizes this)
+    try {
+      const reasoning = await (stream as any).reasoning;
+      if (typeof reasoning === 'string' && reasoning) {
+        thinkingContent = reasoning;
+        if (showThinking && !quiet) {
+          withOutputTab(() => display.streamThinkingChunk(reasoning));
+        }
+      }
+    } catch {
+      /* provider doesn't support reasoning */
+    }
+
+    // Response messages for history reconstruction
+    const response = await stream.response;
+    if (response?.messages) {
+      responseMessages = response.messages;
+    }
+    if (!responseContent.trim() && responseMessages.length > 0) {
+      const fallbackText = extractAssistantTextFromMessages(responseMessages);
+      if (fallbackText) {
+        responseContent = fallbackText;
       }
     }
 
-    // Capture response messages for history reconstruction
-    if (result.response?.messages) {
-      responseMessages = result.response.messages;
+    let resolvedUsage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    } | null = null;
+    try {
+      const usage = await (stream as any).usage;
+      resolvedUsage = resolveUsage(usage);
+    } catch {
+      resolvedUsage = null;
+    }
+    if (!resolvedUsage) {
+      resolvedUsage = resolveUsage((response as any)?.usage);
+    }
+    if (!resolvedUsage) {
+      resolvedUsage = resolveUsage((response as any)?.providerMetadata?.usage);
+    }
+    if (!resolvedUsage) {
+      resolvedUsage = resolveUsage((response as any)?.providerMetadata?.tokenUsage);
     }
 
-    // Notify rawOutputCallback with the full content
+    if (resolvedUsage) {
+      ctx.usage.promptTokens += resolvedUsage.promptTokens;
+      ctx.usage.completionTokens += resolvedUsage.completionTokens;
+      ctx.usage.totalTokens += resolvedUsage.totalTokens;
+    }
+
+    // Tool calls — detect from resolved promise if not caught in stream events
+    if (!hasToolCalls) {
+      const toolCalls = await stream.toolCalls;
+      if (toolCalls && toolCalls.length > 0) {
+        hasToolCalls = true;
+      }
+    }
+
+    // ===== Display =====
+
     if (responseContent) {
       ctx.rawOutputCallback?.(responseContent);
     }
 
-    // Display thinking content if available
-    if (showThinking && thinkingContent) {
-      display.streamThinkingChunk(thinkingContent);
-    }
-
-    // Stop thinking indicators before displaying content
+    // Stop thinking indicators if still active
     if (ctx.thinkingActive) {
-      display.stopThinking();
+      withOutputTab(() => display.stopThinking());
       ctx.thinkingActive = false;
     }
-    if (showThinking) {
-      display.endThinkingStream();
+    if (showThinking && !quiet) {
+      withOutputTab(() => display.endThinkingStream());
     }
 
     // Display the full response
-    if (displayStream && responseContent) {
+    if (displayStream && responseContent && !quiet) {
       let cleaned = cleanXmlTags(responseContent);
       cleaned = cleaned.replace(/^Assistant:\s*/gim, '');
       const normalized = cleaned.replace(/\n{3,}/g, '\n\n');
-      if (normalized.trim()) {
-        display.append(normalized);
-        ctx.sessionManager.displayedContent = normalized;
+      const displayText = normalized
+        .replace(/<session-actions>[\s\S]*?<\/session-actions>/gi, '')
+        .replace(/^\[you\]\s*/gim, '')
+        .trim();
+      if (displayText) {
+        if (!withOutputTab(() => display.renderAssistantTranscript(displayText))) {
+          withOutputTab(() => display.renderMarkdown(displayText, true));
+        }
+        ctx.sessionManager.displayedContent = displayText;
       }
     }
 
     const deltaPrompt = ctx.usage.promptTokens - startPromptTokens;
     const deltaCompletion = ctx.usage.completionTokens - startCompletionTokens;
+    const deltaTotal = Math.max(0, deltaPrompt + deltaCompletion);
+    ctx.sessionManager.recordUsage({
+      promptTokens: Math.max(0, deltaPrompt),
+      completionTokens: Math.max(0, deltaCompletion),
+      totalTokens: deltaTotal,
+      requests: 1,
+    });
 
-    display.streamThinkingChunk(
-      `\u{1F6EC} #${callNum} \u2190 ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
-    );
+    if (!quiet) {
+      withOutputTab(() =>
+        display.streamThinkingChunk(
+          `\u{1F6EC} #${callNum} \u2190 ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
+        ),
+      );
+    }
   } catch (error: any) {
-    // Re-throw for the agentic loop to handle
     if (error.name === 'AbortError') {
       throw error;
     }
 
     const msg = error.message || '';
 
-    // Check for token limit errors from various providers
     if (
       msg.includes('maximum prompt length') ||
       msg.includes('context_length_exceeded') ||
@@ -253,24 +328,88 @@ export async function streamResponse(
       clearTimeout(fetchTimeout);
     }
     if (ctx.thinkingActive) {
-      display.stopThinking();
+      withOutputTab(() => display.stopThinking());
       ctx.thinkingActive = false;
     }
-    if (showThinking) {
-      display.endThinkingStream();
+    if (showThinking && !quiet) {
+      withOutputTab(() => display.endThinkingStream());
     }
     ctx.abortController = null;
+    ctx.onAbortControllerChange?.(null);
   }
 
-  if (thinkingContent && !responseContent.trim() && !toolCalls.length) {
-    display.warningText(`[Model produced thinking but no response (finish: ${finishReason}) - may need to retry]`);
+  if (thinkingContent && !responseContent.trim() && !hasToolCalls) {
+    withOutputTab(() =>
+      display.warningText(
+        `[Model produced thinking but no response (finish: ${finishReason}) - may need to retry]`,
+      ),
+    );
   }
 
   return {
     content: responseContent,
     thinking: thinkingContent,
     finishReason,
-    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    hasToolCalls,
     responseMessages: responseMessages.length > 0 ? responseMessages : undefined,
   };
+}
+
+function extractAssistantTextFromMessages(messages: any[]): string {
+  const text: string[] = [];
+  for (const msg of messages) {
+    if (msg?.role !== 'assistant') continue;
+
+    if (typeof msg.content === 'string') {
+      if (msg.content.trim()) text.push(msg.content);
+      continue;
+    }
+
+    if (!Array.isArray(msg.content)) continue;
+    for (const part of msg.content) {
+      if (part?.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+        text.push(part.text);
+      }
+    }
+  }
+  return text.join('').trim();
+}
+
+function resolveUsage(usage: unknown): {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+} | null {
+  if (!usage || typeof usage !== 'object') return null;
+  const raw = usage as Record<string, unknown>;
+
+  const promptTokens =
+    pickNumber(raw, ['promptTokens', 'inputTokens', 'input_tokens', 'prompt_tokens']) ?? 0;
+  const completionTokens =
+    pickNumber(raw, ['completionTokens', 'outputTokens', 'output_tokens', 'completion_tokens']) ?? 0;
+  const totalTokens = pickNumber(raw, ['totalTokens', 'total_tokens']);
+
+  if (promptTokens <= 0 && completionTokens <= 0 && (!totalTokens || totalTokens <= 0)) {
+    return null;
+  }
+
+  const resolvedTotal = Math.max(0, totalTokens ?? promptTokens + completionTokens);
+
+  return {
+    promptTokens: Math.max(0, promptTokens),
+    completionTokens: Math.max(0, completionTokens),
+    totalTokens: resolvedTotal,
+  };
+}
+
+function pickNumber(source: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
 }

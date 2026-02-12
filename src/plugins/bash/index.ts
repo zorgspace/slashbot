@@ -9,15 +9,74 @@ import type {
   ActionContribution,
   PromptContribution,
   ToolContribution,
+  KernelHookContribution,
 } from '../types';
-import type { ActionHandlers } from '../../core/actions/types';
 import { registerActionParser } from '../../core/actions/parser';
+import { display } from '../../core/ui';
 import { executeBash, executeExec } from './executors';
 import { getBashParserConfigs } from './parser';
 import { BASH_PROMPT } from './prompt';
 import { getBashToolContributions } from './tools';
 import { processManager } from './services/ProcessManager';
 import { TYPES } from '../../core/di/types';
+import {
+  ALLOWED_GIT_COMMANDS,
+  DANGEROUS_COMMANDS,
+  DANGEROUS_PATTERNS,
+} from '../../core/config/constants';
+
+interface CommandValidationResult {
+  blocked: boolean;
+  blockedReason?: string;
+  warnings: string[];
+}
+
+function validateCommandSecurity(command: string): CommandValidationResult {
+  const normalized = command.trim().toLowerCase();
+
+  for (const dangerous of DANGEROUS_COMMANDS) {
+    if (normalized.includes(dangerous.toLowerCase())) {
+      return {
+        blocked: true,
+        blockedReason: `matches dangerous pattern "${dangerous}"`,
+        warnings: [],
+      };
+    }
+  }
+
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (pattern.test(command)) {
+      return {
+        blocked: true,
+        blockedReason: `matches blocked command rule "${pattern.source}"`,
+        warnings: [],
+      };
+    }
+  }
+
+  const warnings: string[] = [];
+
+  if (/^\s*sudo\b/.test(command)) {
+    warnings.push('Using sudo can modify privileged system resources.');
+  }
+
+  if (/\b(curl|wget)\b[\s\S]*\|\s*(bash|sh)\b/.test(normalized)) {
+    warnings.push('Piping downloaded scripts directly into a shell is risky.');
+  }
+
+  if (/^\s*git\s+/.test(command)) {
+    const subcommandMatch = command.trim().match(/^git\s+([a-zA-Z-]+)/);
+    const subcommand = subcommandMatch?.[1]?.toLowerCase();
+    if (
+      subcommand &&
+      !ALLOWED_GIT_COMMANDS.includes(subcommand as (typeof ALLOWED_GIT_COMMANDS)[number])
+    ) {
+      warnings.push(`Git subcommand "${subcommand}" is outside the safe allowlist.`);
+    }
+  }
+
+  return { blocked: false, warnings };
+}
 
 export class BashPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -50,12 +109,11 @@ export class BashPlugin implements Plugin {
     ) => {
       const { TYPES } = await import('../../core/di/types');
       const codeEditor = context.container.get<any>(TYPES.CodeEditor);
-      const scheduler = context.container.get<any>(TYPES.TaskScheduler);
       const { display } = await import('../../core/ui');
       const workDir = codeEditor.getWorkDir();
 
       // Security check
-      const security = scheduler.validateCommand(command);
+      const security = validateCommandSecurity(command);
       if (security.blocked) {
         display.errorText(`[SECURITY] Command blocked: ${security.blockedReason}`);
         return `Command blocked: ${security.blockedReason}`;
@@ -180,6 +238,21 @@ export class BashPlugin implements Plugin {
 
   getToolContributions(): ToolContribution[] {
     return getBashToolContributions();
+  }
+
+  getKernelHooks(): KernelHookContribution[] {
+    return [
+      {
+        event: 'shutdown:before',
+        order: 20,
+        handler: () => {
+          const killed = processManager.killAll();
+          if (killed > 0) {
+            display.muted(`[Process] Killed ${killed} background process(es)`);
+          }
+        },
+      },
+    ];
   }
 
   getPromptContributions(): PromptContribution[] {

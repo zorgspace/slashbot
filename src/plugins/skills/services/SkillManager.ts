@@ -1,13 +1,13 @@
 /**
  * Skill Manager - Download, store, and invoke skills
  *
- * Skills are stored in ~/.slashbot/skills/ (home directory) for global access
+ * Skills are stored in .slashbot/skills/ inside the current workspace
  * They can be downloaded from URLs and invoked by user (/skill_name) or by Grok automatically.
  */
 
 import path from 'path';
 import { display } from '../../../core/ui';
-import { HOME_SKILLS_DIR, DEFAULT_SKILLS } from '../../../core/config/constants';
+import { getLocalSkillsDir, DEFAULT_SKILLS } from '../../../core/config/constants';
 
 export interface Skill {
   name: string;
@@ -180,8 +180,7 @@ function extractSkillName(url: string): string {
 }
 
 export function createSkillManager(_basePath?: string): SkillManager {
-  // Skills are stored in home directory for global access across all projects
-  const skillsDir = HOME_SKILLS_DIR;
+  const skillsDir = _basePath || getLocalSkillsDir();
 
   return {
     getSkillsDir(): string {

@@ -20,6 +20,10 @@ import { getCodeEditorToolContributions } from './tools';
 import { createCodeEditor } from './services/CodeEditor';
 import { TYPES } from '../../core/di/types';
 
+const getCodeEditor = (context: PluginContext) => {
+  return context.container.get<any>(TYPES.CodeEditor);
+};
+
 export class CodeEditorPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
     id: 'core.code-editor',
@@ -34,12 +38,14 @@ export class CodeEditorPlugin implements Plugin {
   async init(context: PluginContext): Promise<void> {
     this.context = context;
 
-    // Self-register CodeEditor in DI
-    const codeEditor = createCodeEditor(context.workDir);
-    if (context.eventBus) {
-      codeEditor.setEventBus(context.eventBus as any);
+    // Self-register CodeEditor in DI if not already bound (e.g., in compiled builds)
+    if (!context.container.isBound(TYPES.CodeEditor)) {
+      const codeEditor = createCodeEditor(context.workDir);
+      if (context.eventBus) {
+        codeEditor.setEventBus(context.eventBus as any);
+      }
+      context.container.bind(TYPES.CodeEditor).toConstantValue(codeEditor);
     }
-    context.container.bind(TYPES.CodeEditor).toConstantValue(codeEditor);
 
     for (const config of getCodeEditorParserConfigs()) {
       registerActionParser(config);
@@ -49,38 +55,14 @@ export class CodeEditorPlugin implements Plugin {
   getActionContributions(): ActionContribution[] {
     const context = this.context;
 
-    const getCodeEditor = () => {
-      const { TYPES } = require('../../core/di/types');
-      return context.container.get<any>(TYPES.CodeEditor);
-    };
-
     return [
       {
         type: 'glob',
         tagName: 'glob',
         handler: {
           onGlob: async (pattern: string, basePath?: string) => {
-            const codeEditor = getCodeEditor();
-            const workDir = codeEditor.getWorkDir();
-            const searchDir = basePath ? `${workDir}/${basePath}` : workDir;
-            try {
-              const { Glob } = await import('bun');
-              const glob = new Glob(pattern);
-              const files: string[] = [];
-              for await (const file of glob.scan({ cwd: searchDir, onlyFiles: true, dot: false })) {
-                if (
-                  !file.includes('node_modules/') &&
-                  !file.includes('.git/') &&
-                  !file.includes('dist/')
-                ) {
-                  files.push(basePath ? `${basePath}/${file}` : file);
-                }
-                if (files.length >= 100) break;
-              }
-              return files;
-            } catch {
-              return [];
-            }
+            const codeEditor = getCodeEditor(context);
+            return await codeEditor.glob(pattern, basePath);
           },
         },
         execute: executeGlob,
@@ -90,10 +72,23 @@ export class CodeEditorPlugin implements Plugin {
         tagName: 'grep',
         handler: {
           onGrep: async (pattern: string, options?: any) => {
-            const codeEditor = getCodeEditor();
+            const codeEditor = getCodeEditor(context);
             const results = await codeEditor.grep(pattern, options?.glob, options);
-            if (results.length === 0) return '';
-            return results.map((r: any) => `${r.file}:${r.line}: ${r.content}`).join('\n');
+
+            if (results.length === 0) {
+              return options?.outputMode === 'count' ? '0' : '';
+            }
+
+            switch (options?.outputMode) {
+              case 'count':
+                return results.filter((r: any) => r.match !== '').length.toString();
+              case 'files_with_matches':
+                const uniqueFiles = [...new Set(results.map((r: any) => r.file))];
+                return uniqueFiles.join('\n');
+              case 'content':
+              default:
+                return results.map((r: any) => `${r.file}:${r.line}: ${r.content}`).join('\n');
+            }
           },
         },
         execute: executeGrep,
@@ -103,7 +98,7 @@ export class CodeEditorPlugin implements Plugin {
         tagName: 'ls',
         handler: {
           onLS: async (path: string, ignore?: string[]) => {
-            const codeEditor = getCodeEditor();
+            const codeEditor = getCodeEditor(context);
             const workDir = codeEditor.getWorkDir();
             const targetPath = path.startsWith('/') ? path : `${workDir}/${path}`;
             const ignoreSet = new Set(ignore || ['node_modules', '.git', 'dist']);

@@ -7,10 +7,7 @@ import { sanitizeToolName } from './parser';
 export function buildMCPPrompt(tools: MCPToolInfo[]): string {
   if (tools.length === 0) return '';
 
-  const lines: string[] = [
-    'External tools are available via MCP (Model Context Protocol):',
-    '',
-  ];
+  const lines: string[] = ['External tools are available via MCP (Model Context Protocol):', ''];
 
   // Group by server
   const byServer = new Map<string, MCPToolInfo[]>();

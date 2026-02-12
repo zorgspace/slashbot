@@ -127,7 +127,7 @@ The plugin system is the backbone of Slashbot. Every capability — file operati
 ```typescript
 interface Plugin {
   readonly metadata: PluginMetadata; // id, name, version, category, dependencies
-  init(context: PluginContext): void; // Called during bootstrap
+  init(context: PluginContext): Promise<void>; // Called during bootstrap
 
   // Contributions
   getActionContributions(): ActionContribution[]; // XML action tags
@@ -136,11 +136,12 @@ interface Plugin {
   getContextProviders?(): ContextProvider[]; // Dynamic context
   getEventSubscriptions?(): EventSubscription[]; // Event listeners
   getSidebarContributions?(): SidebarContribution[]; // TUI sidebar items
+  getKernelHooks?(): KernelHookContribution[]; // Kernel extension hooks
 
   // Lifecycle hooks
-  onBeforeGrokInit?(context: PluginContext): void;
-  onAfterGrokInit?(context: PluginContext): void;
-  destroy?(): void;
+  onBeforeGrokInit?(context: PluginContext): Promise<void>;
+  onAfterGrokInit?(context: PluginContext): Promise<void>;
+  destroy?(): Promise<void>;
 }
 ```
 
@@ -160,7 +161,41 @@ interface Plugin {
 4. **Init** — `initAll()` calls `plugin.init(context)` in dependency order
 5. **Contribute** — Registry collects contributions (actions, prompts, commands, etc.)
 6. **Lifecycle hooks** — `onBeforeGrokInit()` and `onAfterGrokInit()` fire during API client setup
-7. **Destroy** — `destroyAll()` tears down in reverse order
+7. **Kernel hooks** — `getKernelHooks()` can patch payloads for startup/runtime events (`startup:*`, `input:*`, `render:*`, `tabs:*`, `sidebar:*`)
+8. **Destroy** — `destroyAll()` tears down in reverse order
+
+### Kernel Hook Contributions
+
+Kernel hooks let plugins extend runtime behavior without editing `kernel.ts`.
+
+```typescript
+type KernelHookEvent =
+  | 'startup:after-grok-ready'
+  | 'startup:after-connectors-ready'
+  | 'startup:after-ui-ready'
+  | 'input:before'
+  | 'input:after-command'
+  | 'input:after'
+  | 'run:noninteractive:before'
+  | 'render:before'
+  | 'render:after'
+  | 'tabs:before'
+  | 'tabs:after'
+  | 'sidebar:before'
+  | 'sidebar:after'
+  | 'shutdown:before';
+
+interface KernelHookContribution {
+  event: KernelHookEvent;
+  order?: number; // lower runs first, default 100
+  handler:
+    | ((payload, context) => void | Partial<typeof payload>)
+    | ((payload, context) => Promise<void | Partial<typeof payload>>);
+}
+```
+
+Hooks are applied in deterministic order and can return a shallow patch object to update downstream payloads.
+Examples: connector plugins inject sidebar status + protected tabs through hooks, and planning owns its trigger flow through `input:before`.
 
 ### Plugin Context
 
@@ -394,7 +429,7 @@ The `OutputInterceptor` monkey-patches `process.stdout.write` and `console.log` 
 
 ### Sidebar
 
-The sidebar is built dynamically from plugin `SidebarContribution` objects. Each plugin contributes a status indicator (e.g., Wallet: active/inactive, Heartbeat: on/off).
+The sidebar is built dynamically from plugin `SidebarContribution` objects, then post-processed by kernel hooks (`sidebar:before` / `sidebar:after`). This keeps connector-specific indicators plugin-owned instead of hardcoded in `kernel.ts`.
 
 ---
 

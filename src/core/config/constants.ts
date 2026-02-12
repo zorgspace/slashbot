@@ -11,16 +11,25 @@ import * as os from 'os';
 // DIRECTORY PATHS
 // ============================================================================
 
-// Home directory: credentials, skills, connector locks (shared across all projects)
+// Home directory: shared credentials + global defaults
 export const HOME_SLASHBOT_DIR = path.join(os.homedir(), '.slashbot');
-export const HOME_CONFIG_FILE = path.join(HOME_SLASHBOT_DIR, 'config', 'config.json');
-export const PROMPTS_DIR = path.join(HOME_SLASHBOT_DIR, 'prompts');
-export const HOME_SKILLS_DIR = path.join(HOME_SLASHBOT_DIR, 'skills');
-export const HOME_LOCKS_DIR = path.join(HOME_SLASHBOT_DIR, 'locks');
+export const HOME_CREDENTIALS_FILE = path.join(HOME_SLASHBOT_DIR, 'credentials.json');
+export const HOME_CONFIG_DIR = path.join(HOME_SLASHBOT_DIR, 'config');
+export const HOME_CONFIG_FILE = path.join(HOME_CONFIG_DIR, 'config.json');
 
 // Local directory: project-specific data (history, tasks)
 export const getLocalSlashbotDir = (workDir?: string) =>
   path.join(workDir || process.cwd(), '.slashbot');
+export const getLocalConfigDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'config');
+export const getLocalConfigFile = (workDir?: string) =>
+  path.join(getLocalConfigDir(workDir), 'config.json');
+export const getLocalPromptsDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'prompts');
+export const getLocalSkillsDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'skills');
+export const getLocalLocksDir = (workDir?: string) =>
+  path.join(getLocalSlashbotDir(workDir), 'locks');
 export const getLocalHistoryFile = (workDir?: string) =>
   path.join(getLocalSlashbotDir(workDir), 'history');
 export const getLocalTasksFile = (workDir?: string) =>
@@ -69,7 +78,7 @@ export const DEFAULT_PROVIDER_CONFIG = GROK_CONFIG;
 // PROXY CONFIGURATION (slashbot-web)
 // ============================================================================
 
-const WALLET_CONFIG_PATH = path.join(os.homedir(), '.slashbot', 'wallet-config.json');
+const WALLET_CONFIG_PATH = path.join(getLocalSlashbotDir(), 'wallet-config.json');
 
 interface WalletConfigFile {
   walletAddress: string;
@@ -127,17 +136,27 @@ export const AGENTIC = {
 
 export const CONTEXT = {
   MAX_IMAGES: 3,
-  MAX_MESSAGES: 200,
+  MAX_MESSAGES: 150,
   MAX_HISTORY: 500,
-  COMPRESS_THRESHOLD: 0.8,
+  COMPRESS_THRESHOLD: 0.70,
   MAX_TOKENS: 256000,
 } as const;
 
 export const COMPACTION = {
   /** Compact when token usage exceeds this ratio of model limit */
-  TOKEN_THRESHOLD_RATIO: 0.8,
+  TOKEN_THRESHOLD_RATIO: 0.70,
+  /** Soft warning threshold for context pressure */
+  WARN_RATIO: 0.60,
+  /** Start pruning older tool outputs above this ratio */
+  PRUNE_RATIO: 0.70,
+  /** Start summary compaction above this ratio */
+  SUMMARY_RATIO: 0.80,
+  /** Hard trim when context remains near saturation */
+  HARD_RESET_RATIO: 0.90,
   /** Keep last N tool outputs intact during pruning */
   PRUNE_PROTECT_RECENT: 10,
+  /** Keep last N messages during hard reset */
+  HARD_RESET_KEEP_RECENT_MESSAGES: 8,
   /** Max tokens for the summary message */
   SUMMARY_MAX_TOKENS: 4000,
 } as const;
@@ -302,12 +321,7 @@ export const CONNECTOR_CONFIG = {
 // DEFAULT SKILLS
 // ============================================================================
 
-export const DEFAULT_SKILLS = [
-  {
-    url: 'https://bags.fm/skill.md',
-    name: 'bags',
-  },
-] as const;
+export const DEFAULT_SKILLS: Array<{ readonly name: string; readonly url: string }> = [] as const;
 
 // ============================================================================
 // MIME TYPES

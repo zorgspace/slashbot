@@ -6,7 +6,6 @@
  */
 
 import path from 'path';
-import * as readline from 'readline';
 import { display } from '../../../core/ui';
 import { getLocalSlashbotDir, getLocalPermissionsFile } from '../../../core/config/constants';
 
@@ -205,7 +204,7 @@ export class CommandPermissions {
           process.stdin.setRawMode(false);
         }
         process.stdin.pause();
-        console.log();
+        display.newline();
       };
 
       process.stdin.on('data', onKeyPress);

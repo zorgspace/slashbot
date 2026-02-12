@@ -67,13 +67,19 @@ export class ProviderRegistry {
 
       const factoryFn = providerFactories[providerId];
       if (!factoryFn) {
-        throw new Error(`Unknown provider '${providerId}'. Available: ${Object.keys(providerFactories).join(', ')}`);
+        throw new Error(
+          `Unknown provider '${providerId}'. Available: ${Object.keys(providerFactories).join(', ')}`,
+        );
       }
 
       try {
         factory = factoryFn(config.apiKey, config.baseUrl);
       } catch (err: any) {
-        console.error(`[Provider Error] Failed to create ${providerId} factory:`, err.message, err.stack);
+        console.error(
+          `[Provider Error] Failed to create ${providerId} factory:`,
+          err.message,
+          err.stack,
+        );
         throw err;
       }
       this.modelFactories.set(providerId, factory);
@@ -82,7 +88,11 @@ export class ProviderRegistry {
     try {
       return factory(modelId);
     } catch (err: any) {
-      console.error(`[Provider Error] Failed to create model '${modelId}' for ${providerId}:`, err.message, err.stack);
+      console.error(
+        `[Provider Error] Failed to create model '${modelId}' for ${providerId}:`,
+        err.message,
+        err.stack,
+      );
       throw err;
     }
   }
@@ -96,6 +106,13 @@ export class ProviderRegistry {
       throw new Error(`Cannot determine provider for model '${modelId}'. Specify a provider.`);
     }
     return this.getModel(providerId, modelId);
+  }
+
+  /**
+   * Get the raw config (apiKey, baseUrl) for a provider
+   */
+  getConfig(providerId: string): ProviderConfig | undefined {
+    return this.configs.get(providerId);
   }
 
   /**

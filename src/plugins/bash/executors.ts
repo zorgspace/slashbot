@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { BashAction, ExecAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 /**
  * Execute a shell command (handles both bash and exec action types)
@@ -17,10 +17,6 @@ export async function executeShellCommand(
   const handler = handlers.onBash || handlers.onExec;
   if (!handler) return null;
 
-  // Display action with optional description
-  const desc = options?.description ? ` (${options.description})` : '';
-  display.bash(command + desc);
-
   // Execute using available handler
   const output = await (handlers.onBash
     ? handlers.onBash(command, {
@@ -29,16 +25,30 @@ export async function executeShellCommand(
       })
     : handlers.onExec!(command));
 
-  const isError = output?.startsWith('Error:') || output?.includes('Command blocked');
+  // Process output: keep real command output and limit to 5 lines
+  let processedOutput = output || '';
+  if (processedOutput) {
+    const lines = processedOutput.split('\n').filter(line => line.trim());
+    const limitedLines = lines.slice(0, 5);
+    processedOutput = limitedLines.join('\n');
+    if (lines.length > 5) {
+      processedOutput += '\n... (truncated)';
+    }
+  }
 
-  // Display result
-  display.bashResult(command, output || '', isError ? 1 : 0);
+  const isError =
+    processedOutput?.startsWith('Error:') || processedOutput?.includes('Command blocked');
+
+  const desc = options?.description ? ` (${options.description})` : '';
+  display.appendAssistantMessage(
+    formatToolAction('Exec', command + desc, { success: !isError, summary: isError ? 'exit 1' : undefined }),
+  );
 
   return {
     action: `Bash: ${command}`,
     success: !isError,
-    result: output || 'OK',
-    error: isError ? output : undefined,
+    result: processedOutput || 'OK',
+    error: isError ? processedOutput : undefined,
   };
 }
 

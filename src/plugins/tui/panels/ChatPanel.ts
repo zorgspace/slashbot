@@ -15,10 +15,12 @@ import {
   RGBA,
   t,
   fg,
+  bold,
   type CliRenderer,
   type StyledText,
 } from '@opentui/core';
 import { theme } from '../../../core/ui/theme';
+import { LeftBorder } from '../borders';
 
 const MAX_LINES = 500;
 const PRUNE_TO = 400;
@@ -29,6 +31,9 @@ export class ChatPanel {
   private renderer: CliRenderer;
   private lineCounter = 0;
   private syntaxStyle: SyntaxStyle | null = null;
+  private responseBuffer = '';
+  private responseRenderable: TextRenderable | null = null;
+  private liveAssistantBlocks = new Map<string, string>();
 
   constructor(renderer: CliRenderer) {
     this.renderer = renderer;
@@ -73,19 +78,36 @@ export class ChatPanel {
   }
 
   appendUserMessage(value: string): void {
-    // User messages with primary-color left accent
-    this.addLine(t`${fg(theme.primary)('┃')} ${fg(theme.white)(value)}`);
+    this.addBorderedLine(t`${fg(theme.white)(value)}`, theme.primary);
+  }
+
+  appendAssistantMessage(content: StyledText | string): void {
+    const styledContent = typeof content === 'string' ? t`${fg(theme.white)(content)}` : content;
+    this.addBorderedLine(styledContent, theme.accent);
+  }
+
+  private contentLineCount(content: string): number {
+    return Math.max(1, content.split('\n').length);
+  }
+
+  private normalizeMarkdownText(text: string): string {
+    return text
+      .replace(/\r\n?/g, '\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trimEnd();
   }
 
   addCodeBlock(content: string, filetype?: string): void {
     if (this.syntaxStyle && filetype) {
       try {
-        const lineCount = content.split('\n').length;
+        const lineCount = this.contentLineCount(content);
         const code = new CodeRenderable(this.renderer, {
           id: `chat-code-${this.lineCounter++}`,
           content,
           filetype,
           syntaxStyle: this.syntaxStyle,
+          height: lineCount,
           fg: theme.white,
         });
         this.scrollBox.add(code);
@@ -101,20 +123,20 @@ export class ChatPanel {
   addDiffBlock(diffContent: string, _filetype?: string): void {
     if (this.syntaxStyle) {
       try {
-        const lineCount = diffContent.split('\n').length;
+        const lineCount = this.contentLineCount(diffContent);
         const diff = new DiffRenderable(this.renderer, {
           id: `chat-diff-${this.lineCounter++}`,
           diff: diffContent,
           syntaxStyle: this.syntaxStyle,
           showLineNumbers: true,
-          height: Math.min(lineCount + 2, 15),
+          height: lineCount + 2,
           fg: theme.white,
-          addedBg: theme.diffAddedBg,
-          removedBg: theme.diffRemovedBg,
+          addedBg: 'transparent',
+          removedBg: 'transparent',
           addedSignColor: theme.diffAddedFg,
           removedSignColor: theme.diffRemovedFg,
           lineNumberFg: theme.muted,
-          contextBg: theme.bgPanel,
+          contextBg: 'transparent',
           wrapMode: 'word',
         });
 
@@ -157,6 +179,7 @@ export class ChatPanel {
       this.scrollBox.remove(id);
     }
     this.lineCounter = 0;
+    this.liveAssistantBlocks.clear();
   }
 
   private addLine(content: StyledText | string): void {
@@ -170,11 +193,198 @@ export class ChatPanel {
     this.pruneLines();
   }
 
+  private addBorderedLine(content: StyledText | string, borderColor: string): void {
+    this.lineCounter++;
+    const text = new TextRenderable(this.renderer, {
+      id: `chat-bordered-text-${this.lineCounter}`,
+      content,
+    });
+    const box = new BoxRenderable(this.renderer, {
+      id: `chat-bordered-${this.lineCounter}`,
+      ...LeftBorder,
+      borderColor,
+      paddingLeft: 2,
+      marginTop: 1,
+    });
+    box.add(text);
+    this.scrollBox.add(box);
+    this.pruneLines();
+  }
+
   /**
-   * Scroll to bottom — call only on action start/finish, not on every line
+   * Scroll to bottom
    */
   scrollToBottom(): void {
     this.scrollBox.scrollTo(Infinity);
+  }
+
+  private buildAssistantMarkdownBlock(text: string): BoxRenderable {
+    this.lineCounter++;
+    const block = new BoxRenderable(this.renderer, {
+      id: `chat-assistant-md-${this.lineCounter}`,
+      ...LeftBorder,
+      borderColor: theme.accent,
+      paddingLeft: 2,
+      marginTop: 1,
+      flexDirection: 'column',
+    });
+
+    const normalized = this.normalizeMarkdownText(text);
+    const lines = normalized.length > 0 ? normalized.split('\n') : [];
+    let inCodeBlock = false;
+    let codeBlockLang = '';
+    let codeBlockLines: string[] = [];
+
+    const addTextLine = (content: StyledText | string) => {
+      this.lineCounter++;
+      const line = new TextRenderable(this.renderer, {
+        id: `chat-md-line-${this.lineCounter}`,
+        content: typeof content === 'string' ? content : content,
+      });
+      block.add(line);
+    };
+
+    const addCode = (content: string, filetype?: string) => {
+      if (this.syntaxStyle && filetype) {
+        try {
+          const lineCount = this.contentLineCount(content);
+          const code = new CodeRenderable(this.renderer, {
+            id: `chat-md-code-${this.lineCounter++}`,
+            content,
+            filetype,
+            syntaxStyle: this.syntaxStyle,
+            height: lineCount,
+            fg: theme.white,
+          });
+          block.add(code);
+          return;
+        } catch {
+          // fallback below
+        }
+      }
+      for (const codeLine of content.split('\n')) {
+        addTextLine(t`  ${fg(theme.white)(codeLine)}`);
+      }
+    };
+
+    for (const line of lines) {
+      if (line.startsWith('```')) {
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          codeBlockLang = line.slice(3).trim();
+          codeBlockLines = [];
+        } else {
+          addCode(codeBlockLines.join('\n'), codeBlockLang || undefined);
+          inCodeBlock = false;
+          codeBlockLang = '';
+          codeBlockLines = [];
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        codeBlockLines.push(line);
+        continue;
+      }
+
+      if (/^\s*(?:error\b|[A-Za-z][A-Za-z ]*error:)/i.test(line)) {
+        addTextLine(t`${fg(theme.error)(line)}`);
+      } else if (line.startsWith('### ')) {
+        addTextLine(t`${bold(fg(theme.accent)(line))}`);
+      } else if (line.startsWith('## ')) {
+        addTextLine(t`${bold(fg(theme.primary)(line))}`);
+      } else if (line.startsWith('# ')) {
+        addTextLine(t`${bold(fg(theme.accent)(line))}`);
+      } else if (line.startsWith('> ')) {
+        addTextLine(t`${fg(theme.muted)('\u2502 ' + line.slice(2))}`);
+      } else if (/^[-*] /.test(line)) {
+        addTextLine(t`${fg(theme.primary)('\u2022')} ${line.slice(2)}`);
+      } else {
+        addTextLine(t`${fg(theme.white)(line)}`);
+      }
+    }
+
+    // Handle unclosed code block
+    if (inCodeBlock && codeBlockLines.length > 0) {
+      addCode(codeBlockLines.join('\n'), codeBlockLang || undefined);
+    }
+
+    this.scrollBox.add(block);
+    this.pruneLines();
+    return block;
+  }
+
+  /**
+   * Render markdown text inside a single bordered block.
+   * Self-contained: creates the box, parses markdown, adds code blocks inline.
+   */
+  appendAssistantMarkdown(text: string): void {
+    this.buildAssistantMarkdownBlock(text);
+  }
+
+  upsertAssistantMarkdownBlock(key: string, text: string): void {
+    const existingBlockId = this.liveAssistantBlocks.get(key);
+    if (existingBlockId) {
+      try {
+        this.scrollBox.remove(existingBlockId);
+      } catch {
+        // Block may have been pruned.
+      }
+    }
+    const block = this.buildAssistantMarkdownBlock(text);
+    this.liveAssistantBlocks.set(key, block.id);
+  }
+
+  removeAssistantMarkdownBlock(key: string): void {
+    const existingBlockId = this.liveAssistantBlocks.get(key);
+    if (!existingBlockId) return;
+    try {
+      this.scrollBox.remove(existingBlockId);
+    } catch {
+      // Block may already be gone.
+    }
+    this.liveAssistantBlocks.delete(key);
+  }
+
+  /**
+   * Start streaming a response with violet left border
+   */
+  startResponse(): void {
+    this.responseBuffer = '';
+    this.lineCounter++;
+    this.responseRenderable = new TextRenderable(this.renderer, {
+      id: `chat-response-text-${this.lineCounter}`,
+      content: '',
+      selectionBg: theme.accentMuted,
+      selectionFg: theme.white,
+    });
+    const box = new BoxRenderable(this.renderer, {
+      id: `chat-response-${this.lineCounter}`,
+      ...LeftBorder,
+      borderColor: theme.accent,
+      paddingLeft: 2,
+      marginTop: 1,
+    });
+    box.add(this.responseRenderable);
+    this.scrollBox.add(box);
+    this.pruneLines();
+  }
+
+  /**
+   * Append a chunk to the streaming response
+   */
+  appendResponse(chunk: string): void {
+    if (this.responseRenderable) {
+      this.responseBuffer += chunk;
+      this.responseRenderable.content = this.responseBuffer;
+    }
+  }
+
+  /**
+   * End the streaming response
+   */
+  endResponse(): void {
+    this.responseRenderable = null;
   }
 
   private pruneLines(): void {

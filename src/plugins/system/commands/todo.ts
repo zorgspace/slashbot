@@ -10,7 +10,7 @@ export const todoWriteCommand: CommandHandler = {
   description: 'Write a completed todo and show notification',
   usage: '/todo-write <todo text>',
   group: 'System',
-  execute: async (args) => {
+  execute: async args => {
     const todoText = args.join(' ').trim();
     if (!todoText) {
       display.warning('Please provide todo text: /todo-write <text>');

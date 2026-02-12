@@ -1,5 +1,5 @@
 /**
- * Proxy Auth Provider - Implements ApiAuthProvider for proxy/wallet billing mode.
+ * Proxy Auth Provider - Implements ApiAuthProvider for proxy/solana billing mode.
  *
  * Handles wallet-based authentication, token validation, balance checks,
  * and billing info capture from proxy responses.
@@ -88,14 +88,14 @@ async function validateTokenMode(): Promise<void> {
   if (!walletExists()) {
     throw new TokenModeError(
       'No wallet configured.',
-      'Run /wallet create or /wallet import first, or switch to /wallet mode apikey.',
+      'Run /solana create or /solana import first, or switch to /solana mode apikey.',
     );
   }
 
   if (!useProxy()) {
     throw new TokenModeError(
       'Token mode misconfigured.',
-      'Switch to /wallet mode apikey or reconfigure wallet.',
+      'Switch to /solana mode apikey or reconfigure wallet.',
     );
   }
 
@@ -105,7 +105,7 @@ async function validateTokenMode(): Promise<void> {
     if (!credits || credits.credits <= 0) {
       throw new TokenModeError(
         'No SLASHBOT tokens or credits available.',
-        'Buy SLASHBOT tokens or switch to /wallet mode apikey.',
+        'Buy SLASHBOT tokens or switch to /solana mode apikey.',
       );
     }
     return;
@@ -115,7 +115,7 @@ async function validateTokenMode(): Promise<void> {
   if (!credits || credits.credits <= 0) {
     throw new TokenModeError(
       'No credits available.',
-      'Run /wallet redeem <amount> to convert SLASHBOT tokens to credits.',
+      'Run /solana redeem <amount> to convert SLASHBOT tokens to credits.',
     );
   }
 }

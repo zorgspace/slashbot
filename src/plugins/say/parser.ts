@@ -1,4 +1,4 @@
-import type { ActionParserConfig } from '../../core/actions/parser';
+import type { ActionParserConfig, ParserUtils } from '../../core/actions/parser';
 import type { Action } from '../../core/actions/types';
 
 export function getSayParserConfigs(): ActionParserConfig[] {
@@ -29,19 +29,35 @@ export function getSayParserConfigs(): ActionParserConfig[] {
       tags: ['end', 'end_task'],
       preStrip: true,
       stripAfterParse: ['end', 'end_task'],
-      parse(content): Action[] {
+      parse(content: string, utils: ParserUtils): Action[] {
         const actions: Action[] = [];
-        const regex = /<(?:end|end_task)\s*>([\s\S]+?)<\/(?:end|end_task)>/gi;
-        let match;
-        while ((match = regex.exec(content)) !== null) {
-          const message = match[1].trim();
-          if (message) {
-            actions.push({
-              type: 'end',
-              message,
-            } as Action);
-          }
+
+        // Handle self-closing <end/> or <end_task/>
+        const selfRegex = /<(?:end|end_task)[^>]*\/>/gi;
+        let selfMatch;
+        while ((selfMatch = selfRegex.exec(content)) !== null) {
+          const tag = selfMatch[0];
+          const message = utils.extractAttr(tag, 'message') || 'Task completed.';
+          actions.push({
+            type: 'end',
+            message,
+          } as Action);
         }
+
+        // Handle paired tags <end>message</end>
+        const pairedRegex = /<(?:end|end_task)\s*>([\s\S]*?)<\/(?:end|end_task)>/gi;
+        let pairedMatch;
+        while ((pairedMatch = pairedRegex.exec(content)) !== null) {
+          let message = pairedMatch[1].trim();
+          if (!message) {
+            message = 'Task completed.';
+          }
+          actions.push({
+            type: 'end',
+            message,
+          } as Action);
+        }
+
         return actions;
       },
     },

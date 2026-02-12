@@ -14,6 +14,8 @@ export type {
   StreamResult,
   AgenticLoopOptions,
   AgenticLoopResult,
+  ExecutionPolicy,
+  ExecutionPolicyMode,
   ClientContext,
 } from './types';
 
@@ -26,7 +28,13 @@ export { LRUCache } from './utils';
 
 // Sessions
 export { SessionManager } from './sessions';
-export type { ConversationSession } from './sessions';
+export type {
+  ConversationSession,
+  SessionUsageStats,
+  SessionCompactionStats,
+  ContextPressurePolicy,
+  ContextPressureResult,
+} from './sessions';
 
 // Client
 export { LLMClient, GrokClient, createGrokClient, createLLMClient } from './client';
@@ -36,4 +44,10 @@ export type { ActionHandlers } from './client';
 export { ProviderRegistry } from '../../plugins/providers/registry';
 export type { ProviderConfig } from '../../plugins/providers/registry';
 export type { ProviderInfo, ModelInfo, ProviderCapabilities } from '../../plugins/providers/types';
-export { PROVIDERS, MODELS as MODEL_CATALOG, getModelsForProvider, getModelInfo, inferProvider } from '../../plugins/providers/models';
+export {
+  PROVIDERS,
+  MODELS as MODEL_CATALOG,
+  getModelsForProvider,
+  getModelInfo,
+  inferProvider,
+} from '../../plugins/providers/models';

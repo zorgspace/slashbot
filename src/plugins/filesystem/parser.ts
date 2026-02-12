@@ -1,7 +1,7 @@
-import type { ActionParserConfig, ParserUtils } from '../../core/actions/parser';
-import { extractAttr, extractBoolAttr } from '../../core/actions/parser';
+import type { ActionParserConfig } from '../../core/actions/parser';
 import type { Action } from '../../core/actions/types';
 import { display } from '../../core/ui';
+import { detectEscapedNewlineCorruption } from '../../core/actions/contentGuards';
 
 // Quote pattern: matches both single and double quotes
 const Q = `["']`;
@@ -55,6 +55,12 @@ function detectContentCorruption(content: string, targetPath: string): string | 
     return `${signalCount} different action tag patterns in content`;
   }
 
+  // Signal 4: LLM emitted literal "\n" sequences to fake indentation/new lines.
+  const escapedNewlineCorruption = detectEscapedNewlineCorruption(content);
+  if (escapedNewlineCorruption) {
+    return escapedNewlineCorruption;
+  }
+
   return null;
 }
 
@@ -66,27 +72,26 @@ function detectContentCorruption(content: string, targetPath: string): string | 
  *   =======
  *   replacement lines
  *   >>>>>>> REPLACE
+ *
+ * Each block emits a separate EditAction with oldString/newString.
  */
-function parseSearchReplaceBlocks(content: string): { search: string; replace: string }[] {
-  const blocks: { search: string; replace: string }[] = [];
-  const regex = /<<<<<<< SEARCH[ \t]*\n([\s\S]*?)\n[ \t]*=======[ \t]*\n([\s\S]*?)\n[ \t]*>>>>>>> REPLACE[ \t]*/g;
+function parseSearchReplaceBlocks(
+  content: string,
+  path: string,
+): { oldString: string; newString: string }[] {
+  const blocks: { oldString: string; newString: string }[] = [];
+  const regex =
+    /<<<<<<< SEARCH[ \t]*\n([\s\S]*?)\n[ \t]*=======[ \t]*\n([\s\S]*?)\n[ \t]*>>>>>>> REPLACE[ \t]*/g;
   let match;
 
   while ((match = regex.exec(content)) !== null) {
     blocks.push({
-      search: match[1],
-      replace: match[2],
+      oldString: match[1],
+      newString: match[2],
     });
   }
 
   return blocks;
-}
-
-/**
- * Detect whether edit content uses search/replace mode or full-file mode.
- */
-function detectEditMode(content: string): 'full' | 'search-replace' {
-  return content.includes('<<<<<<< SEARCH') ? 'search-replace' : 'full';
 }
 
 export function getFilesystemParserConfigs(): ActionParserConfig[] {
@@ -117,7 +122,7 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
         return actions;
       },
     },
-    // Edit action - full file or search/replace blocks
+    // Edit action - search/replace blocks, each emitted as separate EditAction
     // preStrip: content-bearing tag — parsed first, then stripped so inner tags
     // (e.g. <bash> inside edit content) are not executed as actions.
     {
@@ -152,62 +157,22 @@ export function getFilesystemParserConfigs(): ActionParserConfig[] {
             continue;
           }
 
-          const mode = detectEditMode(innerContent);
-
-          if (mode === 'search-replace') {
-            const blocks = parseSearchReplaceBlocks(innerContent);
-            if (blocks.length > 0) {
+          // Parse search/replace blocks — each becomes a separate EditAction
+          if (innerContent.includes('<<<<<<< SEARCH')) {
+            const blocks = parseSearchReplaceBlocks(innerContent, path);
+            for (const block of blocks) {
               actions.push({
                 type: 'edit',
                 path,
-                mode: 'search-replace',
-                blocks,
+                oldString: block.oldString,
+                newString: block.newString,
               } as Action);
             }
-          } else {
-            // Full file mode: trim leading/trailing newline from content
-            // (the content between <edit> tags often has a leading newline)
-            let fullContent = innerContent;
-            if (fullContent.startsWith('\n')) fullContent = fullContent.slice(1);
-            if (fullContent.endsWith('\n')) fullContent = fullContent.slice(0, -1);
-
-            actions.push({
-              type: 'edit',
-              path,
-              mode: 'full',
-              content: fullContent,
-            } as Action);
           }
+          // No more full-file mode via edit — use write_file for that
         }
 
-        // Merge multiple <edit> blocks targeting the same file (search-replace mode)
-        const byPath = new Map<string, Action>();
-        const merged: Action[] = [];
-        for (const action of actions) {
-          const editAction = action as any;
-          if (editAction.mode === 'search-replace') {
-            const existing = byPath.get(editAction.path);
-            if (existing && (existing as any).mode === 'search-replace') {
-              (existing as any).blocks.push(...editAction.blocks);
-            } else {
-              byPath.set(editAction.path, action);
-              merged.push(action);
-            }
-          } else {
-            // Full mode: last one wins
-            const existing = byPath.get(editAction.path);
-            if (existing && (existing as any).mode === 'full') {
-              // Replace the previous full edit
-              const idx = merged.indexOf(existing);
-              if (idx !== -1) merged[idx] = action;
-              byPath.set(editAction.path, action);
-            } else {
-              byPath.set(editAction.path, action);
-              merged.push(action);
-            }
-          }
-        }
-        return merged;
+        return actions;
       },
     },
     // Write action (pre-strip to preserve code blocks inside write tags)

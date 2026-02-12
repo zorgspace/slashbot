@@ -8,6 +8,7 @@ import * as path from 'path';
 import { display } from '../ui';
 import { promises as fs } from 'fs';
 import { spawn } from 'child_process';
+import { getLocalSlashbotDir } from '../config/constants';
 
 const REPO = 'zorgspace/slashbot';
 const USER_AGENT = 'Slashbot-Updater/1.0';
@@ -302,8 +303,8 @@ export async function updateAndRestart(): Promise<void> {
  * Check if we should check for updates (based on last check time)
  */
 export async function shouldCheckForUpdates(): Promise<boolean> {
-  const HOME_SLASHBOT_DIR = path.join(os.homedir(), '.slashbot');
-  const lastCheckFile = path.join(HOME_SLASHBOT_DIR, '.last-update-check');
+  const slashbotDir = getLocalSlashbotDir();
+  const lastCheckFile = path.join(slashbotDir, '.last-update-check');
 
   try {
     const lastCheck = await Bun.file(lastCheckFile).text();
@@ -319,7 +320,7 @@ export async function shouldCheckForUpdates(): Promise<boolean> {
 
   // Update last check time
   try {
-    await fs.mkdir(HOME_SLASHBOT_DIR, { recursive: true });
+    await fs.mkdir(slashbotDir, { recursive: true });
     await Bun.write(lastCheckFile, String(Date.now()));
   } catch {
     // Ignore

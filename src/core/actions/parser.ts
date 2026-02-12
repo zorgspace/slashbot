@@ -18,6 +18,56 @@ export type ActionParserConfig = {
 
 let actionParsers: ActionParserConfig[] = [];
 
+function buildTagVariants(tag: string): string[] {
+  const normalized = tag.trim().toLowerCase();
+  if (!normalized) return [];
+
+  const variants = new Set<string>([normalized]);
+  if (normalized.includes('-')) {
+    variants.add(normalized.replace(/-/g, '_'));
+  }
+  if (normalized.includes('_')) {
+    variants.add(normalized.replace(/_/g, '-'));
+  }
+  return Array.from(variants);
+}
+
+function buildCanonicalTagMap(): Map<string, string> {
+  const canonicalMap = new Map<string, string>();
+
+  for (const parser of actionParsers) {
+    const canonical = parser.tags[0]?.trim().toLowerCase();
+    if (!canonical) continue;
+    const sourceTags = [...parser.tags, ...(parser.selfClosingTags || [])];
+    for (const tag of sourceTags) {
+      for (const variant of buildTagVariants(tag)) {
+        if (!canonicalMap.has(variant)) {
+          canonicalMap.set(variant, canonical);
+        }
+      }
+    }
+  }
+
+  return canonicalMap;
+}
+
+function normalizeActionTagVariants(content: string): string {
+  const canonicalMap = buildCanonicalTagMap();
+  if (canonicalMap.size === 0) {
+    return content;
+  }
+
+  // Normalize aliases like <read_file> / <read-file> to the parser's canonical tag
+  // so predefined actions are always parsed and executed.
+  return content.replace(/<(\/?)([a-z][a-z0-9_-]*)(?=[\s/>])/gi, (full, slash, tagName) => {
+    const canonical = canonicalMap.get(String(tagName).toLowerCase());
+    if (!canonical) {
+      return full;
+    }
+    return `<${slash}${canonical}`;
+  });
+}
+
 export function registerActionParser(config: ActionParserConfig): void {
   actionParsers.push(config);
   registerActionTags(config.tags);
@@ -52,8 +102,12 @@ export function parseActions(content: string): Action[] {
   const actions: Action[] = [];
   const utils: ParserUtils = { extractAttr, extractBoolAttr };
 
+  // Normalize tag aliases before parser-specific fixups/parsing.
+  // This catches predefined action variants and prevents them from leaking as plain content.
+  const normalizedContent = normalizeActionTagVariants(content);
+
   // Apply fixups before parsing — correct common LLM formatting mistakes
-  let fixedContent = content;
+  let fixedContent = normalizedContent;
   for (const parser of actionParsers) {
     if (parser.fixups) {
       if (typeof parser.fixups === 'function') {

@@ -5,7 +5,6 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { Keypair, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import * as bip39 from 'bip39';
@@ -19,7 +18,6 @@ import {
   hashData,
 } from './crypto';
 import {
-  generateKeypair,
   importKeypair,
   getSolBalance,
   getSlashbotBalance,
@@ -34,9 +32,9 @@ import {
   type ClaimResult,
   TREASURY_ADDRESS,
 } from './types';
-import { PROXY_CONFIG } from '../../../core/config/constants';
+import { HOME_SLASHBOT_DIR, PROXY_CONFIG } from '../../../core/config/constants';
 
-const WALLET_PATH = path.join(os.homedir(), '.slashbot', 'wallet.json');
+const WALLET_PATH = path.join(HOME_SLASHBOT_DIR, 'wallet.json');
 
 /**
  * Check if wallet exists

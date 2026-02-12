@@ -74,7 +74,7 @@ class PasteBuffer {
   async expand(text: string): Promise<string> {
     // First expand paste placeholders
     // Match both new format [pasted content X line(s)] and legacy [pasted:id:desc]
-    let result = text.replace(/\[pasted content \d+ lines?\]/g, (_match) => {
+    let result = text.replace(/\[pasted content \d+ lines?\]/g, _match => {
       // Find the oldest unused entry (FIFO order)
       for (const [id, content] of this.entries) {
         this.entries.delete(id);

@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { SkillAction, SkillInstallAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 export async function executeSkill(
   action: SkillAction,
@@ -13,12 +13,11 @@ export async function executeSkill(
   if (!handlers.onSkill) return null;
 
   const argsInfo = action.args ? ` "${action.args}"` : '';
-  display.tool('Skill', `${action.name}${argsInfo}`);
+  const detail = `${action.name}${argsInfo}`;
 
   try {
     const content = await handlers.onSkill(action.name, action.args);
-
-    display.result(`Loaded skill: ${action.name}`);
+    display.appendAssistantMessage(formatToolAction('Skill', detail, { success: true }));
 
     return {
       action: `Skill: ${action.name}`,
@@ -27,7 +26,7 @@ export async function executeSkill(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Skill failed: ${errorMsg}`);
+    display.appendAssistantMessage(formatToolAction('Skill', detail, { success: false, summary: errorMsg }));
     return {
       action: `Skill: ${action.name}`,
       success: false,
@@ -44,12 +43,13 @@ export async function executeSkillInstall(
   if (!handlers.onSkillInstall) return null;
 
   const nameInfo = action.name ? ` as "${action.name}"` : '';
-  display.tool('SkillInstall', `${action.url}${nameInfo}`);
+  const detail = `${action.url}${nameInfo}`;
 
   try {
     const result = await handlers.onSkillInstall(action.url, action.name);
-
-    display.result(`Installed skill: ${result.name} → ${result.path}`);
+    display.appendAssistantMessage(
+      formatToolAction('SkillInstall', detail, { success: true, summary: result.name }),
+    );
 
     return {
       action: `SkillInstall: ${action.url}`,
@@ -58,7 +58,7 @@ export async function executeSkillInstall(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Skill install failed: ${errorMsg}`);
+    display.appendAssistantMessage(formatToolAction('SkillInstall', detail, { success: false, summary: errorMsg }));
     return {
       action: `SkillInstall: ${action.url}`,
       success: false,

@@ -13,6 +13,7 @@ import type {
   ActionContribution,
   PromptContribution,
   SidebarContribution,
+  KernelHookContribution,
 } from '../types';
 import type { CommandHandler } from '../../core/commands/registry';
 import { registerActionParser } from '../../core/actions/parser';
@@ -24,21 +25,21 @@ import {
   getBalances,
   isSessionActive,
   getSessionAuthHeaders,
-  sendSol,
-  sendSlashbot,
   unlockSession,
+  getCreditBalance,
 } from './services';
-
+import { getPaymentMode } from './provider';
 export class WalletPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
     id: 'feature.wallet',
-    name: 'Wallet',
+    name: 'Solana',
     version: '1.0.0',
     category: 'feature',
     description: 'Solana wallet management and token transfers',
   };
 
   private context!: PluginContext;
+  private uiRefreshHookBound = false;
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
@@ -116,6 +117,51 @@ export class WalletPlugin implements Plugin {
     }
   }
 
+  getKernelHooks(): KernelHookContribution[] {
+    return [
+      {
+        event: 'run:noninteractive:before',
+        order: 20,
+        handler: payload => {
+          const configManager = this.context?.configManager as any;
+          const savedConfig = configManager?.getConfig?.();
+          if (!savedConfig) {
+            return;
+          }
+
+          if (savedConfig.paymentMode === 'token' && walletExists() && !isSessionActive()) {
+            return {
+              blocked: true,
+              exitCode: 1,
+              reason: 'Token mode requires wallet to be unlocked.',
+              hint: 'Run slashbot interactively first to unlock, or switch to API key mode.',
+            };
+          }
+        },
+      },
+      {
+        event: 'startup:after-ui-ready',
+        order: 80,
+        handler: payload => {
+          if (this.uiRefreshHookBound) {
+            return;
+          }
+          const refreshLayout = payload.refreshLayout as (() => void) | undefined;
+          const eventBus = this.context?.eventBus as
+            | { on: (type: string, handler: (event: any) => void) => unknown }
+            | undefined;
+          if (!refreshLayout || !eventBus) {
+            return;
+          }
+
+          this.uiRefreshHookBound = true;
+          eventBus.on('wallet:unlocked', () => refreshLayout());
+          eventBus.on('wallet:locked', () => refreshLayout());
+        },
+      },
+    ];
+  }
+
   getActionContributions(): ActionContribution[] {
     return [
       {
@@ -126,17 +172,20 @@ export class WalletPlugin implements Plugin {
             const exists = walletExists();
             const publicKey = getPublicKey();
             const sessionActive = isSessionActive();
+            const mode = getPaymentMode();
             let balances: { sol: number; slashbot: number } | null = null;
+            let credits: number | null = null;
 
             if (exists) {
               try {
                 balances = await getBalances();
+                credits = await getCreditBalance();
               } catch {
-                // Unable to fetch balances
+                // Unable to fetch balances/credits
               }
             }
 
-            return { exists, publicKey, balances, sessionActive };
+            return { exists, publicKey, balances, sessionActive, mode, credits };
           },
         },
         execute: executeWalletStatus as any,
@@ -149,7 +198,7 @@ export class WalletPlugin implements Plugin {
             if (!isSessionActive()) {
               return {
                 success: false,
-                error: 'Wallet session not active. Use /wallet unlock first.',
+                error: 'Wallet session not active. Use /solana unlock first.',
               };
             }
 
@@ -159,14 +208,14 @@ export class WalletPlugin implements Plugin {
             if (!authHeaders) {
               return {
                 success: false,
-                error: 'Session expired. Use /wallet unlock to re-authenticate.',
+                error: 'Session expired. Use /solana unlock to re-authenticate.',
               };
             }
 
             return {
               success: false,
               error:
-                'Wallet send via action tags requires an active session with cached keypair. Use /wallet send command instead.',
+                'Wallet send via action tags requires an active session with cached keypair. Use /solana send command instead.',
             };
           },
         },
@@ -189,10 +238,10 @@ export class WalletPlugin implements Plugin {
   getSidebarContributions(): SidebarContribution[] {
     return [
       {
-        id: 'wallet',
-        label: 'Wallet',
+        id: 'solana',
+        label: 'Solana',
         order: 30,
-        getStatus: () => isSessionActive(),
+        getStatus: () => walletExists() && isSessionActive(),
       },
     ];
   }
@@ -201,10 +250,10 @@ export class WalletPlugin implements Plugin {
     return [
       {
         id: 'feature.wallet.docs',
-        title: 'Wallet - Solana Wallet Management',
+        title: 'Solana - Wallet Management',
         priority: 150,
         content: [
-          'The wallet system allows checking balances and managing Solana tokens.',
+          'The wallet system allows checking balances and managing Solana tokens and sending SOL and SLASHBOT.',
           '',
           '**Check wallet status (read-only, always safe):**',
           '```',
@@ -217,10 +266,9 @@ export class WalletPlugin implements Plugin {
           '<wallet-send token="slashbot" to="ADDRESS" amount="100"/>',
           '```',
           '',
-          'SECURITY: Sending tokens requires the wallet to be unlocked via /wallet unlock.',
           'Always confirm with the user before initiating any transfer.',
           '',
-          '**Commands:** /wallet, /wallet create, /wallet balance, /wallet send, /wallet unlock, /wallet status',
+          '**Commands:** /solana, /solana create, /solana balance, /solana send, /solana unlock, /solana status',
         ].join('\n'),
       },
     ];

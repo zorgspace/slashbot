@@ -18,12 +18,21 @@ import {
   ThreadAutoArchiveDuration,
   TextChannel,
 } from 'discord.js';
-import { display } from '../../core/ui';
-import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from '../base';
+import { display, formatToolAction } from '../../core/ui';
+import {
+  Connector,
+  MessageHandler,
+  PLATFORM_CONFIGS,
+  splitMessage,
+  type ConnectorActionSpec,
+  type ConnectorCapabilities,
+  type ConnectorStatus,
+} from '../base';
 import { getTranscriptionService } from '../../plugins/transcription/services/TranscriptionService';
 import { imageBuffer } from '../../plugins/filesystem/services/ImageBuffer';
 import { acquireLock, releaseLock } from '../locks';
 import type { EventBus } from '../../core/events/EventBus';
+import { getConnectorActionSpecs, getConnectorCapabilities } from '../catalog';
 
 export interface DiscordConfig {
   botToken: string;
@@ -66,21 +75,21 @@ export class DiscordConnector implements Connector {
     }
 
     this.replyTargetChannelId = config.channelId; // Default to primary channel
-    this.ownerId = config.ownerId || null;
+    this.ownerId = config.ownerId ?? null;
     this.setupHandlers(config.botToken);
   }
 
   private setupHandlers(token: string): void {
     this.client.once('ready', () => {
-      display.connector('discord', 'connected');
-      display.connectorResult(this.client.user?.tag || 'unknown');
+      display.appendAssistantMessage(formatToolAction('Discord', 'connected', { success: true, summary: this.client.user?.tag ?? 'unknown' }));
       if (this.eventBus) {
         this.eventBus.emit({ type: 'connector:connected', source: 'discord' });
       }
     });
 
-    this.client.on('messageCreate', async (message: DiscordMessage) => {
-      // Ignore bot messages
+    this.client.on('messageCreate', (message: DiscordMessage) => {
+      void (async () => {
+        // Ignore bot messages
       if (message.author.bot) return;
 
       // Emit discord:message event
@@ -121,6 +130,7 @@ export class DiscordConnector implements Connector {
           let textContent = message.content;
 
           // Check for image attachments
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
           const imageAttachments = message.attachments.filter(
             att =>
               att.contentType?.startsWith('image/') ||
@@ -130,21 +140,21 @@ export class DiscordConnector implements Connector {
           // Process images and add to context
           for (const imgAtt of imageAttachments.values()) {
             try {
-              display.connector('discord', 'image');
               const imageResponse = await fetch(imgAtt.url);
               const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString(
                 'base64',
               );
-              const mimeType = imgAtt.contentType || 'image/jpeg';
+              const mimeType = imgAtt.contentType ?? 'image/jpeg';
               const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
               imageBuffer.push(dataUrl);
-              display.connectorResult(`${Math.round(imageBuffer64.length / 1024)}KB`);
+              display.appendAssistantMessage(formatToolAction('Discord', 'image', { success: true, summary: `${Math.round(imageBuffer64.length / 1024)}KB` }));
             } catch (imgErr) {
               display.error(`Failed to download: ${imgErr}`);
             }
           }
 
           // Check for voice message attachments (Discord voice messages are ogg files)
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
           const voiceAttachment = message.attachments.find(
             att =>
               att.contentType?.startsWith('audio/') ||
@@ -160,7 +170,7 @@ export class DiscordConnector implements Connector {
               return;
             }
 
-            display.connector('discord', 'transcribe');
+            display.appendAssistantMessage(formatToolAction('Discord', 'transcribe'));
             const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
 
             if (!result || !result.text) {
@@ -168,7 +178,7 @@ export class DiscordConnector implements Connector {
               return;
             }
 
-            display.connectorResult(`"${result.text}"`);
+            display.appendAssistantMessage(formatToolAction('Discord', 'transcribe', { success: true, summary: `"${result.text}"` }));
             textContent = result.text;
           }
 
@@ -204,15 +214,16 @@ export class DiscordConnector implements Connector {
         const errorMsg = error instanceof Error ? error.message : String(error);
         await message.reply(`Error: ${errorMsg}`).catch(() => {});
       }
-    });
+    })();
+
+  });
 
     this.client.on('error', err => {
-      display.connector('discord', 'error');
-      display.error(err.message);
+      display.appendAssistantMessage(formatToolAction('Discord', 'error', { success: false, summary: err.message }));
     });
 
     // Store token for start()
-    (this.client as any)._token = token;
+    (this.client as Client & { _token: string })._token = token;
   }
 
   setMessageHandler(handler: MessageHandler): void {
@@ -229,9 +240,8 @@ export class DiscordConnector implements Connector {
     // Try to acquire lock - only one instance can run Discord
     const lock = await acquireLock('discord');
     if (!lock.acquired) {
-      display.connector('discord', 'locked');
-      display.connectorResult(
-        `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}`,
+      display.appendAssistantMessage(
+        formatToolAction('Discord', 'locked', { success: false, summary: `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}` }),
       );
       return;
     }
@@ -244,8 +254,7 @@ export class DiscordConnector implements Connector {
       }
     } catch (error) {
       await releaseLock('discord');
-      display.connector('discord', 'error');
-      display.error(error instanceof Error ? error.message : String(error));
+      display.appendAssistantMessage(formatToolAction('Discord', 'error', { success: false, summary: error instanceof Error ? error.message : String(error) }));
       throw error;
     }
   }
@@ -291,7 +300,7 @@ export class DiscordConnector implements Connector {
   async banUser(userId: string, reason?: string): Promise<void> {
     const guild = this.client.guilds.cache.first();
     if (!guild) throw new Error('No guild found');
-    await guild.members.ban(userId, { reason: reason || 'Auto-banned by Slashbot' });
+    await guild.members.ban(userId, { reason: reason ?? 'Auto-banned by Slashbot' });
   }
 
   /**
@@ -428,6 +437,43 @@ export class DiscordConnector implements Connector {
    */
   getClient(): Client {
     return this.client;
+  }
+
+  getCapabilities(): ConnectorCapabilities {
+    return (
+      getConnectorCapabilities(this.source) ?? {
+        chatTypes: ['channel'],
+        supportsMarkdown: true,
+        supportsReactions: false,
+        supportsEdit: false,
+        supportsDelete: false,
+        supportsThreads: false,
+        supportsTyping: true,
+        supportsVoiceInbound: false,
+        supportsImageInbound: false,
+        supportsMultiTarget: false,
+      }
+    );
+  }
+
+  listSupportedActions(): ConnectorActionSpec[] {
+    return getConnectorActionSpecs(this.source);
+  }
+
+  getStatus(): ConnectorStatus {
+    const authorizedTargets = Array.from(this.channelIds);
+    return {
+      source: this.source,
+      configured: true,
+      running: this.running,
+      primaryTarget: this.primaryChannelId,
+      activeTarget: this.replyTargetChannelId,
+      authorizedTargets,
+      ownerId: this.ownerId || undefined,
+      notes: this.running
+        ? [`${authorizedTargets.length} authorized channel(s)`]
+        : ['Configured but not running'],
+    };
   }
 }
 

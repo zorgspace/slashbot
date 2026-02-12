@@ -4,7 +4,7 @@
 
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { FetchAction, SearchAction } from './types';
-import { display } from '../../core/ui';
+import { display, formatToolAction } from '../../core/ui';
 
 export async function executeFetch(
   action: FetchAction,
@@ -14,14 +14,16 @@ export async function executeFetch(
 
   const shortUrl = action.url.length > 50 ? action.url.slice(0, 47) + '...' : action.url;
   const promptInfo = action.prompt ? `, "${action.prompt.slice(0, 30)}..."` : '';
-  display.tool('Fetch', `${shortUrl}${promptInfo}`);
+  const detail = `${shortUrl}${promptInfo}`;
 
   try {
     const content = await handlers.onFetch(action.url, action.prompt);
     const lines = content.split('\n').length;
     const charCount = content.length;
 
-    display.result(`Fetched ${charCount} chars, ${lines} lines`);
+    display.appendAssistantMessage(
+      formatToolAction('Fetch', detail, { success: true, summary: `${charCount} chars, ${lines} lines` }),
+    );
 
     return {
       action: `Fetch: ${action.url}`,
@@ -30,7 +32,9 @@ export async function executeFetch(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Fetch failed: ${errorMsg}`);
+    display.appendAssistantMessage(
+      formatToolAction('Fetch', detail, { success: false, summary: errorMsg }),
+    );
     return {
       action: `Fetch: ${action.url}`,
       success: false,
@@ -51,7 +55,7 @@ export async function executeSearch(
     : action.blockedDomains?.length
       ? ` (exclude: ${action.blockedDomains.join(', ')})`
       : '';
-  display.tool('Search', `"${action.query}"${domainInfo}`);
+  const detail = `"${action.query}"${domainInfo}`;
 
   try {
     const { response, citations } = await handlers.onSearch(action.query, {
@@ -59,12 +63,10 @@ export async function executeSearch(
       blockedDomains: action.blockedDomains,
     });
 
-    if (citations.length > 0) {
-      const citationPreview = citations.join(', ');
-      display.result(`Found ${citations.length} sources: ${citationPreview}`);
-    } else {
-      display.result('Search completed');
-    }
+    const summary = citations.length > 0 ? `${citations.length} sources` : 'done';
+    display.appendAssistantMessage(
+      formatToolAction('Search', detail, { success: true, summary }),
+    );
 
     return {
       action: `Search: ${action.query}`,
@@ -73,7 +75,9 @@ export async function executeSearch(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.error(`Search failed: ${errorMsg}`);
+    display.appendAssistantMessage(
+      formatToolAction('Search', detail, { success: false, summary: errorMsg }),
+    );
     return {
       action: `Search: ${action.query}`,
       success: false,

@@ -3,6 +3,7 @@
  */
 
 import { display } from '../../../core/ui';
+import { t, bold } from '@opentui/core';
 import type { CommandHandler } from '../../../core/commands/registry';
 
 export const psCommand: CommandHandler = {
@@ -19,7 +20,7 @@ export const psCommand: CommandHandler = {
       return true;
     }
 
-    display.boldText('Background Processes:');
+    display.appendAssistantMessage(t`${bold('Background Processes:')}`);
     display.append('');
     for (const proc of processes) {
       const statusIcon = proc.running ? '[OK]' : '[STOPPED]';
