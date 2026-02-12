@@ -6,13 +6,7 @@ import { display } from '../../core/ui';
 import type { CommandHandler } from '../../core/commands/registry';
 
 function dedupe(values: string[]): string[] {
-  return Array.from(
-    new Set(
-      values
-        .map(value => value.trim())
-        .filter(Boolean),
-    ),
-  );
+  return Array.from(new Set(values.map(value => value.trim()).filter(Boolean)));
 }
 
 function renderDiscordStatus(context: Parameters<CommandHandler['execute']>[1]): void {
@@ -40,7 +34,9 @@ function renderDiscordStatus(context: Parameters<CommandHandler['execute']>[1]):
     lines.push(`Bot:            ${discordConfig.botToken.slice(0, 20)}...`);
     lines.push(`Primary channel: ${runtime?.primaryTarget ?? discordConfig.channelId}`);
     lines.push(`Active channel:  ${runtime?.activeTarget ?? discordConfig.channelId}`);
-    lines.push(`Authorized:      ${runtimeTargets.length > 0 ? runtimeTargets.join(', ') : '(none)'}`);
+    lines.push(
+      `Authorized:      ${runtimeTargets.length > 0 ? runtimeTargets.join(', ') : '(none)'}`,
+    );
     lines.push(`Owner user id:   ${ownerId}`);
   }
 
@@ -67,7 +63,7 @@ export const discordCommand: CommandHandler = {
   description: 'Configure Discord bot connection',
   usage: '/discord <bot_token> <channel_id>',
   group: 'Connectors',
-  subcommands: ['add', 'remove', 'primary', 'owner', 'clear'],
+  subcommands: ['add', 'remove', 'primary', 'owner', 'owner clear', 'clear'],
   execute: async (args, context) => {
     const arg0 = args[0];
     const arg1 = args[1];
@@ -95,8 +91,14 @@ export const discordCommand: CommandHandler = {
       }
       try {
         await context.configManager.addDiscordChannel(arg1);
-        display.successText(`Added channel ${arg1} to authorized list`);
-        display.warningText('Restart slashbot to apply changes');
+        const connector = context.connectors.get('discord') as any;
+        if (connector?.isRunning?.() && typeof connector.addChannel === 'function') {
+          connector.addChannel(arg1);
+          display.successText(`Added channel ${arg1} to authorized list`);
+        } else {
+          display.successText(`Added channel ${arg1} to authorized list`);
+          display.warningText('Restart slashbot to apply changes');
+        }
       } catch (error) {
         display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
       }
@@ -110,8 +112,14 @@ export const discordCommand: CommandHandler = {
       }
       try {
         await context.configManager.removeDiscordChannel(arg1);
-        display.successText(`Removed channel ${arg1} from authorized list`);
-        display.warningText('Restart slashbot to apply changes');
+        const connector = context.connectors.get('discord') as any;
+        if (connector?.isRunning?.() && typeof connector.removeChannel === 'function') {
+          connector.removeChannel(arg1);
+          display.successText(`Removed channel ${arg1} from authorized list`);
+        } else {
+          display.successText(`Removed channel ${arg1} from authorized list`);
+          display.warningText('Restart slashbot to apply changes');
+        }
       } catch (error) {
         display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
       }
@@ -125,8 +133,18 @@ export const discordCommand: CommandHandler = {
       }
       try {
         await context.configManager.setDiscordPrimaryChannel(arg1);
-        display.successText(`Primary Discord channel updated to ${arg1}`);
-        display.warningText('Restart slashbot to apply changes');
+        const connector = context.connectors.get('discord') as any;
+        if (connector?.isRunning?.()) {
+          if (typeof connector.setPrimaryChannel === 'function') {
+            connector.setPrimaryChannel(arg1);
+          } else if (typeof connector.addChannel === 'function') {
+            connector.addChannel(arg1);
+          }
+          display.successText(`Primary Discord channel updated to ${arg1}`);
+        } else {
+          display.successText(`Primary Discord channel updated to ${arg1}`);
+          display.warningText('Restart slashbot to apply changes');
+        }
       } catch (error) {
         display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
       }
@@ -157,7 +175,16 @@ export const discordCommand: CommandHandler = {
           await context.configManager.setDiscordOwnerId(arg1);
           display.successText(`Discord owner user id set to ${arg1}`);
         }
-        display.warningText('Restart slashbot to apply changes');
+        const connector = context.connectors.get('discord') as any;
+        if (connector?.isRunning?.()) {
+          if (arg1 === 'clear' && typeof connector.setOwnerId === 'function') {
+            connector.setOwnerId(null);
+          } else if (arg1 !== 'clear' && typeof connector.setOwnerId === 'function') {
+            connector.setOwnerId(arg1);
+          }
+        } else {
+          display.warningText('Restart slashbot to apply changes');
+        }
       } catch (error) {
         display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
       }
@@ -183,7 +210,12 @@ export const discordCommand: CommandHandler = {
     const ownerId = existing?.ownerId;
 
     try {
-      await context.configManager.saveDiscordConfig(botToken, channelId, retainedSecondary, ownerId);
+      await context.configManager.saveDiscordConfig(
+        botToken,
+        channelId,
+        retainedSecondary,
+        ownerId,
+      );
       display.successText('Discord configured!');
       display.muted('Bot token: ' + botToken.slice(0, 20) + '...');
       display.muted('Primary channel ID: ' + channelId);
@@ -195,7 +227,9 @@ export const discordCommand: CommandHandler = {
       }
       display.warningText('Restart slashbot to connect to Discord');
     } catch (error) {
-      display.errorText('Error saving config: ' + (error instanceof Error ? error.message : String(error)));
+      display.errorText(
+        'Error saving config: ' + (error instanceof Error ? error.message : String(error)),
+      );
     }
 
     return true;

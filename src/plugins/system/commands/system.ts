@@ -199,7 +199,10 @@ export const bannerCommand: CommandHandler = {
   },
 };
 
-function isConnectorConfigured(id: string, context: Parameters<CommandHandler['execute']>[1]): boolean {
+function isConnectorConfigured(
+  id: string,
+  context: Parameters<CommandHandler['execute']>[1],
+): boolean {
   if (id === 'telegram') return !!context.configManager.getTelegramConfig();
   if (id === 'discord') return !!context.configManager.getDiscordConfig();
   return context.connectors.has(id);
@@ -239,23 +242,50 @@ function renderCapabilities(capabilities: ConnectorCapabilities | null): string 
   return bits.join(' | ');
 }
 
+function getConnectorCommandTreeLines(connectorId: string): string[] {
+  if (connectorId === 'telegram') {
+    return [
+      '- `/telegram <bot_token> [chat_id]`',
+      '- `/telegram add <chat_id>`',
+      '- `/telegram remove <chat_id>`',
+      '- `/telegram primary <chat_id>`',
+      '- `/telegram trigger /command`',
+      '- `/telegram gate <open|command>`',
+      '- `/telegram clear`',
+    ];
+  }
+  if (connectorId === 'discord') {
+    return [
+      '- `/discord <bot_token> <channel_id>`',
+      '- `/discord add <channel_id>`',
+      '- `/discord remove <channel_id>`',
+      '- `/discord primary <channel_id>`',
+      '- `/discord owner <user_id>`',
+      '- `/discord owner clear`',
+      '- `/discord clear`',
+    ];
+  }
+  return ['- no command tree available'];
+}
+
 export const connectorsCommand: CommandHandler = {
   name: 'connectors',
   description: 'Show connector status, capabilities, and actions',
-  usage: '/connectors [status|capabilities|actions] [telegram|discord]',
+  usage: '/connectors [status|capabilities|actions|commands] [telegram|discord]',
+  aliases: ['connector'],
   group: 'Connectors',
-  subcommands: ['status', 'capabilities', 'actions'],
+  subcommands: ['status', 'capabilities', 'actions', 'commands'],
   execute: async (args, context) => {
     const catalog = listConnectorCatalogEntries();
     const known = new Set(catalog.map(entry => String(entry.id)));
 
-    let mode: 'status' | 'capabilities' | 'actions' = 'status';
+    let mode: 'status' | 'capabilities' | 'actions' | 'commands' = 'status';
     let targetId = '';
 
     const first = (args[0] || '').toLowerCase();
     const second = (args[1] || '').toLowerCase();
 
-    if (first === 'status' || first === 'capabilities' || first === 'actions') {
+    if (first === 'status' || first === 'capabilities' || first === 'actions' || first === 'commands') {
       mode = first;
       targetId = second;
     } else if (first) {
@@ -268,9 +298,7 @@ export const connectorsCommand: CommandHandler = {
       return true;
     }
 
-    const entries = targetId
-      ? catalog.filter(entry => String(entry.id) === targetId)
-      : catalog;
+    const entries = targetId ? catalog.filter(entry => String(entry.id) === targetId) : catalog;
 
     if (mode === 'status') {
       const lines: string[] = ['Connector Status'];
@@ -280,6 +308,16 @@ export const connectorsCommand: CommandHandler = {
         const inline = display.formatInline(status).replace(/`/g, "'");
         lines.push('');
         lines.push(`- ${entry.label} (${id}): ${inline}`);
+      }
+      if (!targetId) {
+        lines.push('');
+        lines.push('Connector Command Tree');
+        for (const entry of entries) {
+          const id = String(entry.id);
+          lines.push('');
+          lines.push(`${entry.label} (${id})`);
+          lines.push(...getConnectorCommandTreeLines(id));
+        }
       }
       display.renderMarkdown(lines.join('\n'), true);
       return true;
@@ -294,6 +332,18 @@ export const connectorsCommand: CommandHandler = {
         lines.push('');
         lines.push(`${entry.label} (${id})`);
         lines.push(renderCapabilities(capabilities));
+      }
+      display.renderMarkdown(lines.join('\n'), true);
+      return true;
+    }
+
+    if (mode === 'commands') {
+      const lines: string[] = ['Connector Command Tree'];
+      for (const entry of entries) {
+        const id = String(entry.id);
+        lines.push('');
+        lines.push(`${entry.label} (${id})`);
+        lines.push(...getConnectorCommandTreeLines(id));
       }
       display.renderMarkdown(lines.join('\n'), true);
       return true;

@@ -104,7 +104,8 @@ export class PromptAssembler {
           : contribution.content;
 
       if (content) {
-        const resolved = typeof content === 'string' ? content : (content as readonly string[]).join('\n');
+        const resolved =
+          typeof content === 'string' ? content : (content as readonly string[]).join('\n');
         sectionReports.push({
           id: contribution.id,
           title: contribution.title,

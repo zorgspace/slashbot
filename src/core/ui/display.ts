@@ -16,6 +16,7 @@ import { formatToolAction } from './format';
 import { formatInlineDisplayValue } from './valueFormat';
 
 import { isAssistantToolTranscript, parseAssistantToolTranscript } from './toolTranscript';
+import { isExploreToolName } from './exploreTools';
 
 export interface TUISpinnerCallbacks {
   showSpinner: (label: string, tabId?: string) => void;
@@ -30,11 +31,12 @@ export function setTUISpinnerCallbacks(callbacks: TUISpinnerCallbacks | null): v
 }
 
 type ExploreEvent = {
-  tool: 'Grep' | 'Glob' | 'LS' | 'Read';
+  tool: string;
   success: boolean;
   total: number;
   preview: string[];
   meta?: string;
+  sequence: number;
 };
 
 class DisplayService {
@@ -44,7 +46,11 @@ class DisplayService {
   private readonly outputTabScope = new AsyncLocalStorage<{ tabId?: string }>();
   private readonly exploreLiveKey = 'explore-live';
   private readonly globalExploreKey = '__global__';
+  private readonly exploreAnimationDelayMs = 90;
   private readonly exploreEventsByTab = new Map<string, ExploreEvent[]>();
+  private readonly explorePendingByTab = new Map<string, ExploreEvent[]>();
+  private readonly exploreTimersByTab = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly exploreSequenceByTab = new Map<string, number>();
 
   bindTUI(tui: UIOutput): void {
     this.tui = tui;
@@ -82,6 +88,61 @@ class DisplayService {
   private clearExploreEvents(tabId?: string): void {
     const key = this.exploreKey(tabId);
     this.exploreEventsByTab.delete(key);
+  }
+
+  private clearExplorePending(tabId?: string): void {
+    const key = this.exploreKey(tabId);
+    this.explorePendingByTab.delete(key);
+    const timer = this.exploreTimersByTab.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.exploreTimersByTab.delete(key);
+    }
+  }
+
+  private nextExploreSequence(tabId?: string): number {
+    const key = this.exploreKey(tabId);
+    const next = (this.exploreSequenceByTab.get(key) || 0) + 1;
+    this.exploreSequenceByTab.set(key, next);
+    return next;
+  }
+
+  private appendExploreEvent(event: ExploreEvent, tabId?: string): void {
+    const events = this.getExploreEvents(tabId);
+    events.push(event);
+    if (!this.tui) return;
+    this.tui.upsertAssistantMarkdownBlock(
+      this.exploreLiveKey,
+      this.buildExploreSummaryText(tabId),
+      tabId,
+    );
+  }
+
+  private drainExploreQueue(tabId?: string): void {
+    const key = this.exploreKey(tabId);
+    if (this.exploreTimersByTab.has(key)) {
+      return;
+    }
+
+    const run = () => {
+      const pending = this.explorePendingByTab.get(key);
+      if (!pending || pending.length === 0) {
+        this.explorePendingByTab.delete(key);
+        this.exploreTimersByTab.delete(key);
+        return;
+      }
+
+      const event = pending.shift()!;
+      this.appendExploreEvent(event, tabId);
+
+      const timer = setTimeout(() => {
+        this.exploreTimersByTab.delete(key);
+        this.drainExploreQueue(tabId);
+      }, this.exploreAnimationDelayMs);
+      this.exploreTimersByTab.set(key, timer);
+    };
+
+    run();
   }
 
   // === Core output ===
@@ -132,6 +193,15 @@ class DisplayService {
     this.appendAssistantMessage(text, targetTabId);
   }
 
+  appendDiffBlock(diff: string, filetype?: string, tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
+    if (this.tui) {
+      this.tui.appendDiffBlock(diff, filetype, targetTabId);
+      return;
+    }
+    this.appendAssistantMessage(diff, targetTabId);
+  }
+
   // === Legacy aliases (avoid touching 100+ callers in commands) ===
 
   append(text: string, tabId?: string): void {
@@ -153,6 +223,9 @@ class DisplayService {
 
   beginUserTurn(tabId?: string): void {
     const targetTabId = this.resolveTabId(tabId);
+    const key = this.exploreKey(targetTabId);
+    this.exploreSequenceByTab.delete(key);
+    this.clearExplorePending(targetTabId);
     this.clearExploreEvents(targetTabId);
     if (this.tui) {
       this.tui.removeAssistantMarkdownBlock(this.exploreLiveKey, targetTabId);
@@ -162,11 +235,11 @@ class DisplayService {
   endUserTurn(tabId?: string): void {
     // Keep the final live explore block visible after the turn ends.
     // It will be cleared at the beginning of the next user turn.
-    this.clearExploreEvents(tabId);
+    void tabId;
   }
 
   pushExploreProbe(
-    tool: 'Grep' | 'Glob' | 'LS' | 'Read',
+    tool: string,
     payload: string,
     success: boolean,
     meta?: string,
@@ -176,22 +249,28 @@ class DisplayService {
     const lines = (payload || '')
       .split('\n')
       .map(l => l.trim())
+      .map(l => l.replace(/^\[[✓✗]\]\s*/, ''))
       .filter(Boolean);
     const preview = lines.slice(-5);
-    const events = this.getExploreEvents(targetTabId);
-    events.push({
-      tool,
+    const event: ExploreEvent = {
+      tool: tool.trim() || 'Explore',
       success,
       total: lines.length,
       preview,
       meta,
-    });
-    if (!this.tui) return;
-    this.tui.upsertAssistantMarkdownBlock(
-      this.exploreLiveKey,
-      this.buildExploreSummaryText(targetTabId),
-      targetTabId,
-    );
+      sequence: this.nextExploreSequence(targetTabId),
+    };
+
+    if (!this.tui) {
+      this.appendExploreEvent(event, targetTabId);
+      return;
+    }
+
+    const key = this.exploreKey(targetTabId);
+    const pending = this.explorePendingByTab.get(key) || [];
+    pending.push(event);
+    this.explorePendingByTab.set(key, pending);
+    this.drainExploreQueue(targetTabId);
   }
 
   // === Convenience wrappers ===
@@ -427,19 +506,14 @@ class DisplayService {
       return false;
     }
 
-    let exploreLines: string[] = [];
-    let exploreSuccess = true;
     const isControlToolName = (toolName: string): boolean => {
-      const normalized = toolName.trim().toLowerCase().replace(/[\s_-]+/g, '');
-      return normalized === 'saymessage' || normalized === 'endtask' || normalized === 'continuetask';
-    };
-    const flushExplore = () => {
-      if (exploreLines.length === 0) return;
-      const header = `Explore - ${exploreLines.length} probe(s) ${exploreSuccess ? '✓' : '✗'}`;
-      const targetTabId = this.resolveTabId();
-      this.renderMarkdown(`${header}\n${exploreLines.join('\n')}`, true, targetTabId);
-      exploreLines = [];
-      exploreSuccess = true;
+      const normalized = toolName
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_-]+/g, '');
+      return (
+        normalized === 'saymessage' || normalized === 'endtask' || normalized === 'continuetask'
+      );
     };
 
     for (const entry of entries) {
@@ -448,13 +522,20 @@ class DisplayService {
         if (isControlToolName(entry.toolName)) {
           continue;
         }
-        if (this.isExploreToolName(entry.toolName)) {
+        if (isExploreToolName(entry.toolName)) {
           const detail = entry.detail || 'completed';
-          exploreLines.push(`- ${entry.toolName}: ${detail}`);
-          exploreSuccess = exploreSuccess && (entry.success ?? true);
+          if (entry.success ?? true) {
+            this.pushExploreProbe(entry.toolName, detail, true, undefined, targetTabId);
+            continue;
+          }
+          this.appendAssistantMessage(
+            formatToolAction(entry.toolName, detail, {
+              success: false,
+            }),
+            targetTabId,
+          );
           continue;
         }
-        flushExplore();
         this.appendAssistantMessage(
           formatToolAction(entry.toolName, entry.detail, {
             success: entry.success ?? true,
@@ -465,11 +546,9 @@ class DisplayService {
       }
 
       if (entry.text.trim()) {
-        flushExplore();
         this.appendAssistantMessage(entry.text, targetTabId);
       }
     }
-    flushExplore();
     return true;
   }
 
@@ -522,43 +601,29 @@ class DisplayService {
   }
 
   private buildExploreSummaryText(tabId?: string): string {
-    const events = this.exploreEventsByTab.get(this.exploreKey(tabId)) || [];
+    const events = [...(this.exploreEventsByTab.get(this.exploreKey(tabId)) || [])].sort(
+      (a, b) => a.sequence - b.sequence,
+    );
     const probes = events.length;
     const totalLines = events.reduce((sum, item) => sum + item.total, 0);
     const success = events.every(item => item.success);
-
-    const metaDescriptions = events
-      .map(item => item.meta)
-      .filter((value): value is string => Boolean(value));
-    const metaLine = metaDescriptions.length > 0 ? `\nMeta: ${metaDescriptions.join(' • ')}` : '';
-
-    const allRows = events.flatMap(item =>
-      item.preview.map(line => {
-        const suffix = item.meta ? ` (${item.meta})` : '';
-        return `- ${item.tool}${suffix}: ${line}`;
-      }),
-    );
-    const previewRows = allRows.slice(-5);
-    const hidden = Math.max(0, totalLines - previewRows.length);
+    const allRows = events.flatMap(item => {
+      const suffix = item.meta ? ` (${item.meta})` : '';
+      if (item.preview.length === 0) {
+        return [`- #${item.sequence} ${item.tool}${suffix}: no matches`];
+      }
+      return item.preview.map(line => `- #${item.sequence} ${item.tool}${suffix}: ${line}`);
+    });
+    const previewRows = allRows.slice(-10);
+    const hidden = Math.max(0, allRows.length - previewRows.length);
 
     const header = `Explore - ${probes} probe(s) ${success ? '✓' : '✗'} ${totalLines} lines`;
     if (previewRows.length === 0) {
-      return `${header}${metaLine}\n- no matches`;
+      return `${header}\nLatest updates:\n- no matches`;
     }
-    return `${header}${metaLine}\n${previewRows.join('\n')}${hidden > 0 ? `\n- ... +${hidden} more line(s)` : ''}`;
-  }
-
-  private isExploreToolName(toolName: string): boolean {
-    const normalized = toolName.trim().toLowerCase().replace(/\s+/g, '');
-    return (
-      normalized === 'grep' ||
-      normalized === 'glob' ||
-      normalized === 'ls' ||
-      normalized === 'list' ||
-      normalized === 'explore' ||
-      normalized === 'read' ||
-      normalized === 'readfile'
-    );
+    return `${header}\nLatest updates:\n${previewRows.join('\n')}${
+      hidden > 0 ? `\n- ... +${hidden} older update(s)` : ''
+    }`;
   }
 
   showNotification(text: string): void {

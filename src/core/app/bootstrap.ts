@@ -89,14 +89,16 @@ export async function initializeConnectorPlugins(options: {
       const connectorName = plugin.metadata.id.replace('connector.', '') as ConnectorSource;
 
       connector.setEventBus?.(options.eventBus);
-      connector.setMessageHandler(async (message: string, source: ConnectorSource, metadata?: MessageMetadata) => {
-        options.onIncoming?.(connectorName as string, message);
-        const response = await options.onMessage(message, source, metadata);
-        if (response) {
-          options.onOutgoing?.(connectorName as string, response);
-        }
-        return undefined;
-      });
+      connector.setMessageHandler(
+        async (message: string, source: ConnectorSource, metadata?: MessageMetadata) => {
+          options.onIncoming?.(connectorName as string, message);
+          const response = await options.onMessage(message, source, metadata);
+          if (response) {
+            options.onOutgoing?.(connectorName as string, response);
+          }
+          return response;
+        },
+      );
 
       await connector.start();
       options.connectorRegistry.register(connectorName, {

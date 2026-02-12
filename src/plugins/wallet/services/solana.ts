@@ -11,11 +11,7 @@ import {
   sendAndConfirmTransaction,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import {
-  Token,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  TOKEN_PROGRAM_ID,
-} from '@solana/spl-token';
+import { Token, ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import {
   SLASHBOT_TOKEN_MINT,
   TOKEN_DECIMALS,
@@ -233,9 +229,9 @@ export async function transferSlashbot(
     const transaction = new Transaction();
 
     // Check if destination token account exists
-      try {
-        await fetchTokenAccountInfo(conn, mintPubkey, destTokenAccount);
-      } catch {
+    try {
+      await fetchTokenAccountInfo(conn, mintPubkey, destTokenAccount);
+    } catch {
       // Create associated token account for recipient
       transaction.add(
         Token.createAssociatedTokenAccountInstruction(
@@ -257,7 +253,8 @@ export async function transferSlashbot(
         sourceTokenAccount,
         destTokenAccount,
         fromKeypair.publicKey,
-        [],        Number(amountInBaseUnits),
+        [],
+        Number(amountInBaseUnits),
       ),
     );
 

@@ -116,7 +116,12 @@ export class PlanningPlugin implements Plugin {
           }
 
           const alreadyHandled = payload.handled === true;
-          if (alreadyHandled || this.isActive() || this.planningInFlight || !detectPlanningTrigger(input)) {
+          if (
+            alreadyHandled ||
+            this.isActive() ||
+            this.planningInFlight ||
+            !detectPlanningTrigger(input)
+          ) {
             return;
           }
 

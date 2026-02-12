@@ -7,7 +7,12 @@ import { display, formatToolAction } from '../../core/ui';
 
 type SessionsListAction = { type: 'sessions-list' };
 type SessionsHistoryAction = { type: 'sessions-history'; sessionId: string; limit?: number };
-type SessionsSendAction = { type: 'sessions-send'; sessionId: string; message: string; run?: boolean };
+type SessionsSendAction = {
+  type: 'sessions-send';
+  sessionId: string;
+  message: string;
+  run?: boolean;
+};
 type SessionsUsageAction = { type: 'sessions-usage' };
 type SessionsCompactionAction = { type: 'sessions-compaction' };
 
@@ -91,8 +96,26 @@ export async function executeSessionsSend(
   handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
   if (!handlers.onSessionsSend) return null;
-  await handlers.onSessionsSend(action.sessionId, action.message, action.run ?? false);
-  const ranNow = !!action.run;
+  const delivery = await handlers.onSessionsSend(action.sessionId, action.message, action.run);
+  const delivered = delivery?.delivered !== false;
+  if (!delivered) {
+    display.appendAssistantMessage(
+      formatToolAction('SessionsSend', action.sessionId, {
+        success: false,
+        summary: 'failed',
+      }),
+    );
+    return {
+      action: `SessionsSend: ${action.sessionId}`,
+      success: false,
+      result: 'Failed',
+      error:
+        (typeof delivery?.error === 'string' && delivery.error.trim()) ||
+        `Failed to deliver to session "${action.sessionId}"`,
+    };
+  }
+
+  const ranNow = typeof delivery?.executed === 'boolean' ? delivery.executed : !!action.run;
   if (!ranNow) {
     display.appendAssistantMessage(
       formatToolAction('SessionsSend', action.sessionId, {

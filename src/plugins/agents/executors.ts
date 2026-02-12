@@ -66,7 +66,12 @@ export async function executeAgentCreate(
 ): Promise<ActionResult> {
   try {
     if (!handlers.onAgentCreate) {
-      return { action: 'agent-create', success: false, result: '', error: 'Agent create handler not available' };
+      return {
+        action: 'agent-create',
+        success: false,
+        result: '',
+        error: 'Agent create handler not available',
+      };
     }
     const created = await handlers.onAgentCreate(action);
     display.appendAssistantMessage(
@@ -92,7 +97,12 @@ export async function executeAgentUpdate(
 ): Promise<ActionResult> {
   try {
     if (!handlers.onAgentUpdate) {
-      return { action: 'agent-update', success: false, result: '', error: 'Agent update handler not available' };
+      return {
+        action: 'agent-update',
+        success: false,
+        result: '',
+        error: 'Agent update handler not available',
+      };
     }
     const updated = await handlers.onAgentUpdate(action);
     display.appendAssistantMessage(
@@ -119,7 +129,12 @@ export async function executeAgentDelete(
 ): Promise<ActionResult> {
   try {
     if (!handlers.onAgentDelete) {
-      return { action: 'agent-delete', success: false, result: '', error: 'Agent delete handler not available' };
+      return {
+        action: 'agent-delete',
+        success: false,
+        result: '',
+        error: 'Agent delete handler not available',
+      };
     }
     const ok = await handlers.onAgentDelete(action.agent);
     display.appendAssistantMessage(
@@ -146,14 +161,21 @@ export async function executeAgentList(
 ): Promise<ActionResult> {
   try {
     if (!handlers.onAgentList) {
-      return { action: 'agent-list', success: false, result: '', error: 'Agent list handler not available' };
+      return {
+        action: 'agent-list',
+        success: false,
+        result: '',
+        error: 'Agent list handler not available',
+      };
     }
     const agents = await handlers.onAgentList();
     const list = Array.isArray(agents) ? agents : [];
     return {
       action: 'agent-list',
       success: true,
-      result: list.map((a: any) => `${a.id} (${a.name}) enabled=${a.enabled} autopoll=${a.autoPoll}`).join('\n'),
+      result: list
+        .map((a: any) => `${a.id} (${a.name}) enabled=${a.enabled} autopoll=${a.autoPoll}`)
+        .join('\n'),
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -167,7 +189,12 @@ export async function executeAgentRun(
 ): Promise<ActionResult> {
   try {
     if (!handlers.onAgentRun) {
-      return { action: 'agent-run', success: false, result: '', error: 'Agent run handler not available' };
+      return {
+        action: 'agent-run',
+        success: false,
+        result: '',
+        error: 'Agent run handler not available',
+      };
     }
     const ok = await handlers.onAgentRun(action.agent);
     return {
@@ -187,19 +214,22 @@ export async function executeAgentSend(
 ): Promise<ActionResult> {
   try {
     if (!handlers.onAgentSend) {
-      return { action: "agent-send", success: false, result: "", error: "Agent send handler not available" };
+      return {
+        action: 'agent-send',
+        success: false,
+        result: '',
+        error: 'Agent send handler not available',
+      };
     }
     const sent = await handlers.onAgentSend(action);
     return {
-      action: "agent-send",
+      action: 'agent-send',
       success: !!sent,
-      result: sent ? "Message sent" : "Failed to send",
-      error: sent ? undefined : "Send failed",
+      result: sent ? 'Message sent' : 'Failed to send',
+      error: sent ? undefined : 'Send failed',
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    return { action: "agent-send", success: false, result: "", error: msg };
+    return { action: 'agent-send', success: false, result: '', error: msg };
   }
 }
-
-

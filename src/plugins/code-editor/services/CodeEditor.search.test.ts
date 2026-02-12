@@ -72,6 +72,8 @@ describe('CodeEditor search helpers', () => {
     });
 
     expect(globMatches).toContain(absoluteTsPath);
-    expect(grepMatches.some(result => result.file === absoluteTsPath && result.line === 1)).toBe(true);
+    expect(grepMatches.some(result => result.file === absoluteTsPath && result.line === 1)).toBe(
+      true,
+    );
   });
 });

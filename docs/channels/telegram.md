@@ -49,6 +49,24 @@ Auto-detect requires that you send at least one message to the bot first.
 
 After add/remove/primary changes, restart Slashbot to apply updates.
 
+## Custom Trigger Command
+
+`/telegram trigger /chat` sets the command users must send before chat mode is enabled.
+Default trigger is `/chat`. Restart required after changing it.
+
+## Chat Mode (Anti-Spam for Groups)
+
+- Primary chat: `/chatmode` toggles require-trigger mode globally (persistent).
+- Any authorized chat: `/<trigger>` enables chatting for that chat (persistent).
+- Non-enabled chats get `Please type /<trigger> to enable chatting.`
+
+This is useful for group chats where Slashbot should only answer after explicit opt-in.
+
+## Session and Tab Mapping
+
+- Each Telegram chat runs in its own session lane: `telegram:<chat_id>`.
+- In TUI mode, each authorized Telegram target is shown as a pinned connector tab.
+
 ## Notes
 
 - Voice messages need `OPENAI_API_KEY` configured for transcription.

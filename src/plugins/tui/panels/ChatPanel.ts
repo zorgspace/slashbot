@@ -131,8 +131,8 @@ export class ChatPanel {
           showLineNumbers: true,
           height: lineCount + 2,
           fg: theme.white,
-          addedBg: 'transparent',
-          removedBg: 'transparent',
+          addedBg: theme.diffAddedBg,
+          removedBg: theme.diffRemovedBg,
           addedSignColor: theme.diffAddedFg,
           removedSignColor: theme.diffRemovedFg,
           lineNumberFg: theme.muted,
@@ -179,6 +179,8 @@ export class ChatPanel {
       this.scrollBox.remove(id);
     }
     this.lineCounter = 0;
+    this.responseBuffer = '';
+    this.responseRenderable = null;
     this.liveAssistantBlocks.clear();
   }
 

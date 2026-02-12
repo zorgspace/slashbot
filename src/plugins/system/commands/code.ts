@@ -21,7 +21,9 @@ export const pasteImageCommand: CommandHandler = {
     if (dataUrl) {
       addImage(dataUrl);
       const sizeKB = Math.round(dataUrl.length / 1024);
-      display.appendAssistantMessage(formatToolAction('Image', 'clipboard', { success: true, summary: `${sizeKB}KB` }));
+      display.appendAssistantMessage(
+        formatToolAction('Image', 'clipboard', { success: true, summary: `${sizeKB}KB` }),
+      );
     } else {
       display.warning('No image in clipboard (install xclip/wl-clipboard on Linux)');
     }

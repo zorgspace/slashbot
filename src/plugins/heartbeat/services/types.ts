@@ -334,7 +334,8 @@ export function stripHeartbeatToken(
   if (!trimmed) return { shouldSkip: true, text: '', didStrip: false };
 
   const mode = opts.mode ?? 'message';
-  const parsedAck = typeof opts.maxAckChars === 'string' ? Number(opts.maxAckChars) : opts.maxAckChars;
+  const parsedAck =
+    typeof opts.maxAckChars === 'string' ? Number(opts.maxAckChars) : opts.maxAckChars;
   const maxAckChars = Math.max(
     0,
     typeof parsedAck === 'number' && Number.isFinite(parsedAck)

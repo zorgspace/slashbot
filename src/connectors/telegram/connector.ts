@@ -25,14 +25,13 @@ import { imageBuffer } from '../../plugins/filesystem/services/ImageBuffer';
 import { acquireLock, releaseLock } from '../locks';
 import type { EventBus } from '../../core/events/EventBus';
 import { getConnectorActionSpecs, getConnectorCapabilities } from '../catalog';
-import fs from 'node:fs';
-import { promises as fsp } from 'node:fs';
-import path from 'node:path';
 
 export interface TelegramConfig {
   botToken: string;
   chatId: string;
   chatIds?: string[];
+  triggerCommand?: string;
+  responseGate?: 'open' | 'command';
 }
 
 export class TelegramConnector implements Connector {
@@ -46,9 +45,8 @@ export class TelegramConnector implements Connector {
   private messageHandler: MessageHandler | null = null;
   private eventBus: EventBus | null = null;
   private running = false;
-  private stateFile: string;
-  private enabledChats: Set<string> = new Set<string>();
-  private requireChatMode: boolean = false;
+  private triggerCommand: string;
+  private responseGate: 'open' | 'command';
 
   constructor(config: TelegramConfig) {
     this.bot = new Telegraf(config.botToken);
@@ -61,9 +59,160 @@ export class TelegramConnector implements Connector {
       }
     }
     this.replyTargetChatId = config.chatId; // Default to primary chatId
-    this.stateFile = path.join(process.env.HOME ?? process.cwd(), '.slashbot', 'telegram-chat-state.json');
-    this.loadChatState();
+    this.triggerCommand = this.normalizeTriggerCommand(config.triggerCommand);
+    this.responseGate = config.responseGate === 'command' ? 'command' : 'open';
     this.setupHandlers();
+  }
+
+  private normalizeTriggerCommand(value: string | undefined): string {
+    const raw = (value || '').trim();
+    if (!raw) {
+      return '/chat';
+    }
+    const normalized = raw.startsWith('/') ? raw : `/${raw}`;
+    const compact = normalized.replace(/\s+/g, '');
+    return compact.length > 1 ? compact : '/chat';
+  }
+
+  private getTriggerCommandToken(): string {
+    return this.triggerCommand.replace(/^\//, '').trim();
+  }
+
+  private parseChatScopeId(chatId: string): number | null {
+    const asNumber = Number(chatId);
+    if (!Number.isFinite(asNumber) || !Number.isSafeInteger(asNumber)) {
+      return null;
+    }
+    return asNumber;
+  }
+
+  private async syncRegisteredCommands(): Promise<void> {
+    if (!this.running) {
+      return;
+    }
+
+    const command = this.getTriggerCommandToken();
+    if (!/^[a-z0-9_]{1,32}$/i.test(command)) {
+      return;
+    }
+
+    const commands = [
+      {
+        command,
+        description: `Chat with Slashbot (example: ${this.triggerCommand} hello)`,
+      },
+    ];
+
+    for (const chatId of this.authorizedChatIds) {
+      const chatScopeId = this.parseChatScopeId(chatId);
+      if (chatScopeId === null) {
+        continue;
+      }
+      try {
+        await this.bot.telegram.setMyCommands(commands, {
+          scope: {
+            type: 'chat',
+            chat_id: chatScopeId,
+          } as any,
+        });
+      } catch {
+        // Best effort: some chats may not allow command registration.
+      }
+    }
+  }
+
+  private async clearRegisteredCommands(chatId: string): Promise<void> {
+    if (!this.running) {
+      return;
+    }
+    const chatScopeId = this.parseChatScopeId(chatId);
+    if (chatScopeId === null) {
+      return;
+    }
+    try {
+      await this.bot.telegram.deleteMyCommands({
+        scope: {
+          type: 'chat',
+          chat_id: chatScopeId,
+        } as any,
+      });
+    } catch {
+      // Best effort cleanup.
+    }
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private parseTriggerMessage(message: string): { matched: boolean; payload: string } {
+    const command = this.triggerCommand.slice(1);
+    if (!command) {
+      return { matched: false, payload: '' };
+    }
+    const regex = new RegExp(
+      `^\\/${this.escapeRegExp(command)}(?:@[A-Za-z0-9_]+)?(?:\\s+([\\s\\S]*))?$`,
+      'i',
+    );
+    const match = message.trim().match(regex);
+    if (!match) {
+      return { matched: false, payload: '' };
+    }
+    return { matched: true, payload: (match[1] || '').trim() };
+  }
+
+  private resolveTextForProcessing(message: string): {
+    text: string | null;
+    showCommandUsage: boolean;
+  } {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return { text: null, showCommandUsage: false };
+    }
+
+    const parsed = this.parseTriggerMessage(trimmed);
+    if (this.responseGate === 'command') {
+      if (!parsed.matched) {
+        return { text: null, showCommandUsage: false };
+      }
+      if (!parsed.payload) {
+        return { text: null, showCommandUsage: true };
+      }
+      return { text: parsed.payload, showCommandUsage: false };
+    }
+
+    if (parsed.matched) {
+      if (!parsed.payload) {
+        return { text: null, showCommandUsage: true };
+      }
+      return { text: parsed.payload, showCommandUsage: false };
+    }
+
+    return { text: trimmed, showCommandUsage: false };
+  }
+
+  private resolvePhotoPrompt(caption: string | undefined): string | null {
+    const trimmed = (caption || '').trim();
+    if (this.responseGate === 'command') {
+      if (!trimmed) {
+        return null;
+      }
+      const parsed = this.parseTriggerMessage(trimmed);
+      if (!parsed.matched) {
+        return null;
+      }
+      return parsed.payload || 'What is in this image?';
+    }
+
+    if (!trimmed) {
+      return 'What is in this image?';
+    }
+
+    const parsed = this.parseTriggerMessage(trimmed);
+    if (parsed.matched) {
+      return parsed.payload || 'What is in this image?';
+    }
+    return trimmed;
   }
 
   private setupHandlers(): void {
@@ -75,34 +224,6 @@ export class TelegramConnector implements Connector {
         return;
       }
       await next();
-    });
-
-    // Chat mode commands
-    this.bot.command('chat', async (ctx) => {
-      const chatIdStr = ctx.chat?.id?.toString();
-      if (!chatIdStr || !this.authorizedChatIds.has(chatIdStr)) {
-        await ctx.reply?.('❌ Unauthorized chat.');
-        return;
-      }
-      this.enabledChats.add(chatIdStr);
-      await this.saveChatState();
-      await ctx.reply?.('✅ Chatting enabled! Send your messages.');
-    });
-
-    this.bot.command('chatmode', async (ctx) => {
-      const chatIdStr = ctx.chat?.id?.toString();
-      if (!chatIdStr || !this.authorizedChatIds.has(chatIdStr)) {
-        await ctx.reply?.('❌ Unauthorized.');
-        return;
-      }
-      if (chatIdStr !== this.primaryChatId) {
-        await ctx.reply?.('❌ Only primary chat can toggle chat mode.');
-        return;
-      }
-      this.requireChatMode = !this.requireChatMode;
-      await this.saveChatState();
-      const status = this.requireChatMode ? 'ON' : 'OFF';
-      await ctx.reply?.(`🔧 Require /chat mode: ${status}`);
     });
 
     // Handle text messages
@@ -117,9 +238,13 @@ export class TelegramConnector implements Connector {
       const chatId = ctx.chat.id.toString();
       // Track the chat to reply to (same chat that sent the message)
       this.replyTargetChatId = chatId;
-
-      if (this.requireChatMode && !this.enabledChats.has(chatId)) {
-        await ctx.reply('👋 Please type `/chat` to enable chatting.', { parse_mode: 'Markdown' });
+      const resolved = this.resolveTextForProcessing(message);
+      if (!resolved.text) {
+        if (resolved.showCommandUsage) {
+          await ctx.reply(`Usage: \`${this.triggerCommand} <message>\``, {
+            parse_mode: 'Markdown',
+          });
+        }
         return;
       }
 
@@ -133,7 +258,7 @@ export class TelegramConnector implements Connector {
         // Process message through slashbot with chat-specific session
         let response: string | void;
         try {
-          response = await this.messageHandler(message, 'telegram', {
+          response = await this.messageHandler(resolved.text, 'telegram', {
             sessionId: `telegram:${chatId}`,
             chatId,
           });
@@ -144,8 +269,6 @@ export class TelegramConnector implements Connector {
         // Send response if any (using sendMessageTo which handles splitting)
         if (response) {
           await this.sendMessageTo(chatId, response);
-        } else {
-          await ctx.reply('No response generated');
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -167,8 +290,7 @@ export class TelegramConnector implements Connector {
       // Track the chat to reply to (same chat that sent the message)
       this.replyTargetChatId = chatId;
 
-      if (this.requireChatMode && !this.enabledChats.has(chatId)) {
-        await ctx.reply('👋 Please type `/chat` to enable chatting.', { parse_mode: 'Markdown' });
+      if (this.responseGate === 'command') {
         return;
       }
 
@@ -235,8 +357,8 @@ export class TelegramConnector implements Connector {
       // Track the chat to reply to
       this.replyTargetChatId = chatId;
 
-      if (this.requireChatMode && !this.enabledChats.has(chatId)) {
-        await ctx.reply('👋 Please type `/chat` to enable chatting.', { parse_mode: 'Markdown' });
+      const prompt = this.resolvePhotoPrompt(ctx.message.caption);
+      if (!prompt) {
         return;
       }
 
@@ -264,11 +386,8 @@ export class TelegramConnector implements Connector {
           imageBuffer.push(dataUrl);
           display.appendAssistantMessage(formatToolAction('Telegram', 'image', { success: true, summary: `${Math.round(imageBuffer64.length / 1024)}KB` }));
 
-          // Use caption or default prompt
-          const message = ctx.message.caption || 'What is in this image?';
-
           // Process with the image in context
-          const response = await this.messageHandler(message, 'telegram', {
+          const response = await this.messageHandler(prompt, 'telegram', {
             sessionId: `telegram:${chatId}`,
             chatId,
           });
@@ -363,6 +482,7 @@ export class TelegramConnector implements Connector {
       });
 
       this.running = true;
+      void this.syncRegisteredCommands();
       if (this.eventBus) {
         this.eventBus.emit({ type: 'connector:connected', source: 'telegram' });
       }
@@ -384,34 +504,6 @@ export class TelegramConnector implements Connector {
     releaseLock('telegram').catch(() => {});
     if (this.eventBus) {
       this.eventBus.emit({ type: 'connector:disconnected', source: 'telegram' });
-    }
-    void this.saveChatState().catch(() => {});
-  }
-
-  private loadChatState(): void {
-    try {
-      const content = fs.readFileSync(this.stateFile, 'utf8');
-      const state = JSON.parse(content) as { requireChatMode?: boolean; enabledChats?: string[] };
-      this.requireChatMode = state.requireChatMode ?? false;
-      if (Array.isArray(state.enabledChats)) {
-        state.enabledChats.forEach((id: string) => this.enabledChats.add(id));
-      }
-    } catch {
-      // defaults
-    }
-  }
-
-  private async saveChatState(): Promise<void> {
-    const state = {
-      requireChatMode: this.requireChatMode,
-      enabledChats: Array.from(this.enabledChats),
-      lastUpdate: new Date().toISOString(),
-    };
-    try {
-      await fsp.mkdir(path.dirname(this.stateFile), { recursive: true });
-      await fsp.writeFile(this.stateFile, JSON.stringify(state, null, 2));
-    } catch (err) {
-      console.warn('[Telegram] Failed to save chat state:', err);
     }
   }
 
@@ -441,6 +533,55 @@ export class TelegramConnector implements Connector {
    */
   async sendMessage(text: string): Promise<void> {
     return this.sendMessageTo(this.replyTargetChatId, text);
+  }
+
+  /**
+   * Add a chat to the authorized chats list at runtime.
+   */
+  addChat(chatId: string): void {
+    this.authorizedChatIds.add(chatId);
+    void this.syncRegisteredCommands();
+  }
+
+  /**
+   * Remove a chat from authorized chats list (except primary chat).
+   */
+  removeChat(chatId: string): boolean {
+    if (chatId === this.primaryChatId) {
+      return false;
+    }
+    const removed = this.authorizedChatIds.delete(chatId);
+    if (removed && this.replyTargetChatId === chatId) {
+      this.replyTargetChatId = this.primaryChatId;
+    }
+    if (removed) {
+      void this.clearRegisteredCommands(chatId);
+    }
+    return removed;
+  }
+
+  /**
+   * Update the primary chat and ensure it stays authorized.
+   */
+  setPrimaryChat(chatId: string): void {
+    this.primaryChatId = chatId;
+    this.authorizedChatIds.add(chatId);
+    void this.syncRegisteredCommands();
+  }
+
+  /**
+   * Update trigger command at runtime.
+   */
+  setTriggerCommand(triggerCommand: string): void {
+    this.triggerCommand = this.normalizeTriggerCommand(triggerCommand);
+    void this.syncRegisteredCommands();
+  }
+
+  /**
+   * Update response gate at runtime.
+   */
+  setResponseGate(responseGate: 'open' | 'command'): void {
+    this.responseGate = responseGate;
   }
 
   isRunning(): boolean {
@@ -478,8 +619,16 @@ export class TelegramConnector implements Connector {
       activeTarget: this.replyTargetChatId,
       authorizedTargets,
       notes: this.running
-        ? [`${authorizedTargets.length} authorized chat(s)`]
-        : ['Configured but not running'],
+        ? [
+            `${authorizedTargets.length} authorized chat(s)`,
+            `gate=${this.responseGate}`,
+            `trigger=${this.triggerCommand}`,
+          ]
+        : [
+            'Configured but not running',
+            `gate=${this.responseGate}`,
+            `trigger=${this.triggerCommand}`,
+          ],
     };
   }
 }

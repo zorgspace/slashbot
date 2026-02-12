@@ -81,7 +81,12 @@ export class DiscordConnector implements Connector {
 
   private setupHandlers(token: string): void {
     this.client.once('ready', () => {
-      display.appendAssistantMessage(formatToolAction('Discord', 'connected', { success: true, summary: this.client.user?.tag ?? 'unknown' }));
+      display.appendAssistantMessage(
+        formatToolAction('Discord', 'connected', {
+          success: true,
+          summary: this.client.user?.tag ?? 'unknown',
+        }),
+      );
       if (this.eventBus) {
         this.eventBus.emit({ type: 'connector:connected', source: 'discord' });
       }
@@ -90,136 +95,147 @@ export class DiscordConnector implements Connector {
     this.client.on('messageCreate', (message: DiscordMessage) => {
       void (async () => {
         // Ignore bot messages
-      if (message.author.bot) return;
+        if (message.author.bot) return;
 
-      // Emit discord:message event
-      if (this.eventBus) {
-        this.eventBus.emit({
-          type: 'discord:message',
-          channelId: message.channel.id,
-          userId: message.author.id,
-          content: message.content,
-          attachments: message.attachments.map(a => a.url),
-        });
-      }
-
-      // Only respond in authorized channels
-      if (!this.channelIds.has(message.channelId)) return;
-
-      if (!this.messageHandler) {
-        await message.reply('Bot not fully initialized');
-        return;
-      }
-
-      // Track the channel to reply to (same channel that sent the message)
-      this.replyTargetChannelId = message.channelId;
-
-      try {
-        // Start continuous typing indicator (Discord typing expires after ~10s)
-        let typingInterval: ReturnType<typeof setInterval> | null = null;
-        if ('sendTyping' in message.channel) {
-          await message.channel.sendTyping();
-          typingInterval = setInterval(() => {
-            if ('sendTyping' in message.channel) {
-              message.channel.sendTyping().catch(() => {});
-            }
-          }, 8000);
+        // Emit discord:message event
+        if (this.eventBus) {
+          this.eventBus.emit({
+            type: 'discord:message',
+            channelId: message.channel.id,
+            userId: message.author.id,
+            content: message.content,
+            attachments: message.attachments.map(a => a.url),
+          });
         }
+
+        // Only respond in authorized channels
+        if (!this.channelIds.has(message.channelId)) return;
+
+        if (!this.messageHandler) {
+          await message.reply('Bot not fully initialized');
+          return;
+        }
+
+        // Track the channel to reply to (same channel that sent the message)
+        this.replyTargetChannelId = message.channelId;
 
         try {
-          let textContent = message.content;
+          // Start continuous typing indicator (Discord typing expires after ~10s)
+          let typingInterval: ReturnType<typeof setInterval> | null = null;
+          if ('sendTyping' in message.channel) {
+            await message.channel.sendTyping();
+            typingInterval = setInterval(() => {
+              if ('sendTyping' in message.channel) {
+                message.channel.sendTyping().catch(() => {});
+              }
+            }, 8000);
+          }
 
-          // Check for image attachments
-          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-          const imageAttachments = message.attachments.filter(
-            att =>
-              att.contentType?.startsWith('image/') ||
-              att.name?.match(/\.(png|jpg|jpeg|gif|webp)$/i),
-          );
+          try {
+            let textContent = message.content;
 
-          // Process images and add to context
-          for (const imgAtt of imageAttachments.values()) {
-            try {
-              const imageResponse = await fetch(imgAtt.url);
-              const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString(
-                'base64',
+            // Check for image attachments
+            // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+            const imageAttachments = message.attachments.filter(
+              att =>
+                att.contentType?.startsWith('image/') ||
+                att.name?.match(/\.(png|jpg|jpeg|gif|webp)$/i),
+            );
+
+            // Process images and add to context
+            for (const imgAtt of imageAttachments.values()) {
+              try {
+                const imageResponse = await fetch(imgAtt.url);
+                const imageBuffer64 = Buffer.from(await imageResponse.arrayBuffer()).toString(
+                  'base64',
+                );
+                const mimeType = imgAtt.contentType ?? 'image/jpeg';
+                const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
+                imageBuffer.push(dataUrl);
+                display.appendAssistantMessage(
+                  formatToolAction('Discord', 'image', {
+                    success: true,
+                    summary: `${Math.round(imageBuffer64.length / 1024)}KB`,
+                  }),
+                );
+              } catch (imgErr) {
+                display.error(`Failed to download: ${imgErr}`);
+              }
+            }
+
+            // Check for voice message attachments (Discord voice messages are ogg files)
+            // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+            const voiceAttachment = message.attachments.find(
+              att =>
+                att.contentType?.startsWith('audio/') ||
+                att.name?.endsWith('.ogg') ||
+                att.name?.endsWith('.mp3') ||
+                att.name?.endsWith('.wav'),
+            );
+
+            if (voiceAttachment) {
+              const transcriptionService = getTranscriptionService();
+              if (!transcriptionService) {
+                await message.reply('Voice transcription not configured. Set OPENAI_API_KEY.');
+                return;
+              }
+
+              display.appendAssistantMessage(formatToolAction('Discord', 'transcribe'));
+              const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
+
+              if (!result || !result.text) {
+                await message.reply('Could not transcribe voice message');
+                return;
+              }
+
+              display.appendAssistantMessage(
+                formatToolAction('Discord', 'transcribe', {
+                  success: true,
+                  summary: `"${result.text}"`,
+                }),
               );
-              const mimeType = imgAtt.contentType ?? 'image/jpeg';
-              const dataUrl = `data:${mimeType};base64,${imageBuffer64}`;
-              imageBuffer.push(dataUrl);
-              display.appendAssistantMessage(formatToolAction('Discord', 'image', { success: true, summary: `${Math.round(imageBuffer64.length / 1024)}KB` }));
-            } catch (imgErr) {
-              display.error(`Failed to download: ${imgErr}`);
-            }
-          }
-
-          // Check for voice message attachments (Discord voice messages are ogg files)
-          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-          const voiceAttachment = message.attachments.find(
-            att =>
-              att.contentType?.startsWith('audio/') ||
-              att.name?.endsWith('.ogg') ||
-              att.name?.endsWith('.mp3') ||
-              att.name?.endsWith('.wav'),
-          );
-
-          if (voiceAttachment) {
-            const transcriptionService = getTranscriptionService();
-            if (!transcriptionService) {
-              await message.reply('Voice transcription not configured. Set OPENAI_API_KEY.');
-              return;
+              textContent = result.text;
             }
 
-            display.appendAssistantMessage(formatToolAction('Discord', 'transcribe'));
-            const result = await transcriptionService.transcribeFromUrl(voiceAttachment.url);
-
-            if (!result || !result.text) {
-              await message.reply('Could not transcribe voice message');
-              return;
+            // If only images and no text, use default prompt
+            if (!textContent && imageAttachments.size > 0) {
+              textContent = 'What is in this image?';
             }
 
-            display.appendAssistantMessage(formatToolAction('Discord', 'transcribe', { success: true, summary: `"${result.text}"` }));
-            textContent = result.text;
-          }
+            if (!textContent) return;
 
-          // If only images and no text, use default prompt
-          if (!textContent && imageAttachments.size > 0) {
-            textContent = 'What is in this image?';
-          }
-
-          if (!textContent) return;
-
-          // Process message with channel-specific session
-          const response = await this.messageHandler(textContent, 'discord', {
-            sessionId: `discord:${message.channelId}`,
-          });
-
-          if (response) {
-            await this.sendMessageToChannel(message.channelId, response);
-          }
-
-          // Emit connector:message event
-          if (this.eventBus) {
-            this.eventBus.emit({
-              type: 'connector:message',
-              source: 'discord',
-              message: textContent,
-              metadata: { sessionId: `discord:${message.channelId}` },
+            // Process message with channel-specific session
+            const response = await this.messageHandler(textContent, 'discord', {
+              sessionId: `discord:${message.channelId}`,
             });
-          }
-        } finally {
-          if (typingInterval) clearInterval(typingInterval);
-        }
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        await message.reply(`Error: ${errorMsg}`).catch(() => {});
-      }
-    })();
 
-  });
+            if (response) {
+              await this.sendMessageToChannel(message.channelId, response);
+            }
+
+            // Emit connector:message event
+            if (this.eventBus) {
+              this.eventBus.emit({
+                type: 'connector:message',
+                source: 'discord',
+                message: textContent,
+                metadata: { sessionId: `discord:${message.channelId}` },
+              });
+            }
+          } finally {
+            if (typingInterval) clearInterval(typingInterval);
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          await message.reply(`Error: ${errorMsg}`).catch(() => {});
+        }
+      })();
+    });
 
     this.client.on('error', err => {
-      display.appendAssistantMessage(formatToolAction('Discord', 'error', { success: false, summary: err.message }));
+      display.appendAssistantMessage(
+        formatToolAction('Discord', 'error', { success: false, summary: err.message }),
+      );
     });
 
     // Store token for start()
@@ -241,7 +257,10 @@ export class DiscordConnector implements Connector {
     const lock = await acquireLock('discord');
     if (!lock.acquired) {
       display.appendAssistantMessage(
-        formatToolAction('Discord', 'locked', { success: false, summary: `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}` }),
+        formatToolAction('Discord', 'locked', {
+          success: false,
+          summary: `PID ${lock.existingPid}${lock.existingWorkDir ? ` in ${lock.existingWorkDir}` : ''}`,
+        }),
       );
       return;
     }
@@ -254,7 +273,12 @@ export class DiscordConnector implements Connector {
       }
     } catch (error) {
       await releaseLock('discord');
-      display.appendAssistantMessage(formatToolAction('Discord', 'error', { success: false, summary: error instanceof Error ? error.message : String(error) }));
+      display.appendAssistantMessage(
+        formatToolAction('Discord', 'error', {
+          success: false,
+          summary: error instanceof Error ? error.message : String(error),
+        }),
+      );
       throw error;
     }
   }
@@ -398,7 +422,11 @@ export class DiscordConnector implements Connector {
     if (channelId === this.primaryChannelId) {
       return false;
     }
-    return this.channelIds.delete(channelId);
+    const removed = this.channelIds.delete(channelId);
+    if (removed && this.replyTargetChannelId === channelId) {
+      this.replyTargetChannelId = this.primaryChannelId;
+    }
+    return removed;
   }
 
   /**
@@ -416,6 +444,14 @@ export class DiscordConnector implements Connector {
   }
 
   /**
+   * Set the primary channel and ensure it is authorized.
+   */
+  setPrimaryChannel(channelId: string): void {
+    this.primaryChannelId = channelId;
+    this.channelIds.add(channelId);
+  }
+
+  /**
    * Send a message to a specific channel (must be authorized)
    */
   async sendToChannel(channelId: string, text: string): Promise<void> {
@@ -428,8 +464,8 @@ export class DiscordConnector implements Connector {
   /**
    * Set the owner user ID for private threads
    */
-  setOwnerId(ownerId: string): void {
-    this.ownerId = ownerId;
+  setOwnerId(ownerId: string | null): void {
+    this.ownerId = ownerId && ownerId.trim() ? ownerId.trim() : null;
   }
 
   /**

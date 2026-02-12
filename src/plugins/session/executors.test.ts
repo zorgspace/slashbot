@@ -55,4 +55,71 @@ describe('session executors', () => {
     expect(result?.result).toBe('Delivered and executed in target session.');
     expect(result?.result).not.toContain('worker full output should not leak here');
   });
+
+  it('surfaces delivery failures from sessions_send', async () => {
+    const handlers: any = {
+      onSessionsSend: vi.fn(async () => ({
+        delivered: false,
+        error: 'Session "ghost" is not an active tab session.',
+      })),
+    };
+
+    const result = await executeSessionsSend(
+      {
+        type: 'sessions-send',
+        sessionId: 'ghost',
+        message: 'Ping',
+      },
+      handlers,
+    );
+
+    expect(result?.success).toBe(false);
+    expect(result?.result).toBe('Failed');
+    expect(result?.error).toContain('not an active tab session');
+  });
+
+  it('reports executed status when delivery declares immediate execution', async () => {
+    const handlers: any = {
+      onSessionsSend: vi.fn(async () => ({
+        delivered: true,
+        executed: true,
+      })),
+    };
+
+    const result = await executeSessionsSend(
+      {
+        type: 'sessions-send',
+        sessionId: 'agent:worker',
+        message: 'Run now',
+      },
+      handlers,
+    );
+
+    expect(result?.success).toBe(true);
+    expect(result?.result).toBe('Delivered and executed in target session.');
+  });
+
+  it('preserves undefined run flag so agent auto-run policy can apply', async () => {
+    const handlers: any = {
+      onSessionsSend: vi.fn(async () => ({
+        delivered: true,
+        executed: true,
+      })),
+    };
+
+    await executeSessionsSend(
+      {
+        type: 'sessions-send',
+        sessionId: 'agent:worker',
+        message: 'Run with default policy',
+      },
+      handlers,
+    );
+
+    expect(handlers.onSessionsSend).toHaveBeenCalledWith(
+      'agent:worker',
+      'Run with default policy',
+      undefined,
+    );
+  });
 });

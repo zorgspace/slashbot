@@ -34,6 +34,7 @@ export class InputPanel {
   private _isPromptActive = false;
   private promptResolver: ((value: string) => void) | null = null;
   private promptCleanup: (() => void) | null = null;
+  private inputEnabled = true;
   private readonly defaultPromptContent = t`${bold(fg(theme.primary)('❯ '))}`;
   private readonly defaultPromptWidth = 3;
 
@@ -84,6 +85,10 @@ export class InputPanel {
     if (this._isPromptActive) {
       return;
     }
+    if (!this.inputEnabled) {
+      this.input.value = '';
+      return;
+    }
     const value = this.input.value;
     if (value.trim()) {
       this.submitCallback(value);
@@ -94,6 +99,9 @@ export class InputPanel {
   }
 
   focus(): void {
+    if (!this.inputEnabled && !this._isPromptActive) {
+      return;
+    }
     this.input.focus();
   }
 
@@ -107,6 +115,10 @@ export class InputPanel {
 
   isPromptActive(): boolean {
     return this._isPromptActive;
+  }
+
+  isEnabled(): boolean {
+    return this.inputEnabled;
   }
 
   getValue(): string {
@@ -131,6 +143,19 @@ export class InputPanel {
 
   getDefaultPlaceholder(): string {
     return 'Type your message...';
+  }
+
+  setEnabled(enabled: boolean, options?: { placeholder?: string }): void {
+    this.inputEnabled = enabled;
+    if (!enabled && !this._isPromptActive) {
+      this.input.value = '';
+      this.input.blur();
+    }
+    if (enabled) {
+      this.input.placeholder = options?.placeholder || this.getDefaultPlaceholder();
+    } else if (options?.placeholder) {
+      this.input.placeholder = options.placeholder;
+    }
   }
 
   private resetPromptChrome(): void {
@@ -229,6 +254,7 @@ export class InputPanel {
     }
 
     return new Promise(resolve => {
+      const wasEnabled = this.inputEnabled;
       this._isPromptActive = true;
       this.promptResolver = resolve;
       const masked = options?.masked ?? false;
@@ -268,7 +294,12 @@ export class InputPanel {
         this.promptLabel.width = savedPromptWidth;
         this.input.value = savedValue;
         this.input.placeholder = savedPlaceholder;
-        this.input.focus();
+        this.inputEnabled = wasEnabled;
+        if (this.inputEnabled) {
+          this.input.focus();
+        } else {
+          this.input.blur();
+        }
       };
       this.promptCleanup = cleanup;
 

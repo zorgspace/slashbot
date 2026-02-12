@@ -6,13 +6,7 @@ import { display } from '../../core/ui';
 import type { CommandHandler } from '../../core/commands/registry';
 
 function dedupe(values: string[]): string[] {
-  return Array.from(
-    new Set(
-      values
-        .map(value => value.trim())
-        .filter(Boolean),
-    ),
-  );
+  return Array.from(new Set(values.map(value => value.trim()).filter(Boolean)));
 }
 
 function renderTelegramStatus(context: Parameters<CommandHandler['execute']>[1]): void {
@@ -36,10 +30,14 @@ function renderTelegramStatus(context: Parameters<CommandHandler['execute']>[1])
   ];
 
   if (telegramConfig) {
+    const triggerCommand = telegramConfig.triggerCommand || '/chat';
+    const responseGate = telegramConfig.responseGate === 'command' ? 'command' : 'open';
     lines.push(`Bot:         ${telegramConfig.botToken.slice(0, 10)}...`);
     lines.push(`Primary chat: ${runtime?.primaryTarget || telegramConfig.chatId}`);
     lines.push(`Active chat:  ${runtime?.activeTarget || telegramConfig.chatId}`);
     lines.push(`Authorized:   ${runtimeTargets.length > 0 ? runtimeTargets.join(', ') : '(none)'}`);
+    lines.push(`Trigger cmd:  ${triggerCommand}`);
+    lines.push(`Response gate:${responseGate === 'command' ? ' command-only' : ' open'}`);
   }
 
   lines.push(
@@ -50,7 +48,9 @@ function renderTelegramStatus(context: Parameters<CommandHandler['execute']>[1])
     '/telegram add <chat_id>         - Add authorized chat',
     '/telegram remove <chat_id>      - Remove authorized chat',
     '/telegram primary <chat_id>     - Set primary chat',
+    '/telegram gate <open|command>   - Control when bot responds',
     '/telegram clear                 - Remove configuration',
+    '/telegram trigger /command      - Set custom trigger command',
     '',
     'Get bot token from @BotFather on Telegram',
   );
@@ -63,7 +63,7 @@ export const telegramCommand: CommandHandler = {
   description: 'Configure Telegram bot connection',
   usage: '/telegram <bot_token> [chat_id]',
   group: 'Connectors',
-  subcommands: ['add', 'remove', 'primary', 'clear'],
+  subcommands: ['add', 'remove', 'primary', 'gate', 'trigger', 'clear'],
   execute: async (args, context) => {
     const arg0 = args[0];
     const arg1 = args[1];
@@ -80,8 +80,25 @@ export const telegramCommand: CommandHandler = {
       }
       try {
         await context.configManager.addTelegramChat(arg1);
-        display.successText(`Added chat ${arg1} to authorized list`);
-        display.warningText('Restart slashbot to apply changes');
+        const connector = context.connectors.get('telegram');
+        if (connector?.isRunning() && connector.sendMessageTo) {
+          (connector as any).addChat?.(arg1);
+          try {
+            await connector.sendMessageTo(
+              arg1,
+              `✅ Slashbot authorized this chat (${arg1}). You can start messaging the bot here.`,
+            );
+            display.successText(`Added chat ${arg1} to authorized list and sent confirmation via bot`);
+          } catch {
+            display.successText(`Added chat ${arg1} to authorized list`);
+            display.warningText(
+              'Could not send confirmation to that chat. Ensure it has started the bot, then retry.',
+            );
+          }
+        } else {
+          display.successText(`Added chat ${arg1} to authorized list`);
+          display.warningText('Restart slashbot to apply changes');
+        }
       } catch (error) {
         display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
       }
@@ -95,8 +112,14 @@ export const telegramCommand: CommandHandler = {
       }
       try {
         await context.configManager.removeTelegramChat(arg1);
-        display.successText(`Removed chat ${arg1} from authorized list`);
-        display.warningText('Restart slashbot to apply changes');
+        const connector = context.connectors.get('telegram') as any;
+        if (connector?.isRunning?.() && typeof connector.removeChat === 'function') {
+          connector.removeChat(arg1);
+          display.successText(`Removed chat ${arg1} from authorized list`);
+        } else {
+          display.successText(`Removed chat ${arg1} from authorized list`);
+          display.warningText('Restart slashbot to apply changes');
+        }
       } catch (error) {
         display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
       }
@@ -110,8 +133,54 @@ export const telegramCommand: CommandHandler = {
       }
       try {
         await context.configManager.setTelegramPrimaryChat(arg1);
-        display.successText(`Primary Telegram chat updated to ${arg1}`);
-        display.warningText('Restart slashbot to apply changes');
+        const connector = context.connectors.get('telegram') as any;
+        if (connector?.isRunning?.()) {
+          if (typeof connector.setPrimaryChat === 'function') {
+            connector.setPrimaryChat(arg1);
+          } else if (typeof connector.addChat === 'function') {
+            connector.addChat(arg1);
+          }
+          display.successText(`Primary Telegram chat updated to ${arg1}`);
+        } else {
+          display.successText(`Primary Telegram chat updated to ${arg1}`);
+          display.warningText('Restart slashbot to apply changes');
+        }
+      } catch (error) {
+        display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
+      }
+      return true;
+    }
+
+    if (arg0 === 'gate') {
+      const gateArg = (arg1 || '').toLowerCase();
+      if (!gateArg || (gateArg !== 'open' && gateArg !== 'command')) {
+        display.errorText('Usage: /telegram gate <open|command>');
+        return true;
+      }
+      try {
+        const existing = context.configManager.getTelegramConfig();
+        if (!existing) {
+          display.errorText('Telegram not configured');
+          return true;
+        }
+
+        const responseGate = gateArg as 'open' | 'command';
+        await context.configManager.saveTelegramConfig(
+          existing.botToken,
+          existing.chatId,
+          existing.chatIds,
+          existing.triggerCommand,
+          responseGate,
+        );
+
+        const connector = context.connectors.get('telegram') as any;
+        if (connector?.isRunning?.() && typeof connector.setResponseGate === 'function') {
+          connector.setResponseGate(responseGate);
+          display.successText(`Telegram response gate set to "${responseGate}"`);
+        } else {
+          display.successText(`Telegram response gate set to "${responseGate}"`);
+          display.warningText('Restart slashbot to apply changes');
+        }
       } catch (error) {
         display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
       }
@@ -126,6 +195,38 @@ export const telegramCommand: CommandHandler = {
         context.connectors.delete('telegram');
       }
       display.successText('Telegram configuration cleared');
+      return true;
+    }
+
+    if (arg0 === 'trigger') {
+      if (!arg1) {
+        display.errorText('Usage: /telegram trigger /chatcommand');
+        return true;
+      }
+      try {
+        const existing = context.configManager.getTelegramConfig();
+        if (!existing) {
+          display.errorText('Telegram not configured');
+          return true;
+        }
+        const trigger = arg1.startsWith('/') ? arg1 : '/' + arg1;
+        await context.configManager.saveTelegramConfig(
+          existing.botToken,
+          existing.chatId,
+          existing.chatIds,
+          trigger,
+        );
+        const connector = context.connectors.get('telegram') as any;
+        if (connector?.isRunning?.() && typeof connector.setTriggerCommand === 'function') {
+          connector.setTriggerCommand(trigger);
+          display.successText(`Trigger command set to "${trigger}". (Default /chat)`);
+        } else {
+          display.successText(`Trigger command set to "${trigger}". (Default /chat)`);
+          display.warningText('Restart slashbot to apply changes');
+        }
+      } catch (error) {
+        display.errorText('Error: ' + (error instanceof Error ? error.message : String(error)));
+      }
       return true;
     }
 
@@ -187,7 +288,9 @@ export const telegramCommand: CommandHandler = {
       }
       display.warningText('Restart slashbot to connect to Telegram');
     } catch (error) {
-      display.errorText('Error saving config: ' + (error instanceof Error ? error.message : String(error)));
+      display.errorText(
+        'Error saving config: ' + (error instanceof Error ? error.message : String(error)),
+      );
     }
 
     return true;

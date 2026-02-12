@@ -138,21 +138,21 @@ export const CONTEXT = {
   MAX_IMAGES: 3,
   MAX_MESSAGES: 150,
   MAX_HISTORY: 500,
-  COMPRESS_THRESHOLD: 0.70,
+  COMPRESS_THRESHOLD: 0.7,
   MAX_TOKENS: 256000,
 } as const;
 
 export const COMPACTION = {
   /** Compact when token usage exceeds this ratio of model limit */
-  TOKEN_THRESHOLD_RATIO: 0.70,
+  TOKEN_THRESHOLD_RATIO: 0.7,
   /** Soft warning threshold for context pressure */
-  WARN_RATIO: 0.60,
+  WARN_RATIO: 0.6,
   /** Start pruning older tool outputs above this ratio */
-  PRUNE_RATIO: 0.70,
+  PRUNE_RATIO: 0.7,
   /** Start summary compaction above this ratio */
-  SUMMARY_RATIO: 0.80,
+  SUMMARY_RATIO: 0.8,
   /** Hard trim when context remains near saturation */
-  HARD_RESET_RATIO: 0.90,
+  HARD_RESET_RATIO: 0.9,
   /** Keep last N tool outputs intact during pruning */
   PRUNE_PROTECT_RECENT: 10,
   /** Keep last N messages during hard reset */
@@ -242,6 +242,7 @@ export const ALLOWED_GIT_COMMANDS = [
   'commit',
   'checkout',
   'stash',
+  'worktree',
 ] as const;
 
 // ============================================================================

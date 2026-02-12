@@ -175,7 +175,9 @@ export class FilesystemPlugin implements Plugin {
             };
           }
 
-          const pathMatch = input.match(/^['"]?([~\/]?[^\s'"]+\.(png|jpg|jpeg|gif|webp|bmp))['"]?$/i);
+          const pathMatch = input.match(
+            /^['"]?([~\/]?[^\s'"]+\.(png|jpg|jpeg|gif|webp|bmp))['"]?$/i,
+          );
           if (!pathMatch) {
             return;
           }

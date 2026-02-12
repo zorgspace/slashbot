@@ -74,6 +74,10 @@ export class LLMClient implements ClientContext {
   private promptAssembler: PromptAssembler | null = null;
   private assembledPromptCache: string | null = null;
   private responseEndCallback: (() => void) | null = null;
+  private sessionRunCallbacks: {
+    onSessionRunStart?: (sessionId: string) => void;
+    onSessionRunEnd?: (sessionId: string) => void;
+  } = {};
   private readonly abortControllersBySession = new Map<string, Set<AbortController>>();
   private readonly sessionExecutionLanes = new Map<string, Promise<void>>();
 
@@ -278,6 +282,13 @@ export class LLMClient implements ClientContext {
     this.responseEndCallback = callback;
   }
 
+  setSessionRunCallbacks(callbacks: {
+    onSessionRunStart?: (sessionId: string) => void;
+    onSessionRunEnd?: (sessionId: string) => void;
+  }): void {
+    this.sessionRunCallbacks = callbacks || {};
+  }
+
   setProjectContext(context: string, workDir?: string): void {
     this.projectContext = context;
     if (workDir) {
@@ -375,6 +386,11 @@ export class LLMClient implements ClientContext {
     if (normalized.startsWith('agent:')) {
       const tabId = normalized.slice('agent:'.length).trim();
       return tabId || undefined;
+    }
+    const idx = normalized.indexOf(':');
+    if (idx > 0 && idx < normalized.length - 1 && !normalized.startsWith('cli:')) {
+      // Connector sessions are already keyed by their tab id: "<source>:<target>"
+      return normalized;
     }
     return undefined;
   }
@@ -514,9 +530,7 @@ export class LLMClient implements ClientContext {
       const quiet = options?.quiet ?? false;
       const outputTabId = options?.outputTabId;
       const inferredMode = this.inferSessionExecutionMode(effectiveSessionId);
-      const executionPolicy = this.resolveExecutionPolicy(
-        options?.executionPolicy || inferredMode,
-      );
+      const executionPolicy = this.resolveExecutionPolicy(options?.executionPolicy || inferredMode);
 
       // Create a scoped session for this request
       const scope = this.sessionManager.scoped(effectiveSessionId);
@@ -715,13 +729,25 @@ export class LLMClient implements ClientContext {
       return { delivered: true };
     }
 
-    const outputTabId = options?.outputTabId || this.resolveSessionOutputTabId(sessionId);
-    const { response } = await this.chatWithResponse(message, undefined, 120000, sessionId, {
-      quiet: options?.quiet ?? false,
-      outputTabId,
-      displayResult: options?.displayResult ?? true,
-    });
-    return { delivered: true, response };
+    const targetSessionId = sessionId.trim() || sessionId;
+    this.sessionRunCallbacks.onSessionRunStart?.(targetSessionId);
+    try {
+      const outputTabId = options?.outputTabId || this.resolveSessionOutputTabId(targetSessionId);
+      const { response } = await this.chatWithResponse(
+        message,
+        undefined,
+        120000,
+        targetSessionId,
+        {
+          quiet: options?.quiet ?? false,
+          outputTabId,
+          displayResult: options?.displayResult ?? true,
+        },
+      );
+      return { delivered: true, response };
+    } finally {
+      this.sessionRunCallbacks.onSessionRunEnd?.(targetSessionId);
+    }
   }
 
   /**
@@ -787,9 +813,7 @@ export class LLMClient implements ClientContext {
       const onAbortControllerChange = this.createAbortControllerBinder(effectiveSessionId);
       const outputTabId = options?.outputTabId;
       const inferredMode = this.inferSessionExecutionMode(effectiveSessionId);
-      const executionPolicy = this.resolveExecutionPolicy(
-        options?.executionPolicy || inferredMode,
-      );
+      const executionPolicy = this.resolveExecutionPolicy(options?.executionPolicy || inferredMode);
 
       // Build a scoped context — each concurrent request gets its own
       // thinkingActive/abortController state so they don't interfere.

@@ -87,7 +87,9 @@ export class MemoryStore {
       return cached.chunks;
     }
     this.cacheMisses += 1;
-    const text = await Bun.file(abs).text().catch(() => '');
+    const text = await Bun.file(abs)
+      .text()
+      .catch(() => '');
     if (!text) {
       this.cache.set(relPath, { mtimeMs: fileStat.mtimeMs, chunks: [] });
       return [];
@@ -151,10 +153,16 @@ export class MemoryStore {
     const end = Math.max(start, Number(endLine || start + 49));
     const slice = lines.slice(start - 1, end);
     const width = String(end).length;
-    return slice.map((line, idx) => `${String(start + idx).padStart(width, ' ')}|${line}`).join('\n');
+    return slice
+      .map((line, idx) => `${String(start + idx).padStart(width, ' ')}|${line}`)
+      .join('\n');
   }
 
-  async upsert(entry: { text: string; tags?: string[]; file?: string }): Promise<{ path: string; line: number }> {
+  async upsert(entry: {
+    text: string;
+    tags?: string[];
+    file?: string;
+  }): Promise<{ path: string; line: number }> {
     const target = (entry.file || 'memory/notes.md').replace(/\\/g, '/').replace(/^\.?\//, '');
     const lower = target.toLowerCase();
     if (!(lower === 'memory.md' || lower.startsWith('memory/'))) {
@@ -162,7 +170,10 @@ export class MemoryStore {
     }
     const absolute = path.join(this.workDir, target);
     const ts = new Date().toISOString();
-    const tags = (entry.tags || []).filter(Boolean).map(t => t.trim()).filter(Boolean);
+    const tags = (entry.tags || [])
+      .filter(Boolean)
+      .map(t => t.trim())
+      .filter(Boolean);
     const line = `- [${ts}] ${entry.text.trim()}${tags.length > 0 ? ` [tags: ${tags.join(', ')}]` : ''}`;
     const file = Bun.file(absolute);
     const existing = (await file.exists()) ? await file.text() : '# Memory Notes\n';
@@ -194,4 +205,3 @@ export class MemoryStore {
     };
   }
 }
-

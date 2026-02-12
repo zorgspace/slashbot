@@ -47,10 +47,7 @@ function withConnectorSidebarItem(options: {
   return { ...options.sidebarData, items };
 }
 
-function lockAgentTab(options: {
-  tabs: TabItem[];
-  protectedAgentId: string;
-}): TabItem[] {
+function lockAgentTab(options: { tabs: TabItem[]; protectedAgentId: string }): TabItem[] {
   let changed = false;
   const next = options.tabs.map(tab => {
     if (tab.id !== options.protectedAgentId) {

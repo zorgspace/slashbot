@@ -22,6 +22,8 @@ export interface TelegramConfig {
   botToken: string;
   chatId: string;
   chatIds?: string[];
+  triggerCommand?: string;
+  responseGate?: 'open' | 'command';
 }
 
 export interface DiscordConfig {
@@ -50,6 +52,7 @@ export interface SlashbotConfig {
 // Credentials live in home and are shared across projects.
 const LOCAL_SLASHBOT_DIR = getLocalSlashbotDir();
 const LOCAL_CONFIG_FILE = getLocalConfigFile();
+const LOCAL_CREDENTIALS_FILE = `${LOCAL_SLASHBOT_DIR}/credentials.json`;
 const CREDENTIALS_FILE = HOME_CREDENTIALS_FILE;
 const CREDENTIALS_DIR = HOME_SLASHBOT_DIR;
 
@@ -60,14 +63,36 @@ export class ConfigManager {
 
   // ===== Credential file helpers (load-merge-save) =====
 
-  private async readCredentials(): Promise<Record<string, any>> {
+  private async readHomeCredentials(): Promise<Record<string, any>> {
     try {
-      const credFile = Bun.file(CREDENTIALS_FILE);
+      const credFile = Bun.file(HOME_CREDENTIALS_FILE);
       if (await credFile.exists()) {
         return await credFile.json();
       }
     } catch {}
     return {};
+  }
+
+  private async readLocalCredentials(): Promise<Record<string, any>> {
+    try {
+      const credFile = Bun.file(LOCAL_CREDENTIALS_FILE);
+      if (await credFile.exists()) {
+        return await credFile.json();
+      }
+    } catch {}
+    return {};
+  }
+
+  private async readMergedCredentials(): Promise<Record<string, any>> {
+    const homeCreds = await this.readHomeCredentials();
+    const localCreds = await this.readLocalCredentials();
+    Object.assign(homeCreds, localCreds);
+    return homeCreds;
+  }
+
+  // Backward-compatible alias used by legacy call sites.
+  private async readCredentials(): Promise<Record<string, any>> {
+    return this.readMergedCredentials();
   }
 
   private async writeCredentials(creds: Record<string, any>): Promise<void> {
@@ -120,7 +145,7 @@ export class ConfigManager {
     this.config = {};
     try {
       // Load credentials (API keys, providers, connectors)
-      const creds = await this.readCredentials();
+      const creds = await this.readMergedCredentials();
       this.config.apiKey = creds.apiKey;
       this.config.openaiApiKey = creds.openaiApiKey;
       if (creds.providers && typeof creds.providers === 'object') {
@@ -289,12 +314,29 @@ export class ConfigManager {
 
   // ===== Telegram =====
 
-  async saveTelegramConfig(botToken: string, chatId: string, chatIds?: string[]): Promise<void> {
-    this.telegram = { botToken, chatId };
-    if (chatIds && chatIds.length > 0) {
-      this.telegram.chatIds = chatIds;
+  async saveTelegramConfig(
+    botToken: string,
+    chatId: string,
+    chatIds?: string[],
+    triggerCommand?: string,
+    responseGate?: 'open' | 'command',
+  ): Promise<void> {
+    if (!this.telegram) {
+      this.telegram = { botToken, chatId };
+    } else {
+      this.telegram.botToken = botToken;
+      this.telegram.chatId = chatId;
     }
-    await this.mergeCredentials({ telegram: this.telegram });
+    if (chatIds !== undefined) {
+      this.telegram.chatIds = chatIds || [];
+    }
+    if (triggerCommand !== undefined) {
+      this.telegram!.triggerCommand = triggerCommand;
+    }
+    if (responseGate !== undefined) {
+      this.telegram!.responseGate = responseGate;
+    }
+    await this.mergeCredentials({ telegram: this.telegram! });
   }
 
   async clearTelegramConfig(): Promise<void> {
@@ -354,7 +396,11 @@ export class ConfigManager {
     nextSet.delete(chatId);
     this.telegram.chatId = chatId;
     this.telegram.chatIds = Array.from(nextSet);
-    await this.saveTelegramConfig(this.telegram.botToken, this.telegram.chatId, this.telegram.chatIds);
+    await this.saveTelegramConfig(
+      this.telegram.botToken,
+      this.telegram.chatId,
+      this.telegram.chatIds,
+    );
   }
 
   // ===== Discord =====

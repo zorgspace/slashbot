@@ -39,7 +39,9 @@ export const heartbeatHandler: CommandHandler = {
       } else if (result.type === 'alert') {
         if (result.content.trim()) {
           const preview = result.content.split('\n').join(' ').slice(0, 180);
-          assistantBlock(`Heartbeat alert:\n\n${preview}${result.content.length > preview.length ? '...' : ''}`);
+          assistantBlock(
+            `Heartbeat alert:\n\n${preview}${result.content.length > preview.length ? '...' : ''}`,
+          );
         } else {
           assistantBlock('Heartbeat alert emitted');
         }
@@ -175,7 +177,9 @@ export const heartbeatHandler: CommandHandler = {
       if (content) {
         assistantBlock(`## HEARTBEAT.md\n\n\`\`\`md\n${content}\n\`\`\``);
       } else {
-        assistantBlock('No `HEARTBEAT.md` found in current directory.\n\nCreate one to guide heartbeats.');
+        assistantBlock(
+          'No `HEARTBEAT.md` found in current directory.\n\nCreate one to guide heartbeats.',
+        );
       }
       return true;
     }

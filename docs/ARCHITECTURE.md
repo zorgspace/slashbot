@@ -73,10 +73,10 @@ src/
 │   │   └── types.ts         # Service tokens (TYPES)
 │   ├── events/
 │   │   └── EventBus.ts      # Typed event bus
-│   ├── ui/                  # OpenTUI terminal interface
-│   │   ├── TUIApp.ts        # Main orchestrator
-│   │   ├── panels/          # HeaderPanel, ChatPanel, CommPanel, InputPanel
-│   │   └── adapters/        # OutputInterceptor
+│   ├── ui/                  # UI abstractions (display, formatting, shared types)
+│   │   ├── display.ts       # DisplayService facade + tab output scoping
+│   │   ├── types.ts         # UIOutput interfaces
+│   │   └── toolTranscript.ts# Tool transcript parsing/render helpers
 │   ├── code/
 │   │   └── editor.ts        # CodeEditor (unified diff application)
 │   ├── scheduler/
@@ -100,6 +100,7 @@ src/
 │   ├── filesystem/          # Core: file operations
 │   ├── code-editor/         # Core: format, typecheck, auto-fix
 │   ├── web/                 # Core: web fetch + search
+│   ├── tui/                 # Core: OpenTUI app + panels + tab history replay
 │   ├── say/                 # Core: console output
 │   ├── system/              # Core: system info
 │   ├── session/             # Core: session management
@@ -409,6 +410,8 @@ User input (platform-specific)
 
 Messages are automatically split at platform-specific limits (4096 for Telegram, 2000 for Discord) with smart splitting at newlines/spaces.
 
+Connector conversations are lane-scoped by session id (`<source>:<target>`), which also maps to connector tab ids in the TUI.
+
 ---
 
 ## Terminal UI (OpenTUI)
@@ -422,6 +425,14 @@ The full-screen TUI is built with `@opentui/core` and consists of:
 | **CommPanel**           | Communication log (Ctrl+T toggle) — prompts/responses |
 | **InputPanel**          | User input with history                               |
 | **CommandPalettePanel** | Fuzzy command search                                  |
+
+### Tab-Scoped Chat History
+
+- Chat rendering is isolated per tab through action buffers, not a shared transcript.
+- Inactive tab output is buffered and replayed on switch.
+- Streaming responses are stored as coalesced response blocks to avoid chunk explosion.
+- Buffers are capped and pruned, and stale tab state is garbage-collected when tabs disappear.
+- Tab switch renders cached content immediately, then kernel session backfill runs only if needed.
 
 ### Output Interceptor
 

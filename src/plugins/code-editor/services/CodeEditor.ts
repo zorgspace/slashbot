@@ -137,10 +137,7 @@ export class CodeEditor {
       if (stat.isFile()) {
         const candidate = this.normalizeResultPath(searchDir);
         const basename = path.basename(candidate);
-        if (
-          matchesGlob(candidate, normalizedPattern) ||
-          matchesGlob(basename, normalizedPattern)
-        ) {
+        if (matchesGlob(candidate, normalizedPattern) || matchesGlob(basename, normalizedPattern)) {
           return [candidate];
         }
         return [];
@@ -413,7 +410,11 @@ export class CodeEditor {
     }
   }
 
-  private parseGrepOutput(output: string, pattern: string, hasLineNumbers: boolean): SearchResult[] {
+  private parseGrepOutput(
+    output: string,
+    pattern: string,
+    hasLineNumbers: boolean,
+  ): SearchResult[] {
     const results: SearchResult[] = [];
     for (const line of output.split('\n').filter(Boolean)) {
       if (line === '--') continue;

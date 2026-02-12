@@ -30,7 +30,9 @@ export async function executeWalletStatus(
     const status = await handlers.onWalletStatus();
 
     if (!status.exists) {
-      display.appendAssistantMessage(formatToolName('WalletStatus', { success: true, summary: 'not configured' }));
+      display.appendAssistantMessage(
+        formatToolName('WalletStatus', { success: true, summary: 'not configured' }),
+      );
       return {
         action: 'wallet-status',
         success: true,
@@ -59,7 +61,9 @@ export async function executeWalletStatus(
     };
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
-    display.appendAssistantMessage(formatToolName('WalletStatus', { success: false, summary: errorMsg }));
+    display.appendAssistantMessage(
+      formatToolName('WalletStatus', { success: false, summary: errorMsg }),
+    );
 
     return {
       action: 'wallet-status',
@@ -93,9 +97,7 @@ export async function executeWalletSend(
 
     if (result.success) {
       const msg = `Sent ${action.amount} ${action.token.toUpperCase()} to ${action.toAddress}\nSignature: ${result.signature}\nExplorer: https://solscan.io/tx/${result.signature}`;
-      display.appendAssistantMessage(
-        formatToolAction('WalletSend', detail, { success: true }),
-      );
+      display.appendAssistantMessage(formatToolAction('WalletSend', detail, { success: true }));
       return {
         action: 'wallet-send',
         success: true,
@@ -103,7 +105,10 @@ export async function executeWalletSend(
       };
     } else {
       display.appendAssistantMessage(
-        formatToolAction('WalletSend', detail, { success: false, summary: result.error || 'failed' }),
+        formatToolAction('WalletSend', detail, {
+          success: false,
+          summary: result.error || 'failed',
+        }),
       );
       return {
         action: 'wallet-send',

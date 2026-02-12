@@ -18,15 +18,13 @@ export const promptCommand: CommandHandler = {
       return true;
     }
 
-    const report = (context.grokClient as any)?.getPromptReport?.() as
-      | {
-          generatedAt: string;
-          totalChars: number;
-          sections: Array<{ id: string; title: string; chars: number }>;
-          dynamicContextCount: number;
-          injectedWorkspaceFiles: Array<{ path: string; chars: number; truncated: boolean }>;
-        }
-      | null;
+    const report = (context.grokClient as any)?.getPromptReport?.() as {
+      generatedAt: string;
+      totalChars: number;
+      sections: Array<{ id: string; title: string; chars: number }>;
+      dynamicContextCount: number;
+      injectedWorkspaceFiles: Array<{ path: string; chars: number; truncated: boolean }>;
+    } | null;
 
     if (!report) {
       display.muted('Prompt report not available yet. Send a message first.');
@@ -50,4 +48,3 @@ export const promptCommand: CommandHandler = {
     return true;
   },
 };
-

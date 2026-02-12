@@ -153,10 +153,7 @@ export class HeartbeatService {
     }
 
     this.config = {
-      enabled:
-        typeof patch.enabled === 'boolean'
-          ? patch.enabled
-          : (this.config.enabled ?? true),
+      enabled: typeof patch.enabled === 'boolean' ? patch.enabled : (this.config.enabled ?? true),
       period,
       prompt: this.hasOwn(patch, 'prompt') ? patch.prompt : this.config.prompt,
       model: this.hasOwn(patch, 'model') ? patch.model : this.config.model,
@@ -168,7 +165,7 @@ export class HeartbeatService {
       includeReasoning:
         typeof patch.includeReasoning === 'boolean'
           ? patch.includeReasoning
-          : this.config.includeReasoning ?? false,
+          : (this.config.includeReasoning ?? false),
       dedupeWindowMs,
     };
   }
@@ -326,14 +323,17 @@ export class HeartbeatService {
     this.pendingWakeReason = reason;
     if (this.wakeTimer) return;
 
-    this.wakeTimer = setTimeout(() => {
-      this.wakeTimer = null;
-      const nextReason = this.pendingWakeReason ?? 'requested';
-      this.pendingWakeReason = null;
-      this.execute({ reason: nextReason, silent: true }).catch(() => {
-        this.requestWake('retry', RETRY_WAKE_MS);
-      });
-    }, Math.max(0, coalesceMs));
+    this.wakeTimer = setTimeout(
+      () => {
+        this.wakeTimer = null;
+        const nextReason = this.pendingWakeReason ?? 'requested';
+        this.pendingWakeReason = null;
+        this.execute({ reason: nextReason, silent: true }).catch(() => {
+          this.requestWake('retry', RETRY_WAKE_MS);
+        });
+      },
+      Math.max(0, coalesceMs),
+    );
     this.wakeTimer.unref?.();
   }
 
@@ -488,9 +488,13 @@ export class HeartbeatService {
       if (result.content) {
         const lines = result.content.split('\n').slice(0, 5);
         const preview = lines.join(' ').trim().slice(0, 180);
-        display.warningText(`  -> ${preview}${result.content.length > preview.length ? '...' : ''}`);
+        display.warningText(
+          `  -> ${preview}${result.content.length > preview.length ? '...' : ''}`,
+        );
       }
-      display.appendAssistantMessage(formatToolAction('Heartbeat', 'reflection', { success: false }));
+      display.appendAssistantMessage(
+        formatToolAction('Heartbeat', 'reflection', { success: false }),
+      );
       return;
     }
 

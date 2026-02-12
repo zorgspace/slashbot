@@ -7,10 +7,6 @@ import type { ReadAction, EditAction, WriteAction, CreateAction } from './types'
 import { display, formatToolAction } from '../../core/ui';
 import { buildUnifiedDiff } from '../../core/utils/diffBuilder';
 
-function formatEditWithDiff(path: string, unifiedDiff: string): string {
-  return [`### Edit - ${path} - OK`, '```diff', unifiedDiff, '```'].join('\n');
-}
-
 export async function executeRead(
   action: ReadAction,
   handlers: ActionHandlers,
@@ -32,7 +28,10 @@ export async function executeRead(
     const lineCount = lines.length;
     display.pushExploreProbe('Read', `${action.path}${rangeInfo} (${lineCount} lines)`, true);
     display.appendAssistantMessage(
-      formatToolAction('Read', action.path + rangeInfo, { success: true, summary: lineCount + ' lines' }),
+      formatToolAction('Read', action.path + rangeInfo, {
+        success: true,
+        summary: lineCount + ' lines',
+      }),
     );
     // Detect language from file extension so the LLM knows the syntax
     const ext = action.path.split('.').pop()?.toLowerCase() || '';
@@ -137,11 +136,10 @@ export async function executeEdit(
         : null;
 
     if (unifiedDiff) {
-      display.appendAssistantMarkdown(formatEditWithDiff(action.path, unifiedDiff));
+      display.appendAssistantMessage(formatToolAction('Edit', action.path, { success: true }));
+      display.appendDiffBlock(unifiedDiff, 'diff');
     } else {
-      display.appendAssistantMessage(
-        formatToolAction('Edit', action.path, { success: true }),
-      );
+      display.appendAssistantMessage(formatToolAction('Edit', action.path, { success: true }));
     }
   } else if (result.status === 'already_applied') {
     display.appendAssistantMessage(
@@ -162,9 +160,7 @@ export async function executeEdit(
     );
     display.error(`Search string not found in ${action.path} — re-read and retry.`);
   } else {
-    display.appendAssistantMessage(
-      formatToolAction('Edit', action.path, { success: false }),
-    );
+    display.appendAssistantMessage(formatToolAction('Edit', action.path, { success: false }));
   }
 
   let errorMsg = result.message;
@@ -202,7 +198,10 @@ export async function executeWrite(
   const lineCount = action.content.split('\n').length;
 
   display.appendAssistantMessage(
-    formatToolAction('Create', action.path, { success, summary: success ? lineCount + ' lines' : 'failed' }),
+    formatToolAction('Create', action.path, {
+      success,
+      summary: success ? lineCount + ' lines' : 'failed',
+    }),
   );
 
   return {
@@ -224,7 +223,10 @@ export async function executeCreate(
   const lineCount = action.content.split('\n').length;
 
   display.appendAssistantMessage(
-    formatToolAction('Create', action.path, { success, summary: success ? lineCount + ' lines' : 'failed' }),
+    formatToolAction('Create', action.path, {
+      success,
+      summary: success ? lineCount + ' lines' : 'failed',
+    }),
   );
 
   return {
