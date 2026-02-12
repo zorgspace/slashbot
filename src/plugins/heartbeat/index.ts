@@ -13,6 +13,8 @@ import type {
   ActionContribution,
   PromptContribution,
   SidebarContribution,
+  KernelHookContribution,
+  EventSubscription,
 } from '../types';
 import type { CommandHandler } from '../../core/commands/registry';
 import { registerActionParser } from '../../core/actions/parser';
@@ -32,6 +34,8 @@ export class HeartbeatPlugin implements Plugin {
 
   private context!: PluginContext;
   private heartbeatService!: HeartbeatService;
+  private uiRefreshHookBound = false;
+  private hadPendingAgentWork = false;
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
@@ -64,7 +68,7 @@ export class HeartbeatPlugin implements Plugin {
     // Set LLM handler with lazy GrokClient resolution.
     // The GrokClient is null during plugin init (created later in initializeGrok),
     // but context.getGrokClient() resolves it at execution time.
-    this.heartbeatService.setLLMHandler(async (prompt: string) => {
+    this.heartbeatService.setLLMHandler(async (prompt: string, runContext) => {
       const getClient = context.getGrokClient;
       if (!getClient) throw new Error('Grok client not available');
       const grokClient = getClient();
@@ -76,7 +80,13 @@ export class HeartbeatPlugin implements Plugin {
         grokClient as {
           chatIsolated?: (
             p: string,
-            opts?: { quiet?: boolean; includeFileContext?: boolean; continueActions?: boolean },
+            opts?: {
+              quiet?: boolean;
+              includeFileContext?: boolean;
+              continueActions?: boolean;
+              executeActions?: boolean;
+              maxIterations?: number;
+            },
           ) => Promise<{ response?: string; thinking?: string }>;
           chat: (p: string) => Promise<{ response?: string; thinking?: string }>;
         }
@@ -84,6 +94,8 @@ export class HeartbeatPlugin implements Plugin {
         quiet: true,
         includeFileContext: false,
         continueActions: false,
+        executeActions: runContext.executeActions,
+        maxIterations: 1,
       }) ??
       (await (
         grokClient as {
@@ -99,6 +111,61 @@ export class HeartbeatPlugin implements Plugin {
 
   async destroy(): Promise<void> {
     this.heartbeatService?.stop();
+  }
+
+  getEventSubscriptions(): EventSubscription[] {
+    const heartbeatService = this.heartbeatService;
+    return [
+      {
+        event: 'agents:updated',
+        handler: (event: any) => {
+          const queued = Number(event?.summary?.queued || 0);
+          const running = Number(event?.summary?.running || 0);
+          const hasPending = queued + running > 0;
+
+          if (hasPending) {
+            this.hadPendingAgentWork = true;
+            return;
+          }
+
+          if (!this.hadPendingAgentWork) {
+            return;
+          }
+
+          this.hadPendingAgentWork = false;
+          heartbeatService.execute({
+            silent: true,
+            reason: 'agents-drained',
+            force: false,
+          }).catch(() => {});
+        },
+      },
+    ];
+  }
+
+  getKernelHooks(): KernelHookContribution[] {
+    return [
+      {
+        event: 'startup:after-ui-ready',
+        order: 80,
+        handler: payload => {
+          if (this.uiRefreshHookBound) {
+            return;
+          }
+          const refreshLayout = payload.refreshLayout as (() => void) | undefined;
+          const eventBus = this.context?.eventBus as
+            | { on: (type: string, handler: (event: any) => void) => unknown }
+            | undefined;
+          if (!refreshLayout || !eventBus) {
+            return;
+          }
+
+          this.uiRefreshHookBound = true;
+          eventBus.on('heartbeat:started', () => refreshLayout());
+          eventBus.on('heartbeat:complete', () => refreshLayout());
+        },
+      },
+    ];
   }
 
   getActionContributions(): ActionContribution[] {
@@ -137,18 +204,7 @@ export class HeartbeatPlugin implements Plugin {
   }
 
   getSidebarContributions(): SidebarContribution[] {
-    const heartbeatService = this.heartbeatService;
-    return [
-      {
-        id: 'heartbeat',
-        label: 'Heartbeat',
-        order: 20,
-        getStatus: () => {
-          const status = heartbeatService.getStatus();
-          return status.running && status.enabled;
-        },
-      },
-    ];
+    return [];
   }
 
   getPromptContributions(): PromptContribution[] {
@@ -177,12 +233,13 @@ export class HeartbeatPlugin implements Plugin {
           'Note: HEARTBEAT.md is loaded from the current working directory.',
           '',
           '**Response format during heartbeat:**',
-          '- If nothing needs attention: respond with a brief status summary',
+          '- If nothing needs attention: reply `HEARTBEAT_OK`',
           '- If something needs attention: provide a clear alert message',
+          '- `HEARTBEAT.md` that is effectively empty (headers/blank checklist only) skips runs',
           '',
           '**Commands:** /heartbeat, /heartbeat status, /heartbeat every 30m, /heartbeat enable/disable',
           '',
-          '**Alerts:** Use `<notify>` tag in HEARTBEAT.md instructions to route alerts.',
+          '**Alerts:** Use connector tools/tags (for example `telegram_send` / `<telegram-send>`).',
         ].join('\n'),
       },
       {
@@ -197,7 +254,7 @@ export class HeartbeatPlugin implements Plugin {
           '- **Enable/disable:** /heartbeat enable/disable',
           '- **Check status:** /heartbeat status',
           '- **Update checklist:** <heartbeat-update>content</heartbeat-update>',
-          '- **Alerts:** Use `<notify>` tag to route alerts.',
+          '- **Alerts:** Use connector tools/tags (for example `telegram_send` / `<telegram-send>`).',
           '',
           'Create HEARTBEAT.md in the current working directory for custom checklists.',
         ].join('\n'),

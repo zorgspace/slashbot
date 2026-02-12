@@ -4,11 +4,15 @@
  *
  * Credentials are stored in ~/.slashbot (home directory) for global access
  * - credentials.json: all secrets (API keys, provider creds, bot tokens)
- * - .slashbot/config/config.json (cwd): non-secret settings (model, provider name, temperature)
+ * Non-secret config is loaded hierarchically:
+ * - ~/.slashbot/config/config.json (global defaults)
+ * - ./.slashbot/config/config.json (cwd overrides)
  */
 
 import {
+  HOME_CONFIG_FILE,
   HOME_CREDENTIALS_FILE,
+  HOME_SLASHBOT_DIR,
   getLocalConfigDir,
   getLocalConfigFile,
   getLocalSlashbotDir,
@@ -43,10 +47,11 @@ export interface SlashbotConfig {
   discord?: DiscordConfig;
 }
 
-// Use home directory for credentials (shared across all projects)
-const CONFIG_DIR = getLocalSlashbotDir();
-const CONFIG_FILE = getLocalConfigFile();
+// Credentials live in home and are shared across projects.
+const LOCAL_SLASHBOT_DIR = getLocalSlashbotDir();
+const LOCAL_CONFIG_FILE = getLocalConfigFile();
 const CREDENTIALS_FILE = HOME_CREDENTIALS_FILE;
+const CREDENTIALS_DIR = HOME_SLASHBOT_DIR;
 
 export class ConfigManager {
   private config: SlashbotConfig = {};
@@ -67,7 +72,7 @@ export class ConfigManager {
 
   private async writeCredentials(creds: Record<string, any>): Promise<void> {
     const { mkdir } = await import('fs/promises');
-    await mkdir(CONFIG_DIR, { recursive: true });
+    await mkdir(CREDENTIALS_DIR, { recursive: true });
     await Bun.write(CREDENTIALS_FILE, JSON.stringify(creds, null, 2));
   }
 
@@ -83,9 +88,36 @@ export class ConfigManager {
     await this.writeCredentials(creds);
   }
 
+  private sanitizeNonSecretConfig(raw: unknown): Partial<SlashbotConfig> {
+    if (!raw || typeof raw !== 'object') {
+      return {};
+    }
+    const cfg = raw as Record<string, unknown>;
+    const {
+      apiKey: _a,
+      openaiApiKey: _o,
+      providers: _p,
+      telegram: _t,
+      discord: _d,
+      ...safeConfig
+    } = cfg;
+    return safeConfig as Partial<SlashbotConfig>;
+  }
+
+  private async readNonSecretConfig(filePath: string): Promise<Partial<SlashbotConfig>> {
+    try {
+      const file = Bun.file(filePath);
+      if (await file.exists()) {
+        return this.sanitizeNonSecretConfig(await file.json());
+      }
+    } catch {}
+    return {};
+  }
+
   // ===== Load =====
 
   async load(): Promise<SlashbotConfig> {
+    this.config = {};
     try {
       // Load credentials (API keys, providers, connectors)
       const creds = await this.readCredentials();
@@ -101,21 +133,10 @@ export class ConfigManager {
         this.discord = creds.discord;
       }
 
-      // Load general config (non-secret settings)
-      const configFile = Bun.file(CONFIG_FILE);
-      if (await configFile.exists()) {
-        const cfg = await configFile.json();
-        // Only merge non-secret fields from config.json
-        const {
-          apiKey: _a,
-          openaiApiKey: _o,
-          providers: _p,
-          telegram: _t,
-          discord: _d,
-          ...safeConfig
-        } = cfg;
-        this.config = { ...this.config, ...safeConfig };
-      }
+      // Load non-secret config hierarchically (global defaults -> local overrides)
+      const globalConfig = await this.readNonSecretConfig(HOME_CONFIG_FILE);
+      const localConfig = await this.readNonSecretConfig(LOCAL_CONFIG_FILE);
+      this.config = { ...this.config, ...globalConfig, ...localConfig };
     } catch {
       // Config doesn't exist yet
     }
@@ -149,9 +170,15 @@ export class ConfigManager {
       }
     }
 
-    // Reconcile: if main apiKey's provider doesn't match config.provider, auto-correct
-    // This fixes stale config.json from before the multi-provider persistence fix
-    if (this.config.apiKey && this.config.provider) {
+    const providerCreds =
+      this.config.provider && this.config.providers?.[this.config.provider]
+        ? this.config.providers[this.config.provider]
+        : undefined;
+    if (providerCreds?.apiKey) {
+      this.config.apiKey = providerCreds.apiKey;
+    } else if (this.config.apiKey && this.config.provider) {
+      // Reconcile: if main apiKey's provider doesn't match config.provider, auto-correct
+      // This fixes stale config.json from before the multi-provider persistence fix
       const keyProvider = inferProviderFromApiKey(this.config.apiKey);
       if (keyProvider && keyProvider !== this.config.provider) {
         this.config.provider = keyProvider;
@@ -217,15 +244,10 @@ export class ConfigManager {
     // Separate secrets from non-secret config
     const { apiKey, openaiApiKey, providers, telegram, discord, ...nonSecretUpdates } = config;
 
-    // Save non-secret fields to config.json
-    const currentNonSecret = { ...this.config };
-    delete (currentNonSecret as any).apiKey;
-    delete (currentNonSecret as any).openaiApiKey;
-    delete (currentNonSecret as any).providers;
-    delete (currentNonSecret as any).telegram;
-    delete (currentNonSecret as any).discord;
-    const toSave = { ...currentNonSecret, ...nonSecretUpdates };
-    await Bun.write(CONFIG_FILE, JSON.stringify(toSave, null, 2));
+    // Save only local non-secret overrides, without copying global defaults.
+    const localNonSecret = await this.readNonSecretConfig(LOCAL_CONFIG_FILE);
+    const toSave = { ...localNonSecret, ...nonSecretUpdates };
+    await Bun.write(LOCAL_CONFIG_FILE, JSON.stringify(toSave, null, 2));
 
     // If secrets were passed, route them to credentials.json
     if (apiKey !== undefined || openaiApiKey !== undefined || providers !== undefined) {
@@ -251,7 +273,7 @@ export class ConfigManager {
   }
 
   getConfigDir(): string {
-    return CONFIG_DIR;
+    return LOCAL_SLASHBOT_DIR;
   }
 
   // ===== OpenAI API Key =====
@@ -322,6 +344,19 @@ export class ConfigManager {
     }
   }
 
+  async setTelegramPrimaryChat(chatId: string): Promise<void> {
+    if (!this.telegram) {
+      throw new Error('Telegram not configured');
+    }
+
+    const nextSet = new Set<string>(this.telegram.chatIds ?? []);
+    nextSet.add(this.telegram.chatId);
+    nextSet.delete(chatId);
+    this.telegram.chatId = chatId;
+    this.telegram.chatIds = Array.from(nextSet);
+    await this.saveTelegramConfig(this.telegram.botToken, this.telegram.chatId, this.telegram.chatIds);
+  }
+
   // ===== Discord =====
 
   async saveDiscordConfig(
@@ -358,6 +393,44 @@ export class ConfigManager {
         this.discord.ownerId,
       );
     }
+  }
+
+  async removeDiscordChannel(channelId: string): Promise<void> {
+    if (!this.discord) {
+      throw new Error('Discord not configured');
+    }
+
+    if (channelId === this.discord.channelId) {
+      throw new Error('Cannot remove the primary channel ID');
+    }
+
+    if (this.discord.channelIds) {
+      this.discord.channelIds = this.discord.channelIds.filter(id => id !== channelId);
+      await this.saveDiscordConfig(
+        this.discord.botToken,
+        this.discord.channelId,
+        this.discord.channelIds,
+        this.discord.ownerId,
+      );
+    }
+  }
+
+  async setDiscordPrimaryChannel(channelId: string): Promise<void> {
+    if (!this.discord) {
+      throw new Error('Discord not configured');
+    }
+
+    const nextSet = new Set<string>(this.discord.channelIds ?? []);
+    nextSet.add(this.discord.channelId);
+    nextSet.delete(channelId);
+    this.discord.channelId = channelId;
+    this.discord.channelIds = Array.from(nextSet);
+    await this.saveDiscordConfig(
+      this.discord.botToken,
+      this.discord.channelId,
+      this.discord.channelIds,
+      this.discord.ownerId,
+    );
   }
 
   async setDiscordOwnerId(ownerId: string): Promise<void> {

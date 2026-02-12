@@ -86,14 +86,28 @@ export class ChatPanel {
     this.addBorderedLine(styledContent, theme.accent);
   }
 
+  private contentLineCount(content: string): number {
+    return Math.max(1, content.split('\n').length);
+  }
+
+  private normalizeMarkdownText(text: string): string {
+    return text
+      .replace(/\r\n?/g, '\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trimEnd();
+  }
+
   addCodeBlock(content: string, filetype?: string): void {
     if (this.syntaxStyle && filetype) {
       try {
+        const lineCount = this.contentLineCount(content);
         const code = new CodeRenderable(this.renderer, {
           id: `chat-code-${this.lineCounter++}`,
           content,
           filetype,
           syntaxStyle: this.syntaxStyle,
+          height: lineCount,
           fg: theme.white,
         });
         this.scrollBox.add(code);
@@ -109,20 +123,20 @@ export class ChatPanel {
   addDiffBlock(diffContent: string, _filetype?: string): void {
     if (this.syntaxStyle) {
       try {
-        const lineCount = diffContent.split('\n').length;
+        const lineCount = this.contentLineCount(diffContent);
         const diff = new DiffRenderable(this.renderer, {
           id: `chat-diff-${this.lineCounter++}`,
           diff: diffContent,
           syntaxStyle: this.syntaxStyle,
           showLineNumbers: true,
-          height: Math.min(lineCount + 2, 15),
+          height: lineCount + 2,
           fg: theme.white,
-          addedBg: theme.diffAddedBg,
-          removedBg: theme.diffRemovedBg,
+          addedBg: 'transparent',
+          removedBg: 'transparent',
           addedSignColor: theme.diffAddedFg,
           removedSignColor: theme.diffRemovedFg,
           lineNumberFg: theme.muted,
-          contextBg: theme.bgPanel,
+          contextBg: 'transparent',
           wrapMode: 'word',
         });
 
@@ -190,7 +204,7 @@ export class ChatPanel {
       ...LeftBorder,
       borderColor,
       paddingLeft: 2,
-      marginTop:1
+      marginTop: 1,
     });
     box.add(text);
     this.scrollBox.add(box);
@@ -215,7 +229,8 @@ export class ChatPanel {
       flexDirection: 'column',
     });
 
-    const lines = text.split('\n');
+    const normalized = this.normalizeMarkdownText(text);
+    const lines = normalized.length > 0 ? normalized.split('\n') : [];
     let inCodeBlock = false;
     let codeBlockLang = '';
     let codeBlockLines: string[] = [];
@@ -232,11 +247,13 @@ export class ChatPanel {
     const addCode = (content: string, filetype?: string) => {
       if (this.syntaxStyle && filetype) {
         try {
+          const lineCount = this.contentLineCount(content);
           const code = new CodeRenderable(this.renderer, {
             id: `chat-md-code-${this.lineCounter++}`,
             content,
             filetype,
             syntaxStyle: this.syntaxStyle,
+            height: lineCount,
             fg: theme.white,
           });
           block.add(code);
@@ -270,7 +287,9 @@ export class ChatPanel {
         continue;
       }
 
-      if (line.startsWith('### ')) {
+      if (/^\s*(?:error\b|[A-Za-z][A-Za-z ]*error:)/i.test(line)) {
+        addTextLine(t`${fg(theme.error)(line)}`);
+      } else if (line.startsWith('### ')) {
         addTextLine(t`${bold(fg(theme.accent)(line))}`);
       } else if (line.startsWith('## ')) {
         addTextLine(t`${bold(fg(theme.primary)(line))}`);

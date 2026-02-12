@@ -90,7 +90,10 @@ export class SessionPlugin implements Plugin {
           onSessionsSend: async (sessionId: string, message: string, run?: boolean) => {
             const client = getClient();
             if (!client?.sendToSession) return { delivered: false };
-            return await client.sendToSession(sessionId, message, { run: !!run, quiet: true });
+            return await client.sendToSession(sessionId, message, {
+              run: !!run,
+              quiet: run ? false : true,
+            });
           },
         },
         execute: (action, handlers) => executeSessionsSend(action as any, handlers),

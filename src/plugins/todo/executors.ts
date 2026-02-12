@@ -3,32 +3,21 @@ import type { TodoWriteAction, TodoReadAction } from './types';
 import { todoStore } from './store';
 import { display, formatToolAction } from '../../core/ui';
 
-/** Optional callback for push-notifying completed todos to connectors */
-let notifyCallback: ((message: string, target?: string) => Promise<void>) | null = null;
-
-export function setTodoNotifyCallback(cb: typeof notifyCallback): void {
-  notifyCallback = cb;
-}
-
 export async function executeTodoWrite(
   action: TodoWriteAction,
   _handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
   todoStore.setAll(action.todos);
-  const summary = todoStore.getSummary();
 
   // Update persistent task list panel above input
   display.updateNotificationList(
     action.todos.map(i => ({ id: i.id, content: i.content, status: i.status })),
   );
 
-  // Flash notification + push to connectors for newly completed todos
+  // Flash notification for newly completed todos in the local TUI only.
   const newlyCompleted = todoStore.getNewlyCompleted();
   for (const todo of newlyCompleted) {
     display.showNotification(todo.content);
-    if (todo.notifyTarget && notifyCallback) {
-      notifyCallback(`\u2713 Todo completed: ${todo.content}`, todo.notifyTarget).catch(() => {});
-    }
   }
 
   const formatted = action.todos

@@ -5,6 +5,11 @@
 import 'reflect-metadata';
 import { injectable } from 'inversify';
 import type { Container } from 'inversify';
+import type {
+  ConnectorActionSpec,
+  ConnectorCapabilities,
+  ConnectorStatus,
+} from '../../connectors/base';
 
 export interface CommandHandler {
   name: string;
@@ -19,6 +24,10 @@ export interface CommandHandler {
 export interface ConnectorHandle {
   isRunning: () => boolean;
   sendMessage: (msg: string) => Promise<void>;
+  sendMessageTo?: (targetId: string, msg: string) => Promise<void>;
+  getStatus?: () => ConnectorStatus;
+  getCapabilities?: () => ConnectorCapabilities;
+  listSupportedActions?: () => ConnectorActionSpec[];
   stop?: () => void;
 }
 

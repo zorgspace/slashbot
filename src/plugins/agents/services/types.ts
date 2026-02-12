@@ -1,4 +1,4 @@
-export type AgentKind = 'architect' | 'worker' | 'reviewer' | 'custom';
+export type AgentKind = 'architect' | 'worker' | 'reviewer' | 'connector' | 'custom';
 
 export interface AgentProfile {
   id: string;
@@ -15,6 +15,7 @@ export interface AgentProfile {
   updatedAt: string;
   lastRunAt?: string;
   lastError?: string;
+  removable?: boolean;
 }
 
 export type AgentTaskStatus = 'queued' | 'running' | 'done' | 'failed';
@@ -51,6 +52,7 @@ export interface CreateAgentInput {
   responsibility?: string;
   systemPrompt?: string;
   autoPoll?: boolean;
+  removable?: boolean;
 }
 
 export interface SendTaskInput {
@@ -58,6 +60,21 @@ export interface SendTaskInput {
   toAgentId: string;
   title: string;
   content: string;
+}
+
+export interface AgentRoutingRequest {
+  fromAgentId: string;
+  requestedToAgentId: string;
+  title: string;
+  content: string;
+  agents: AgentProfile[];
+}
+
+export interface AgentRoutingDecision {
+  toAgentId: string;
+  rationale?: string;
+  confidence?: number;
+  taskBrief?: string;
 }
 
 export interface AgentTaskRunResult {

@@ -3,7 +3,7 @@
  */
 
 import { GROK_CONFIG } from '../../core/config/constants';
-import type { LLMConfig, GrokConfig, ApiAuthProvider } from '../../core/api/types';
+import type { LLMConfig, ApiAuthProvider } from '../../core/api/types';
 
 export const DEFAULT_CONFIG: Partial<LLMConfig> = {
   maxTokens: GROK_CONFIG.MAX_TOKENS,

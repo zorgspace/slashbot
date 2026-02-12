@@ -3,13 +3,12 @@ import type { Action } from '../../core/actions/types';
 
 export function getAgentsParserConfigs(): ActionParserConfig[] {
   return [
-    },
     {
-      tags: ['agent-create'],
-      selfClosingTags: ['agent-create'],
+      tags: ['agent-create', 'agents-create', 'agent_create', 'agents_create'],
+      selfClosingTags: ['agent-create', 'agents-create', 'agent_create', 'agents_create'],
       parse(content, { extractAttr }): Action[] {
         const actions: Action[] = [];
-        const regex = /<agent-create\s+[^>]*\/?>/gi;
+        const regex = /<agents?[-_]create\s+[^>]*\/?>/gi;
         let match: RegExpExecArray | null;
         while ((match = regex.exec(content)) !== null) {
           const fullTag = match[0];
@@ -26,17 +25,18 @@ export function getAgentsParserConfigs(): ActionParserConfig[] {
                 : extractAttr(fullTag, 'autopoll') === 'false'
                   ? false
                   : undefined,
+            removable: extractAttr(fullTag, 'removable') === 'true',
           });
         }
         return actions;
       },
     },
     {
-      tags: ['agent-update'],
-      selfClosingTags: ['agent-update'],
+      tags: ['agent-update', 'agents-update', 'agent_update', 'agents_update'],
+      selfClosingTags: ['agent-update', 'agents-update', 'agent_update', 'agents_update'],
       parse(content, { extractAttr }): Action[] {
         const actions: Action[] = [];
-        const regex = /<agent-update\s+[^>]*\/?>/gi;
+        const regex = /<agents?[-_]update\s+[^>]*\/?>/gi;
         let match: RegExpExecArray | null;
         while ((match = regex.exec(content)) !== null) {
           const fullTag = match[0];
@@ -60,11 +60,11 @@ export function getAgentsParserConfigs(): ActionParserConfig[] {
       },
     },
     {
-      tags: ['agent-delete'],
-      selfClosingTags: ['agent-delete'],
+      tags: ['agent-delete', 'agents-delete', 'agent_delete', 'agents_delete'],
+      selfClosingTags: ['agent-delete', 'agents-delete', 'agent_delete', 'agents_delete'],
       parse(content, { extractAttr }): Action[] {
         const actions: Action[] = [];
-        const regex = /<agent-delete\s+[^>]*\/?>/gi;
+        const regex = /<agents?[-_]delete\s+[^>]*\/?>/gi;
         let match: RegExpExecArray | null;
         while ((match = regex.exec(content)) !== null) {
           const fullTag = match[0];
@@ -76,11 +76,11 @@ export function getAgentsParserConfigs(): ActionParserConfig[] {
       },
     },
     {
-      tags: ['agent-list'],
-      selfClosingTags: ['agent-list'],
+      tags: ['agent-list', 'agents-list', 'agent_list', 'agents_list'],
+      selfClosingTags: ['agent-list', 'agents-list', 'agent_list', 'agents_list'],
       parse(content): Action[] {
         const actions: Action[] = [];
-        const regex = /<agent-list\s*\/?>/gi;
+        const regex = /<agents?[-_]list\s*\/?>/gi;
         while (regex.exec(content) !== null) {
           actions.push({ type: 'agent-list' });
         }
@@ -88,17 +88,52 @@ export function getAgentsParserConfigs(): ActionParserConfig[] {
       },
     },
     {
-      tags: ['agent-run'],
-      selfClosingTags: ['agent-run'],
+      tags: ['agent-status', 'agents-status', 'agent_status', 'agents_status'],
+      selfClosingTags: ['agent-status', 'agents-status', 'agent_status', 'agents_status'],
+      parse(content): Action[] {
+        const actions: Action[] = [];
+        const regex = /<agents?[-_]status\s*\/?>/gi;
+        while (regex.exec(content) !== null) {
+          actions.push({ type: 'agent-status' });
+        }
+        return actions;
+      },
+    },
+    {
+      tags: ['agent-run', 'agents-run', 'agent_run', 'agents_run'],
+      selfClosingTags: ['agent-run', 'agents-run', 'agent_run', 'agents_run'],
       parse(content, { extractAttr }): Action[] {
         const actions: Action[] = [];
-        const regex = /<agent-run\s+[^>]*\/?>/gi;
+        const regex = /<agents?[-_]run\s+[^>]*\/?>/gi;
         let match: RegExpExecArray | null;
         while ((match = regex.exec(content)) !== null) {
           const fullTag = match[0];
           const agent = extractAttr(fullTag, 'agent') || extractAttr(fullTag, 'id');
           if (!agent) continue;
           actions.push({ type: 'agent-run', agent });
+        }
+        return actions;
+      },
+    },
+    {
+      tags: ['agent-send', 'agents-send', 'agent_send', 'agents_send'],
+      selfClosingTags: ['agent-send', 'agents-send', 'agent_send', 'agents_send'],
+      parse(content, { extractAttr }): Action[] {
+        const actions: Action[] = [];
+        const regex = /<agents?[-_]send\s+[^>]*\/?>/gi;
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(content)) !== null) {
+          const fullTag = match[0];
+          const to = extractAttr(fullTag, 'to') || extractAttr(fullTag, 'agent');
+          const title = extractAttr(fullTag, 'title') || 'Status Update';
+          const contentText = extractAttr(fullTag, 'content') || '';
+          if (!to) continue;
+          actions.push({
+            type: 'agent-send',
+            to,
+            title,
+            content: contentText,
+          });
         }
         return actions;
       },

@@ -57,7 +57,7 @@ export async function handleCliArgs(version: string): Promise<boolean> {
     display.violet('Slashbot - CLI Assistant powered by Grok');
     const helpContent = `${bold(fg(theme.primary)('Usage:'))}
   slashbot [options]
-  slashbot login              Enter API key
+  slashbot login              Login setup
   slashbot -m "message"       Send a message and exit
 
 ${bold(fg(theme.primary)('Options:'))}
@@ -66,7 +66,7 @@ ${bold(fg(theme.primary)('Options:'))}
   -m, --message MSG    Send message non-interactively
 
 ${bold(fg(theme.primary)('Commands:'))}
-  /login          Enter Grok API key
+  /login          Guided provider + model login
   /logout         Log out
   /task           Manage scheduled tasks
   /notify         Configure notifications
@@ -106,7 +106,7 @@ ${bold(fg(theme.primary)('Commands:'))}
       const loginBlock = `${fg(theme.accent)('Slashbot Login')}
 
 ${fg(theme.muted)('Usage: slashbot login <api_key>')}
-${fg(theme.muted)('Or run slashbot and use /login')}
+${fg(theme.muted)('Or run slashbot and use /login for guided setup')}
 
 ${fg(theme.muted)('Get your key at https://console.x.ai/')}
 `;

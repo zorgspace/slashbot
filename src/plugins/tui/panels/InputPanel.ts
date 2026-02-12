@@ -113,6 +113,10 @@ export class InputPanel {
     return this.input.value;
   }
 
+  setValue(value: string): void {
+    this.input.value = value;
+  }
+
   clear(): void {
     this.input.value = '';
   }
@@ -216,7 +220,10 @@ export class InputPanel {
    * Temporarily take over the input for a prompt (e.g. password entry).
    * Resolves when the user presses Enter. Restores normal input after.
    */
-  promptInput(label: string, options?: { masked?: boolean }): Promise<string> {
+  promptInput(
+    label: string,
+    options?: { masked?: boolean; initialValue?: string },
+  ): Promise<string> {
     if (this._isPromptActive) {
       this.cancelPrompt();
     }
@@ -225,8 +232,11 @@ export class InputPanel {
       this._isPromptActive = true;
       this.promptResolver = resolve;
       const masked = options?.masked ?? false;
+      const initialValue = options?.initialValue ?? '';
       const savedPlaceholder = this.input.placeholder;
       const savedValue = this.input.value;
+      const savedPromptContent = this.promptLabel.content;
+      const savedPromptWidth = this.promptLabel.width;
       // Start from known defaults to avoid cumulative width drift.
       this.resetPromptChrome();
 
@@ -240,11 +250,11 @@ export class InputPanel {
         this.promptLabel.width = Math.max(3, [...promptText].length + 1);
       }
 
-      this.input.value = '';
+      this.input.value = masked ? '*'.repeat(initialValue.length) : initialValue;
       this.input.placeholder = masked ? 'Enter password...' : label;
       this.input.focus();
 
-      let realValue = '';
+      let realValue = initialValue;
       let inputListener: ((value: string) => void) | null = null;
       let enterListener: (() => void) | null = null;
 
@@ -253,8 +263,9 @@ export class InputPanel {
         this.promptCleanup = null;
         if (inputListener) this.input.off(InputRenderableEvents.INPUT, inputListener);
         if (enterListener) this.input.off(InputRenderableEvents.ENTER, enterListener);
-        // Restore normal chrome deterministically.
-        this.resetPromptChrome();
+        // Restore original prompt chrome
+        this.promptLabel.content = savedPromptContent;
+        this.promptLabel.width = savedPromptWidth;
         this.input.value = savedValue;
         this.input.placeholder = savedPlaceholder;
         this.input.focus();

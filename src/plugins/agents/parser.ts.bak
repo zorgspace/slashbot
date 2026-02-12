@@ -1,0 +1,133 @@
+import type { ActionParserConfig } from '../../core/actions/parser';
+import type { Action } from '../../core/actions/types';
+
+export function getAgentsParserConfigs(): ActionParserConfig[] {
+  return [
+    {
+      tags: ['agent-create'],
+      selfClosingTags: ['agent-create'],
+      parse(content, { extractAttr }): Action[] {
+        const actions: Action[] = [];
+        const regex = /<agent-create\s+[^>]*\/?>/gi;
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(content)) !== null) {
+          const fullTag = match[0];
+          const name = extractAttr(fullTag, 'name');
+          if (!name) continue;
+          actions.push({
+            type: 'agent-create',
+            name,
+            responsibility: extractAttr(fullTag, 'responsibility') || undefined,
+            systemPrompt: extractAttr(fullTag, 'prompt') || undefined,
+            autoPoll:
+              extractAttr(fullTag, 'autopoll') === 'true'
+                ? true
+                : extractAttr(fullTag, 'autopoll') === 'false'
+                  ? false
+                  : undefined,
+          });
+        }
+        return actions;
+      },
+    },
+    {
+      tags: ['agent-update'],
+      selfClosingTags: ['agent-update'],
+      parse(content, { extractAttr }): Action[] {
+        const actions: Action[] = [];
+        const regex = /<agent-update\s+[^>]*\/?>/gi;
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(content)) !== null) {
+          const fullTag = match[0];
+          const agent = extractAttr(fullTag, 'agent') || extractAttr(fullTag, 'id');
+          if (!agent) continue;
+          const enabledRaw = extractAttr(fullTag, 'enabled');
+          const autoPollRaw = extractAttr(fullTag, 'autopoll');
+          actions.push({
+            type: 'agent-update',
+            agent,
+            name: extractAttr(fullTag, 'name') || undefined,
+            responsibility: extractAttr(fullTag, 'responsibility') || undefined,
+            systemPrompt: extractAttr(fullTag, 'prompt') || undefined,
+            enabled:
+              enabledRaw === 'true' ? true : enabledRaw === 'false' ? false : undefined,
+            autoPoll:
+              autoPollRaw === 'true' ? true : autoPollRaw === 'false' ? false : undefined,
+          });
+        }
+        return actions;
+      },
+    },
+    {
+      tags: ['agent-delete'],
+      selfClosingTags: ['agent-delete'],
+      parse(content, { extractAttr }): Action[] {
+        const actions: Action[] = [];
+        const regex = /<agent-delete\s+[^>]*\/?>/gi;
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(content)) !== null) {
+          const fullTag = match[0];
+          const agent = extractAttr(fullTag, 'agent') || extractAttr(fullTag, 'id');
+          if (!agent) continue;
+          actions.push({ type: 'agent-delete', agent });
+        }
+        return actions;
+      },
+    },
+    {
+      tags: ['agent-list'],
+      selfClosingTags: ['agent-list'],
+      parse(content): Action[] {
+        const actions: Action[] = [];
+        const regex = /<agent-list\s*\/?>/gi;
+        while (regex.exec(content) !== null) {
+          actions.push({ type: 'agent-list' });
+        }
+        return actions;
+      },
+    },
+    {
+      tags: ['agent-run'],
+      selfClosingTags: ['agent-run'],
+      parse(content, { extractAttr }): Action[] {
+        const actions: Action[] = [];
+        const regex = /<agent-run\s+[^>]*\/?>/gi;
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(content)) !== null) {
+          const fullTag = match[0];
+          const agent = extractAttr(fullTag, 'agent') || extractAttr(fullTag, 'id');
+          if (!agent) continue;
+          actions.push({ type: 'agent-run', agent });
+        }
+        return actions;
+      },
+    },
+    {
+      tags: ['agent-send'],
+      selfClosingTags: ['agent-send'],
+      parse(content, { extractAttr }): Action[] {
+        const actions: Action[] = [];
+        const regex = /<agent-send\s+[^>]*\/?>/gi;
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(content)) !== null) {
+          const fullTag = match[0];
+          const to = extractAttr(fullTag, 'to') || extractAttr(fullTag, 'agent');
+          const title = extractAttr(fullTag, 'title') || 'Status Update';
+          const contentText = extractAttr(fullTag, 'content') || '';
+          if (!to) continue;
+          actions.push({
+            type: 'agent-send',
+            to,
+            title,
+            content: contentText,
+          });
+        }
+        return actions;
+      },
+    },
+  ];
+}
+
+        return actions;
+      },
+    },

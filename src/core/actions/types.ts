@@ -36,5 +36,7 @@ export interface EditResult {
   path?: string;
   message?: string;
   success?: boolean;
+  beforeContent?: string;
+  afterContent?: string;
   [key: string]: unknown;
 }

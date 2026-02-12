@@ -170,7 +170,7 @@ Output ONLY clean markdown.`;
 
     try {
       const generationSessionId = `system:init:${Date.now()}`;
-      const generatedContent = await context.grokClient.chatWithResponse(
+      const { response: generatedContent } = await context.grokClient.chatWithResponse(
         [
           'You are an expert code analyst and technical writer.',
           'Analyze the current workspace deeply, then produce only the final GROK.md content in markdown.',

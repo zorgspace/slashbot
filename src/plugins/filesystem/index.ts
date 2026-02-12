@@ -12,13 +12,22 @@ import type {
   ActionContribution,
   PromptContribution,
   ToolContribution,
+  KernelHookContribution,
 } from '../types';
 import { registerActionParser } from '../../core/actions/parser';
+import { display, formatToolAction } from '../../core/ui';
 import { executeRead, executeEdit, executeWrite, executeCreate } from './executors';
 import { getFilesystemParserConfigs } from './parser';
 import { FILESYSTEM_PROMPT } from './prompt';
 import { getFilesystemToolContributions } from './tools';
 import { createFileSystem } from './services/SecureFileSystem';
+import {
+  addImage,
+  imageBuffer,
+  isImageDataUrl,
+  loadImageFromFile,
+  getImageSizeKB,
+} from './services/ImageBuffer';
 import { TYPES } from '../../core/di/types';
 import type { EventBus } from '../../core/events/EventBus';
 import type { CodeEditor } from '../code-editor/services/CodeEditor';
@@ -76,9 +85,11 @@ export class FilesystemPlugin implements Plugin {
       // Apply offset/limit if specified
       if (options?.offset || options?.limit) {
         const lines = content.split('\n');
-        const start = options.offset || 0;
-        const end = options.limit ? start + options.limit : lines.length;
-        return lines.slice(start, end).join('\n');
+        const startLine = Math.max(1, options.offset || 1);
+        const startIndex = startLine - 1;
+        const maxLines = typeof options.limit === 'number' && options.limit > 0 ? options.limit : 0;
+        const endIndex = maxLines > 0 ? startIndex + maxLines : lines.length;
+        return lines.slice(startIndex, endIndex).join('\n');
       }
 
       return content;
@@ -135,6 +146,60 @@ export class FilesystemPlugin implements Plugin {
 
   getToolContributions(): ToolContribution[] {
     return getFilesystemToolContributions();
+  }
+
+  getKernelHooks(): KernelHookContribution[] {
+    return [
+      {
+        event: 'input:before',
+        order: 30,
+        handler: async payload => {
+          if (payload.handled === true) {
+            return;
+          }
+          const source = String(payload.source || '');
+          if (source !== 'cli') {
+            return;
+          }
+          const input = typeof payload.input === 'string' ? payload.input.trim() : '';
+          if (!input) {
+            return;
+          }
+
+          if (isImageDataUrl(input)) {
+            addImage(input);
+            display.successText(`🖼️  Image added to context #${imageBuffer.length}`);
+            return {
+              handled: true,
+              response: '',
+            };
+          }
+
+          const pathMatch = input.match(/^['"]?([~\/]?[^\s'"]+\.(png|jpg|jpeg|gif|webp|bmp))['"]?$/i);
+          if (!pathMatch) {
+            return;
+          }
+
+          try {
+            const dataUrl = await loadImageFromFile(pathMatch[1]);
+            addImage(dataUrl);
+            display.appendAssistantMessage(
+              formatToolAction('Image', pathMatch[1].split('/').pop() || 'file', {
+                success: true,
+                summary: `${getImageSizeKB(dataUrl)}KB`,
+              }),
+            );
+            return {
+              handled: true,
+              response: '',
+            };
+          } catch {
+            // If image load fails, keep normal input flow.
+            return;
+          }
+        },
+      },
+    ];
   }
 
   getPromptContributions(): PromptContribution[] {

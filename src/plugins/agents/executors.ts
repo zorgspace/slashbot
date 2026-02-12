@@ -7,6 +7,7 @@ import type {
   AgentDeleteAction,
   AgentListAction,
   AgentRunAction,
+  AgentSendAction,
 } from './types';
 
 export async function executeAgentStatus(
@@ -180,3 +181,25 @@ export async function executeAgentRun(
     return { action: 'agent-run', success: false, result: '', error: msg };
   }
 }
+export async function executeAgentSend(
+  action: AgentSendAction,
+  handlers: ActionHandlers,
+): Promise<ActionResult> {
+  try {
+    if (!handlers.onAgentSend) {
+      return { action: "agent-send", success: false, result: "", error: "Agent send handler not available" };
+    }
+    const sent = await handlers.onAgentSend(action);
+    return {
+      action: "agent-send",
+      success: !!sent,
+      result: sent ? "Message sent" : "Failed to send",
+      error: sent ? undefined : "Send failed",
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { action: "agent-send", success: false, result: "", error: msg };
+  }
+}
+
+

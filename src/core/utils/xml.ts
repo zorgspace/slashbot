@@ -174,3 +174,7 @@ export function cleanSelfDialogue(content: string): string {
 
   return result.trim();
 }
+
+export function unwrapMarkdownTags(content: string): string {
+  return content.replace(/<markdown>([\s\S]*?)<\/markdown>/gi, '$1');
+}

@@ -45,6 +45,19 @@ export async function executeMemorySearch(
       summary: `${rows.length} match${rows.length === 1 ? '' : 'es'}`,
     }),
   );
+  if (rows.length > 0) {
+    const preview = rows.slice(0, 5);
+    const extra = rows.length > preview.length ? `\n- ... +${rows.length - preview.length} more match(es)` : '';
+    const snippet = preview
+      .map(row => {
+        const text = String(row.text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+        return `- ${row.path}:${row.line}: ${text}`;
+      })
+      .join('\n');
+    display.appendAssistantMarkdown(
+      `Memory hits (${rows.length} total):\n${snippet}${extra}`,
+    );
+  }
   return {
     action: `MemorySearch: ${action.query}`,
     success: true,

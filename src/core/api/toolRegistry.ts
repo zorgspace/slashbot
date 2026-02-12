@@ -9,6 +9,7 @@ import type { ToolContribution } from '../../plugins/types';
 import type { Action, ActionResult, ActionHandlers } from '../actions/types';
 import { executeActions } from '../actions/executor';
 import { detectEscapedNewlineCorruption } from '../actions/contentGuards';
+import { display } from '../ui';
 
 /**
  * Execution context shared between tool execute callbacks and the agentic loop.
@@ -18,6 +19,12 @@ export interface ToolExecContext {
   actionHandlers: ActionHandlers;
   readFiles: Map<string, 'full' | 'partial'>;
   unresolvedEditPaths: Set<string>;
+  outputTabId?: string;
+  executionPolicy?: {
+    blockedToolNames: Set<string>;
+    blockedActionTypes: Set<string>;
+    blockReason: string;
+  };
   signals: {
     shouldBreak: boolean;
     shouldResetIteration: boolean;
@@ -27,7 +34,7 @@ export interface ToolExecContext {
   };
   maxBlockedEnds: number;
   cacheFileContents: boolean;
-  fileContextCache: { set(key: string, value: string): void };
+  fileContextCache: { set(key: string, value: string): void; has(key: string): boolean };
   onRead?: (path: string) => Promise<string>;
   /** Populated by execute callbacks for the agentic loop to inspect */
   actionResults: ActionResult[];
@@ -132,158 +139,189 @@ export class ToolRegistry {
     args: Record<string, unknown>,
     ctx: ToolExecContext,
   ): Promise<string> {
-    const controlFlow = contrib.controlFlow;
+    return display.withOutputTab(ctx.outputTabId, async () => {
+      const controlFlow = contrib.controlFlow;
 
-    // --- Control flow: end ---
-    if (controlFlow === 'end') {
-      if (ctx.unresolvedEditPaths.size > 0 && ctx.signals.blockedEndCount < ctx.maxBlockedEnds) {
-        ctx.signals.blockedEndCount++;
-        const failedList = Array.from(ctx.unresolvedEditPaths).join(', ');
-        return `BLOCKED: Cannot finish \u2014 unresolved edit failures: ${failedList}. Fix them first.`;
-      }
-      const action = contrib.toAction(args);
-      const message = (action as any).message || '';
-      ctx.signals.shouldBreak = true;
-      ctx.signals.endMessage = message || undefined;
-      return 'Task ended';
-    }
-
-    // --- Control flow: say ---
-    if (controlFlow === 'say') {
-      const action = contrib.toAction(args);
-      const message = (action as any).message || '';
-      if (message) {
-        ctx.signals.pendingSayMessages.push(message);
-      }
-      return 'Message displayed';
-    }
-
-    // --- Control flow: continue ---
-    if (controlFlow === 'continue') {
-      ctx.signals.shouldResetIteration = true;
-      return 'Iteration counter reset';
-    }
-
-    // --- Regular action tools ---
-    const action = contrib.toAction(args);
-
-    // Reject malformed escaped-newline payloads (e.g. literal "\n" used for indentation).
-    if (action.type === 'edit') {
-      const path = action.path as string | undefined;
-      const newString = action.newString;
-      if (typeof newString === 'string') {
-        const corruption = detectEscapedNewlineCorruption(newString);
-        if (corruption) {
-          const target = path || 'unknown file';
-          const errorMsg = `Cannot edit ${target} — ${corruption}. Use REAL new lines in newString, not literal "\\n".`;
-          ctx.actionResults.push({
-            action: `Edit: ${target}`,
-            success: false,
-            result: 'Blocked',
-            error: errorMsg,
-          });
-          return errorMsg;
+      // --- Control flow: end ---
+      if (controlFlow === 'end') {
+        if (ctx.unresolvedEditPaths.size > 0 && ctx.signals.blockedEndCount < ctx.maxBlockedEnds) {
+          ctx.signals.blockedEndCount++;
+          const failedList = Array.from(ctx.unresolvedEditPaths).join(', ');
+          return `BLOCKED: Cannot finish \u2014 unresolved edit failures: ${failedList}. Fix them first.`;
         }
+        const action = contrib.toAction(args);
+        const message = (action as any).message || '';
+        ctx.signals.shouldBreak = true;
+        ctx.signals.endMessage = message || undefined;
+        return 'Task ended';
       }
-    }
-    if (action.type === 'write' || action.type === 'create') {
-      const path = action.path as string | undefined;
-      const content = action.content;
-      if (typeof content === 'string') {
-        const corruption = detectEscapedNewlineCorruption(content);
-        if (corruption) {
-          const target = path || 'unknown file';
-          const verb = action.type === 'write' ? 'write' : 'create';
-          const errorMsg = `Cannot ${verb} ${target} — ${corruption}. Use REAL new lines in content, not literal "\\n".`;
-          ctx.actionResults.push({
-            action: `Write: ${target}`,
-            success: false,
-            result: 'Blocked',
-            error: errorMsg,
-          });
-          return errorMsg;
-        }
-      }
-    }
 
-    // Read tracking
-    if (action.type === 'read') {
-      const path = action.path as string | undefined;
-      if (path) {
-        const hasOffset = action.offset !== undefined;
-        const hasLimit = action.limit !== undefined;
-        const coverage = hasOffset || hasLimit ? 'partial' : 'full';
-        if (ctx.readFiles.get(path) !== 'full') {
-          ctx.readFiles.set(path, coverage);
+      // --- Control flow: say ---
+      if (controlFlow === 'say') {
+        const action = contrib.toAction(args);
+        const message = (action as any).message || '';
+        if (message) {
+          ctx.signals.pendingSayMessages.push(message);
         }
+        return 'Message displayed';
       }
-    }
 
-    // Edit validation: reject edits on files not fully read
-    if (action.type === 'edit') {
-      const path = action.path as string | undefined;
-      if (path && ctx.readFiles.get(path) !== 'full') {
-        const wasPartial = ctx.readFiles.get(path) === 'partial';
-        const errorMsg = wasPartial
-          ? `Cannot edit ${path} \u2014 you only read part of this file. Use read_file (without offset/limit) to read the entire file first, then retry.`
-          : `Cannot edit ${path} \u2014 you have not read this file yet. Use read_file first, then retry the edit.`;
+      // --- Control flow: continue ---
+      if (controlFlow === 'continue') {
+        ctx.signals.shouldResetIteration = true;
+        return 'Iteration counter reset';
+      }
+
+      const normalizedToolName = contrib.name.trim().toLowerCase();
+      if (ctx.executionPolicy?.blockedToolNames.has(normalizedToolName)) {
+        const msg = `${ctx.executionPolicy.blockReason} Blocked tool: ${contrib.name}.`;
         ctx.actionResults.push({
-          action: `Edit: ${path}`,
+          action: contrib.name,
           success: false,
           result: 'Blocked',
-          error: errorMsg,
+          error: msg,
         });
-        return errorMsg;
+        return msg;
       }
-    }
 
-    // Execute the action
-    const results = await executeActions([action], ctx.actionHandlers);
-    const result = results[0];
+      // --- Regular action tools ---
+      const action = contrib.toAction(args);
+      const normalizedActionType = String(action.type ?? '').trim().toLowerCase();
+      if (ctx.executionPolicy?.blockedActionTypes.has(normalizedActionType)) {
+        const msg = `${ctx.executionPolicy.blockReason} Blocked action: ${normalizedActionType}.`;
+        ctx.actionResults.push({
+          action: String(action.type ?? contrib.name),
+          success: false,
+          result: 'Blocked',
+          error: msg,
+        });
+        return msg;
+      }
 
-    if (!result) {
-      ctx.actionResults.push({
-        action: contrib.name,
-        success: false,
-        result: 'No result',
-      });
-      return 'No result';
-    }
+      // Reject malformed escaped-newline payloads (e.g. literal "\n" used for indentation).
+      if (action.type === 'edit') {
+        const path = action.path as string | undefined;
+        const newString = action.newString;
+        if (typeof newString === 'string') {
+          const corruption = detectEscapedNewlineCorruption(newString);
+          if (corruption) {
+            const target = path || 'unknown file';
+            const errorMsg = `Cannot edit ${target} — ${corruption}. Use REAL new lines in newString, not literal "\\n".`;
+            ctx.actionResults.push({
+              action: `Edit: ${target}`,
+              success: false,
+              result: 'Blocked',
+              error: errorMsg,
+            });
+            return errorMsg;
+          }
+        }
+      }
+      if (action.type === 'write' || action.type === 'create') {
+        const path = action.path as string | undefined;
+        const content = action.content;
+        if (typeof content === 'string') {
+          const corruption = detectEscapedNewlineCorruption(content);
+          if (corruption) {
+            const target = path || 'unknown file';
+            const verb = action.type === 'write' ? 'write' : 'create';
+            const errorMsg = `Cannot ${verb} ${target} — ${corruption}. Use REAL new lines in content, not literal "\\n".`;
+            ctx.actionResults.push({
+              action: `Write: ${target}`,
+              success: false,
+              result: 'Blocked',
+              error: errorMsg,
+            });
+            return errorMsg;
+          }
+        }
+      }
 
-    // Track in actionResults
-    ctx.actionResults.push(result);
+      // Read tracking
+      if (action.type === 'read') {
+        const path = action.path as string | undefined;
+        if (path) {
+          const hasOffset = action.offset !== undefined;
+          const hasLimit = action.limit !== undefined;
+          const coverage = hasOffset || hasLimit ? 'partial' : 'full';
+          if (ctx.readFiles.get(path) !== 'full') {
+            ctx.readFiles.set(path, coverage);
+          }
+        }
+      }
 
-    // Track unresolved edit failures
-    const actionStr = String(result.action ?? '');
-    if (actionStr.startsWith('Edit:')) {
-      const path = actionStr.replace(/^Edit:\s*/, '').trim();
-      if (result.success) ctx.unresolvedEditPaths.delete(path);
-      else ctx.unresolvedEditPaths.add(path);
-    } else if (actionStr.startsWith('Write:') && result.success) {
-      const path = actionStr.replace(/^Write:\s*/, '').trim();
-      ctx.unresolvedEditPaths.delete(path);
-    }
+      // Edit validation: reject edits on files not fully read
+      if (action.type === 'edit') {
+        const path = action.path as string | undefined;
+        if (path && ctx.readFiles.get(path) !== 'full') {
+          const wasPartial = ctx.readFiles.get(path) === 'partial';
+          const errorMsg = wasPartial
+            ? `Cannot edit ${path} \u2014 you only read part of this file. Use read_file (without offset/limit) to read the entire file first, then retry.`
+            : `Cannot edit ${path} \u2014 you have not read this file yet. Use read_file first, then retry the edit.`;
+          ctx.actionResults.push({
+            action: `Edit: ${path}`,
+            success: false,
+            result: 'Blocked',
+            error: errorMsg,
+          });
+          return errorMsg;
+        }
+      }
 
-    // Cache file contents
-    if (ctx.cacheFileContents) {
-      await this.cacheFileContent(actionStr, result, ctx);
-    }
+      // Execute the action
+      const results = await executeActions([action], ctx.actionHandlers);
+      const result = results[0];
 
-    // Format result for the LLM
-    const status = result.success ? '\u2713' : '\u2717';
-    const errorNote = result.error ? `\nError: ${result.error}` : '';
-    return `[${status}] ${result.result}${errorNote}`;
+      if (!result) {
+        ctx.actionResults.push({
+          action: contrib.name,
+          success: false,
+          result: 'No result',
+        });
+        return 'No result';
+      }
+
+      // Track in actionResults
+      ctx.actionResults.push(result);
+
+      // Track unresolved edit failures
+      const actionStr = String(result.action ?? '');
+      if (actionStr.startsWith('Edit:')) {
+        const path = actionStr.replace(/^Edit:\s*/, '').trim();
+        if (result.success) ctx.unresolvedEditPaths.delete(path);
+        else ctx.unresolvedEditPaths.add(path);
+      } else if (actionStr.startsWith('Write:') && result.success) {
+        const path = actionStr.replace(/^Write:\s*/, '').trim();
+        ctx.unresolvedEditPaths.delete(path);
+      }
+
+      // Cache file contents
+      if (ctx.cacheFileContents) {
+        await this.cacheFileContent(action, actionStr, result, ctx);
+      }
+
+      // Format result for the LLM
+      const status = result.success ? '\u2713' : '\u2717';
+      const errorNote = result.error ? `\nError: ${result.error}` : '';
+      return `[${status}] ${result.result}${errorNote}`;
+    });
   }
 
   private async cacheFileContent(
+    action: Action,
     actionStr: string,
     result: ActionResult,
     ctx: ToolExecContext,
   ): Promise<void> {
-    if (actionStr.startsWith('Read:') && result.success && result.result) {
-      const filePath = actionStr.replace('Read: ', '').trim();
-      if (result.result.length < 50000) {
-        ctx.fileContextCache.set(filePath, result.result);
+    if (action.type === 'read' && result.success && result.result) {
+      const filePath = typeof action.path === 'string' ? action.path.trim() : '';
+      const isPartial = action.offset !== undefined || action.limit !== undefined;
+      if (filePath && result.result.length < 50000) {
+        // Always preserve the latest full read as canonical context for the file.
+        // Partial windows should not override a previously cached full file.
+        if (!isPartial || !ctx.fileContextCache.has(filePath)) {
+          ctx.fileContextCache.set(filePath, result.result);
+        }
       }
     }
     if (actionStr.startsWith('Edit:') && result.success && ctx.onRead) {
@@ -306,12 +344,6 @@ export class ToolRegistry {
         }
       } catch {
         /* ignore */
-      }
-    }
-    if (actionStr.startsWith('Grep:') && result.success && result.result) {
-      const grepKey = `grep:${actionStr}`;
-      if (result.result.length < 50000) {
-        ctx.fileContextCache.set(grepKey, result.result);
       }
     }
   }

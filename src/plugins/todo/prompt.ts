@@ -1,7 +1,8 @@
 export const TODO_PROMPT = [
-  'Use `<todo-write>` to track multi-step tasks. Create a todo list at the start of complex work.',
+  'Use `<todo-write>` to track multi-step tasks and keep the plan synchronized with the orchestrator workflow.',
+  'Create or refresh a todo list at the start of each delegation cycle, then update statuses before spawning new agents.',
   '',
-  'Format:',
+  'Format (copy exactly):',
   '<todo-write>',
   '  <todo id="1" status="pending">Description of step 1</todo>',
   '  <todo id="2" status="in_progress">Description of step 2</todo>',
@@ -9,10 +10,6 @@ export const TODO_PROMPT = [
   '</todo-write>',
   '',
   'Status values: `pending`, `in_progress`, `completed`.',
-  'Update the todo list whenever you start or finish a step.',
-  'Use `<todo-read/>` to read the current todo list.',
-  '',
-  '**Notifications:** Add `notify="telegram"` or `notify="discord"` to a todo item to push a notification when it completes:',
-  '  `<todo id="1" status="completed" notify="telegram">Deploy to prod</todo>`',
-  'Only use notify when the user explicitly asked to be notified.',
+  'Update the todo list whenever you start or finish a step, and re-open it with `<todo-read/>` before creating or modifying tasks.',
+  'Tie each `<todo>` entry to a concrete subtask or agent delegation, and mark it complete only when the sub-agent reports success.',
 ].join('\n');

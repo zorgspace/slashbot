@@ -6,11 +6,13 @@ import type {
   PromptContribution,
   SidebarContribution,
   ToolContribution,
+  KernelHookContribution,
 } from '../types';
 import { z } from 'zod/v4';
 import type { CommandHandler } from '../../core/commands/registry';
 import { registerActionParser } from '../../core/actions/parser';
 import { TYPES } from '../../core/di/types';
+import { buildDelegatedTaskPrompt, summarizeDelegatedTaskResult } from '../../core/app/delegation';
 import { getAgentsParserConfigs } from './parser';
 import {
   executeAgentStatus,
@@ -19,6 +21,7 @@ import {
   executeAgentDelete,
   executeAgentList,
   executeAgentRun,
+  executeAgentSend,
 } from './executors';
 import type { AgentOrchestratorService } from './services';
 import { createAgentOrchestratorService } from './services';
@@ -35,6 +38,8 @@ export class AgentsPlugin implements Plugin {
 
   private context!: PluginContext;
   private service!: AgentOrchestratorService;
+  private runtimeConfigured = false;
+  private uiEventBindingsReady = false;
 
   private resolveSenderAgentId(service: AgentOrchestratorService): string {
     const fallback = service.getActiveAgentId() || service.listAgents()[0]?.id || '';
@@ -166,6 +171,25 @@ export class AgentsPlugin implements Plugin {
         },
         execute: executeAgentRun,
       },
+      {
+        type: 'agent-send',
+        tagName: 'agent-send',
+        handler: {
+          onAgentSend: async (action: { to: string; title: string; content: string }) => {
+            const fromId = this.resolveSenderAgentId(service);
+            const toId = service.resolveAgentId(action.to);
+            if (!toId) return false;
+            await service.sendTask({
+              fromAgentId: fromId,
+              toAgentId: toId,
+              title: action.title,
+              content: action.content,
+            });
+            return true;
+          },
+        },
+        execute: executeAgentSend,
+      },
     ];
   }
 
@@ -251,6 +275,144 @@ export class AgentsPlugin implements Plugin {
     ];
   }
 
+  getKernelHooks(): KernelHookContribution[] {
+    return [
+      {
+        event: 'startup:after-grok-ready',
+        order: 30,
+        handler: payload => {
+          if (this.runtimeConfigured) {
+            return;
+          }
+          if (!this.service) {
+            return;
+          }
+          const routeTaskWithLLM = payload.routeTaskWithLLM as
+            | ((request: any) => Promise<any>)
+            | undefined;
+          const runDelegatedTask = payload.runDelegatedTask as
+            | ((agent: any, taskText: string) => Promise<{ response: string; endMessage?: string }>)
+            | undefined;
+          const isOrchestratorAgent = payload.isOrchestratorAgent as
+            | ((agent: any) => boolean)
+            | undefined;
+          if (!routeTaskWithLLM || !runDelegatedTask || !isOrchestratorAgent) {
+            return;
+          }
+
+          this.runtimeConfigured = true;
+          this.service.setTaskRouter(async request => routeTaskWithLLM(request));
+          this.service.setTaskExecutor(async (agent, task) => {
+            const taskPrompt = buildDelegatedTaskPrompt({
+              agent,
+              task,
+              isOrchestrator: isOrchestratorAgent(agent),
+            });
+            const result = await runDelegatedTask(agent, taskPrompt);
+            return { summary: summarizeDelegatedTaskResult(result) };
+          });
+        },
+      },
+      {
+        event: 'startup:after-ui-ready',
+        order: 60,
+        handler: payload => {
+          if (this.uiEventBindingsReady) {
+            return;
+          }
+          const eventBus = this.context?.eventBus as
+            | { on: (type: string, handler: (event: any) => void) => unknown }
+            | undefined;
+          const refreshTabs = payload.refreshTabs as (() => void) | undefined;
+          const getActiveTabId = payload.getActiveTabId as (() => string) | undefined;
+          const renderAgentsManagerTab = payload.renderAgentsManagerTab as
+            | (() => void)
+            | undefined;
+          const notifyAgentTab = payload.notifyAgentTab as ((agentId: string) => void) | undefined;
+          const handleAgentTaskFailed = payload.handleAgentTaskFailed as
+            | ((event: any) => void)
+            | undefined;
+          if (
+            !eventBus ||
+            !refreshTabs ||
+            !getActiveTabId ||
+            !renderAgentsManagerTab ||
+            !notifyAgentTab ||
+            !handleAgentTaskFailed
+          ) {
+            return;
+          }
+
+          this.uiEventBindingsReady = true;
+          eventBus.on('agents:updated', () => {
+            refreshTabs();
+            if (getActiveTabId() === 'agents') {
+              renderAgentsManagerTab();
+            }
+          });
+          for (const eventName of ['agents:task-queued', 'agents:task-running', 'agents:task-done']) {
+            eventBus.on(eventName, (event: any) => {
+              const agentId = typeof event?.agentId === 'string' ? event.agentId : '';
+              if (agentId) {
+                notifyAgentTab(agentId);
+              }
+            });
+          }
+          eventBus.on('agents:task-failed', (event: any) => {
+            const agentId = typeof event?.agentId === 'string' ? event.agentId : '';
+            if (agentId) {
+              notifyAgentTab(agentId);
+            }
+            handleAgentTaskFailed(event || {});
+          });
+        },
+      },
+      {
+        event: 'input:after-command',
+        order: 50,
+        handler: async payload => {
+          const source = String(payload.source || '');
+          const command = String(payload.command || '').toLowerCase();
+          if (source !== 'cli' || (command !== 'agent' && command !== 'agents')) {
+            return;
+          }
+
+          const refreshTabs = payload.refreshTabs as (() => void) | undefined;
+          const getActiveTabId = payload.getActiveTabId as (() => string) | undefined;
+          const renderAgentsManagerTab = payload.renderAgentsManagerTab as
+            | (() => void)
+            | undefined;
+          const renderTabSession = payload.renderTabSession as ((tabId: string) => void) | undefined;
+          const hasAgentTab = payload.hasAgentTab as ((tabId: string) => boolean) | undefined;
+          const hasConnectorTab = payload.hasConnectorTab as ((tabId: string) => boolean) | undefined;
+          const switchTab = payload.switchTab as ((tabId: string) => Promise<void>) | undefined;
+          const getActiveAgentId = payload.getActiveAgentId as (() => string | null) | undefined;
+
+          if (!refreshTabs || !getActiveTabId || !switchTab) {
+            return;
+          }
+
+          const currentTab = getActiveTabId();
+          refreshTabs();
+
+          if (currentTab === 'agents') {
+            renderAgentsManagerTab?.();
+            return;
+          }
+
+          const shouldRenderCurrent =
+            currentTab === 'main' || hasAgentTab?.(currentTab) === true || hasConnectorTab?.(currentTab) === true;
+          if (shouldRenderCurrent) {
+            renderTabSession?.(currentTab);
+            return;
+          }
+
+          await switchTab(getActiveAgentId?.() || 'agents');
+        },
+      },
+    ];
+  }
+
   getCommandContributions(): CommandHandler[] {
     return agentCommands;
   }
@@ -281,8 +443,9 @@ export class AgentsPlugin implements Plugin {
           '- `sessions_compaction`',
           '',
           'Coordination policy:',
+          '- Architect/orchestrator agents must not implement directly; they plan/delegate/verify only.',
+          '- Specialist agents should execute implementation tasks directly and report results back to the requester.',
           '- For routing/coordination, use `agents_status` and `agents_list` when needed.',
-          '- Prefer direct execution tools for implementation tasks; coordinate only when blocked or delegating.',
           '',
           'Storage layout (OpenClaw-style, project-local):',
           '- .agents/agents.json',
@@ -290,7 +453,19 @@ export class AgentsPlugin implements Plugin {
           '- .agents/<agentId>/workspace/{AGENTS,SOUL,TOOLS,IDENTITY,USER,HEARTBEAT}.md',
           '- .agents/<agentId>/workspace/BOOTSTRAP.md (new workspace only)',
           '- .agents/<agentId>/agent/ (per-agent state dir)',
+
+          '',
+          'XML Tags (preferred for agent mgmt):',
+          '- `<agent-create name="MyAgent" responsibility="Handle auth" systemPrompt="You are an auth specialist." autoPoll="true"/>`',
+          '- `<agent-update agent="MyAgent" name="Updated" responsibility="New role"/>`',
+          '- `<agent-delete agent="MyAgent"/>`',
+          '- `<agent-list/>`',
+          '- `<agent-status/>`',
+          '- `<agent-run agent="MyAgent"/>`',
+          '',
+          'Use XML tags directly for declarative agent management; fallback to tools (e.g., agents_create) if needed.',
         ].join('\n'),
+
       },
     ];
   }

@@ -9,9 +9,10 @@ import type {
   ActionContribution,
   PromptContribution,
   ToolContribution,
+  KernelHookContribution,
 } from '../types';
-import type { ActionHandlers } from '../../core/actions/types';
 import { registerActionParser } from '../../core/actions/parser';
+import { display } from '../../core/ui';
 import { executeBash, executeExec } from './executors';
 import { getBashParserConfigs } from './parser';
 import { BASH_PROMPT } from './prompt';
@@ -237,6 +238,21 @@ export class BashPlugin implements Plugin {
 
   getToolContributions(): ToolContribution[] {
     return getBashToolContributions();
+  }
+
+  getKernelHooks(): KernelHookContribution[] {
+    return [
+      {
+        event: 'shutdown:before',
+        order: 20,
+        handler: () => {
+          const killed = processManager.killAll();
+          if (killed > 0) {
+            display.muted(`[Process] Killed ${killed} background process(es)`);
+          }
+        },
+      },
+    ];
   }
 
   getPromptContributions(): PromptContribution[] {

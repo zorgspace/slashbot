@@ -13,6 +13,7 @@ import { streamResponse } from './streaming';
 import type { ClientContext, AgenticLoopOptions, AgenticLoopResult, Message } from './types';
 import type { ToolExecContext } from './toolRegistry';
 import { getModelInfo } from '../../plugins/providers/models';
+import { summarizeToolResultForHistory } from './historyPolicy';
 
 const MAX_RALPH_RETRIES = 3;
 const RALPH_TAG = '[ralph-nudge]';
@@ -68,10 +69,12 @@ export async function runAgenticLoop(
   const readFiles = new Map<string, 'full' | 'partial'>();
 
   // Determine if native tool calling is available
+  const allowActionExecution = opts.executeActions !== false;
   const toolRegistry = ctx.toolRegistry;
   const modelId = ctx.getModel();
   const modelInfo = getModelInfo(modelId);
   const toolCallingEnabled = !!(
+    allowActionExecution &&
     toolRegistry &&
     toolRegistry.size > 0 &&
     modelInfo?.toolCalling !== false
@@ -103,9 +106,30 @@ export async function runAgenticLoop(
   };
 
   const shouldDisplayControlMessages = opts.displayStream && !(opts.quiet ?? false);
+  const outputTabId = opts.outputTabId || ctx.outputTabId;
+  const blockedToolNames = new Set(
+    (opts.executionPolicy?.blockedToolNames || []).map(name => name.trim().toLowerCase()),
+  );
+  const blockedActionTypes = new Set(
+    (opts.executionPolicy?.blockedActionTypes || []).map(name => name.trim().toLowerCase()),
+  );
+  if (blockedActionTypes.size > 0 || blockedToolNames.size > 0) {
+    execCtx.executionPolicy = {
+      blockedToolNames,
+      blockedActionTypes,
+      blockReason:
+        opts.executionPolicy?.blockReason ||
+        'Execution policy violation. This lane is orchestration-only.',
+    };
+  }
+  execCtx.outputTabId = outputTabId;
+  let contextPressureWarned = false;
 
   while (true) {
     iteration++;
+    if (iteration > opts.maxIterations) {
+      break;
+    }
 
     // Reset per-iteration signals
     execCtx.signals.shouldBreak = false;
@@ -134,6 +158,20 @@ export async function runAgenticLoop(
       };
     }
 
+    const contextPressure = ctx.sessionManager.applyContextPressurePolicy({
+      modelMaxTokens: modelInfo?.maxTokens,
+    });
+    if (contextPressure.changed && contextPressure.actions.length > 0) {
+      display.muted(
+        `[Context] Pressure ${Math.round(contextPressure.ratio * 100)}% -> ${contextPressure.actions.join(', ')}`,
+      );
+    } else if (!contextPressureWarned && contextPressure.ratio >= 0.9) {
+      contextPressureWarned = true;
+      display.warningText(
+        `[Context] High usage (${Math.round(contextPressure.ratio * 100)}%). Applying stricter transcript hygiene.`,
+      );
+    }
+
     // Build executable tools (with execute callbacks) for this iteration
     const toolsParam =
       toolCallingEnabled && !useXmlFallback
@@ -153,6 +191,7 @@ export async function runAgenticLoop(
         quiet: opts.quiet ?? false,
         timeout: opts.iterationTimeout,
         thinkingLabel: 'Reticulating...',
+        outputTabId,
         tools: toolsParam,
       });
       isFirstIteration = false;
@@ -170,31 +209,43 @@ export async function runAgenticLoop(
         opts.tokenLimitStrategy === 'condense' &&
         error.message?.includes('maximum prompt length')
       ) {
-        display.warningText(
-          '[Token limit reached] Creating condensed context and coming back fresh...',
-        );
-
-        const condensedSummary = ctx.sessionManager.condenseHistory();
-        display.muted(
-          `[Context] Condensed ${ctx.sessionManager.history.length} messages into 1 summary`,
-        );
-
-        ctx.sessionManager.history = [
-          ctx.sessionManager.history[0],
-          {
-            role: 'user',
-            content: condensedSummary,
-            _render: {
-              kind: 'compaction_divider',
-              text: 'Conversation context condensed after token limit',
+        const compacted = ctx.sessionManager.applyContextPressurePolicy({
+          modelMaxTokens: modelInfo?.maxTokens,
+          pruneRatio: 0.7,
+          summaryRatio: 0.78,
+          hardResetRatio: 0.9,
+          keepRecentMessages: 6,
+        });
+        if (compacted.changed) {
+          display.warningText(
+            `[Token limit reached] Applied emergency compaction: ${compacted.actions.join(', ')}`,
+          );
+        } else {
+          display.warningText(
+            '[Token limit reached] Creating condensed context and coming back fresh...',
+          );
+          const condensedSummary = ctx.sessionManager.condenseHistory();
+          display.muted(
+            `[Context] Condensed ${ctx.sessionManager.history.length} messages into 1 summary`,
+          );
+          ctx.sessionManager.history = [
+            ctx.sessionManager.history[0],
+            {
+              role: 'user',
+              content: condensedSummary,
+              _render: {
+                kind: 'compaction_divider',
+                text: 'Conversation context condensed after token limit',
+              },
             },
-          },
-        ];
+          ];
+        }
 
         try {
           const result = await streamResponse(ctx, {
             displayStream: opts.displayStream,
             quiet: opts.quiet ?? false,
+            outputTabId,
             tools: toolsParam,
           });
           responseContent = result.content;
@@ -228,6 +279,23 @@ export async function runAgenticLoop(
     // Clear images after first API call
     if (messageHasImages && hasImagesInBuffer()) {
       clearImages();
+    }
+
+    // Some callers (e.g. heartbeat) want a pure text response with no XML/tool execution.
+    if (!allowActionExecution) {
+      if (responseMessages && responseMessages.length > 0) {
+        pushResponseMessages(ctx, responseContent, responseMessages);
+      } else {
+        ctx.sessionManager.history.push({
+          role: 'assistant',
+          content: responseContent || '',
+          _render: {
+            kind: 'assistant_markdown',
+            text: responseContent || '',
+          },
+        });
+      }
+      break;
     }
 
     // ===== TOOL CALL PATH =====
@@ -423,8 +491,30 @@ export async function runAgenticLoop(
       }
     }
 
+    const syntheticResults: ActionResult[] = [];
+    const policyFilteredActions =
+      blockedActionTypes.size === 0
+        ? actions
+        : actions.filter(action => {
+            const normalizedType = String(action.type || '')
+              .trim()
+              .toLowerCase();
+            if (!blockedActionTypes.has(normalizedType)) {
+              return true;
+            }
+            syntheticResults.push({
+              action: String(action.type || 'Action'),
+              success: false,
+              result: 'Blocked',
+              error:
+                opts.executionPolicy?.blockReason ||
+                `Execution policy violation: ${normalizedType} is disabled in this lane.`,
+            });
+            return false;
+          });
+
     // Read tracking: update readFiles map from parsed actions
-    for (const action of actions) {
+    for (const action of policyFilteredActions) {
       if (action.type === 'read') {
         const path = (action as { path?: string }).path;
         if (path) {
@@ -439,8 +529,7 @@ export async function runAgenticLoop(
     }
 
     // Edit validation: reject edits on files not fully read
-    const syntheticResults: ActionResult[] = [];
-    const filteredActions = actions.filter(action => {
+    const filteredActions = policyFilteredActions.filter(action => {
       if (action.type === 'edit') {
         const path = (action as { path?: string }).path;
         if (path && readFiles.get(path) !== 'full') {
@@ -459,7 +548,9 @@ export async function runAgenticLoop(
       return true;
     });
 
-    const executedResults = await executeActions(filteredActions, ctx.actionHandlers);
+    const executedResults = await display.withOutputTab(outputTabId, () =>
+      executeActions(filteredActions, ctx.actionHandlers),
+    );
     const actionResults = [...syntheticResults, ...executedResults];
 
     // Track unresolved edit failures
@@ -609,12 +700,6 @@ export async function runAgenticLoop(
             }
           } catch {
             // Ignore read errors
-          }
-        }
-        if (action.startsWith('Grep:') && success && result.result) {
-          const grepKey = `grep:${action}`;
-          if (result.result.length < 50000) {
-            ctx.sessionManager.fileContextCache.set(grepKey, result.result);
           }
         }
       }
@@ -855,7 +940,7 @@ function pushResponseMessages(
       const toolResults = parts.map((tr: any) => ({
         toolCallId: tr.toolCallId,
         toolName: tr.toolName,
-        result: extractToolResultText(tr),
+        result: summarizeToolResultForHistory(tr.toolName || 'tool', extractToolResultText(tr)),
       }));
 
       if (toolResults.length > 0) {

@@ -8,6 +8,8 @@ import { theme } from '../../../core/ui/theme';
 import { getLocalHistoryFile } from '../../../core/config/constants';
 import { isSessionActive } from '../../wallet/services';
 import type { CommandHandler } from '../../../core/commands/registry';
+import { listConnectorCatalogEntries } from '../../../connectors/catalog';
+import type { ConnectorCapabilities, ConnectorStatus } from '../../../connectors/base';
 
 export const helpCommand: CommandHandler = {
   name: 'help',
@@ -73,18 +75,43 @@ export const helpCommand: CommandHandler = {
 
 export const clearCommand: CommandHandler = {
   name: 'clear',
-  description: 'Clear conversation history',
-  usage: '/clear',
+  description: 'Clear current tab conversation',
+  usage: '/clear (or /clean)',
+  aliases: ['clean'],
   group: 'System',
   execute: async (_, context) => {
-    context.grokClient?.clearHistory();
+    if (context.grokClient) {
+      let sessionId: string | null = null;
+      const activeTabId = context.tuiApp?.getActiveTabId();
+
+      if (activeTabId && activeTabId !== 'agents') {
+        if (activeTabId === 'main') {
+          sessionId = 'cli';
+        } else {
+          try {
+            const { TYPES } = await import('../../../core/di/types');
+            const agentService = context.container.get<any>(TYPES.AgentOrchestratorService);
+            sessionId = agentService?.getAgent?.(activeTabId)?.sessionId || null;
+          } catch {
+            // Agent service is optional.
+          }
+        }
+      }
+
+      // Fallback: clear the currently selected session in the LLM client.
+      if (!sessionId) {
+        sessionId = context.grokClient.getSessionId();
+      }
+
+      context.grokClient.clearSession(sessionId);
+    }
+
     if (context.tuiApp) {
       context.tuiApp.clearChat();
-      context.tuiApp.clearDiffPanel();
     } else {
       console.clear();
     }
-    display.successText('Conversation history cleared');
+    display.successText('Current tab cleared');
     return true;
   },
 };
@@ -156,17 +183,139 @@ export const bannerCommand: CommandHandler = {
     const walletUnlocked = isSessionActive();
 
     const pkg = await import('../../../../package.json');
-const bannerText = `${fg(theme.primary)('Slashbot v' + pkg.version)}
-${fg(theme.muted)('Working directory: ' + context.codeEditor.getWorkDir())}
-${fg(theme.muted)('Tasks: ' + tasksCount)}
-${fg(theme.muted)('Telegram: ' + (context.connectors.has('telegram') ? fg(theme.success)('connected') : 'off'))}
-${fg(theme.muted)('Discord: ' + (context.connectors.has('discord') ? fg(theme.success)('connected') : 'off'))}
-${fg(theme.muted)('Voice: ' + (voiceEnabled ? fg(theme.success)('enabled') : 'off'))}
-${fg(theme.muted)('Heartbeat: ' + (heartbeatStatus?.running && heartbeatStatus.enabled ? fg(theme.success)('active') : 'off'))}
-${fg(theme.muted)('Wallet: ' + (walletUnlocked ? fg(theme.success)('unlocked') : 'locked'))}
-`;
-    display.append(bannerText);
+    const bannerLines = [
+      `Slashbot v${pkg.version}`,
+      `Working directory: ${context.codeEditor.getWorkDir()}`,
+      `Tasks: ${tasksCount}`,
+      `Telegram: ${context.connectors.has('telegram') ? 'connected' : 'off'}`,
+      `Discord: ${context.connectors.has('discord') ? 'connected' : 'off'}`,
+      `Voice: ${voiceEnabled ? 'enabled' : 'off'}`,
+      `Heartbeat: ${heartbeatStatus?.running && heartbeatStatus.enabled ? 'active' : 'off'}`,
+      `Solana: ${walletUnlocked ? 'unlocked' : 'locked'}`,
+    ];
+    display.renderMarkdown(bannerLines.join('\n'), true);
 
+    return true;
+  },
+};
+
+function isConnectorConfigured(id: string, context: Parameters<CommandHandler['execute']>[1]): boolean {
+  if (id === 'telegram') return !!context.configManager.getTelegramConfig();
+  if (id === 'discord') return !!context.configManager.getDiscordConfig();
+  return context.connectors.has(id);
+}
+
+function buildConnectorStatus(
+  id: string,
+  context: Parameters<CommandHandler['execute']>[1],
+): ConnectorStatus {
+  const handle = context.connectors.get(id);
+  const configured = isConnectorConfigured(id, context);
+  return (
+    handle?.getStatus?.() ?? {
+      source: id,
+      configured,
+      running: handle?.isRunning?.() ?? false,
+      authorizedTargets: [],
+      notes: [configured ? 'Configured but not running' : 'Not configured'],
+    }
+  );
+}
+
+function renderCapabilities(capabilities: ConnectorCapabilities | null): string {
+  if (!capabilities) return 'n/a';
+  const bits = [
+    `chatTypes=${capabilities.chatTypes.join(',') || 'n/a'}`,
+    `markdown=${capabilities.supportsMarkdown ? 'yes' : 'no'}`,
+    `threads=${capabilities.supportsThreads ? 'yes' : 'no'}`,
+    `reactions=${capabilities.supportsReactions ? 'yes' : 'no'}`,
+    `edit=${capabilities.supportsEdit ? 'yes' : 'no'}`,
+    `delete=${capabilities.supportsDelete ? 'yes' : 'no'}`,
+    `typing=${capabilities.supportsTyping ? 'yes' : 'no'}`,
+    `voiceIn=${capabilities.supportsVoiceInbound ? 'yes' : 'no'}`,
+    `imageIn=${capabilities.supportsImageInbound ? 'yes' : 'no'}`,
+    `multiTarget=${capabilities.supportsMultiTarget ? 'yes' : 'no'}`,
+  ];
+  return bits.join(' | ');
+}
+
+export const connectorsCommand: CommandHandler = {
+  name: 'connectors',
+  description: 'Show connector status, capabilities, and actions',
+  usage: '/connectors [status|capabilities|actions] [telegram|discord]',
+  group: 'Connectors',
+  subcommands: ['status', 'capabilities', 'actions'],
+  execute: async (args, context) => {
+    const catalog = listConnectorCatalogEntries();
+    const known = new Set(catalog.map(entry => String(entry.id)));
+
+    let mode: 'status' | 'capabilities' | 'actions' = 'status';
+    let targetId = '';
+
+    const first = (args[0] || '').toLowerCase();
+    const second = (args[1] || '').toLowerCase();
+
+    if (first === 'status' || first === 'capabilities' || first === 'actions') {
+      mode = first;
+      targetId = second;
+    } else if (first) {
+      targetId = first;
+    }
+
+    if (targetId && !known.has(targetId)) {
+      display.errorText(`Unknown connector: ${targetId}`);
+      display.muted('Valid connectors: ' + Array.from(known).join(', '));
+      return true;
+    }
+
+    const entries = targetId
+      ? catalog.filter(entry => String(entry.id) === targetId)
+      : catalog;
+
+    if (mode === 'status') {
+      const lines: string[] = ['Connector Status'];
+      for (const entry of entries) {
+        const id = String(entry.id);
+        const status = buildConnectorStatus(id, context);
+        const inline = display.formatInline(status).replace(/`/g, "'");
+        lines.push('');
+        lines.push(`- ${entry.label} (${id}): ${inline}`);
+      }
+      display.renderMarkdown(lines.join('\n'), true);
+      return true;
+    }
+
+    if (mode === 'capabilities') {
+      const lines: string[] = ['Connector Capabilities'];
+      for (const entry of entries) {
+        const id = String(entry.id);
+        const runtime = context.connectors.get(id);
+        const capabilities = runtime?.getCapabilities?.() || entry.capabilities;
+        lines.push('');
+        lines.push(`${entry.label} (${id})`);
+        lines.push(renderCapabilities(capabilities));
+      }
+      display.renderMarkdown(lines.join('\n'), true);
+      return true;
+    }
+
+    const lines: string[] = ['Connector Actions'];
+    for (const entry of entries) {
+      const id = String(entry.id);
+      const runtime = context.connectors.get(id);
+      const actions = runtime?.listSupportedActions?.() || entry.actions;
+      const actionLines =
+        actions.length > 0
+          ? actions.map(action => {
+              const targetTag = action.requiresTarget ? ' [target]' : '';
+              return `- ${action.id}${targetTag}: ${action.description}`;
+            })
+          : ['- none'];
+      lines.push('');
+      lines.push(`${entry.label} (${id})`);
+      lines.push(...actionLines);
+    }
+    display.renderMarkdown(lines.join('\n'), true);
     return true;
   },
 };

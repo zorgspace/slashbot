@@ -6,6 +6,7 @@
 import type { EventBus } from '../core/events/EventBus';
 
 export type ConnectorSource = 'cli' | 'telegram' | 'discord' | (string & {});
+export type ConnectorChatType = 'direct' | 'group' | 'channel' | 'thread';
 
 export interface MessageMetadata {
   /** Message was already displayed (e.g., transcription result) */
@@ -31,6 +32,36 @@ export interface ConnectorConfig {
   conciseMode: boolean;
 }
 
+export interface ConnectorCapabilities {
+  chatTypes: ConnectorChatType[];
+  supportsMarkdown: boolean;
+  supportsReactions: boolean;
+  supportsEdit: boolean;
+  supportsDelete: boolean;
+  supportsThreads: boolean;
+  supportsTyping: boolean;
+  supportsVoiceInbound: boolean;
+  supportsImageInbound: boolean;
+  supportsMultiTarget: boolean;
+}
+
+export interface ConnectorActionSpec {
+  id: string;
+  description: string;
+  requiresTarget?: boolean;
+}
+
+export interface ConnectorStatus {
+  source: ConnectorSource;
+  configured: boolean;
+  running: boolean;
+  primaryTarget?: string;
+  activeTarget?: string;
+  authorizedTargets: string[];
+  ownerId?: string;
+  notes?: string[];
+}
+
 export interface Connector {
   readonly source: ConnectorSource;
   readonly config: ConnectorConfig;
@@ -41,6 +72,9 @@ export interface Connector {
   stop(): void;
   sendMessage(text: string): Promise<void>;
   isRunning(): boolean;
+  getCapabilities?(): ConnectorCapabilities;
+  listSupportedActions?(): ConnectorActionSpec[];
+  getStatus?(): ConnectorStatus;
 }
 
 /** Platform-specific configs */

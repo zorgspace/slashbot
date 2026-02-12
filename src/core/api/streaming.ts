@@ -25,6 +25,8 @@ export async function streamResponse(
   const quiet = options?.quiet ?? false;
   const timeout = options?.timeout;
   const thinkingLabel = options?.thinkingLabel ?? 'Reticulating...';
+  const outputTabId = options?.outputTabId || ctx.outputTabId;
+  const withOutputTab = <T>(fn: () => T): T => display.withOutputTab(outputTabId, fn);
 
   if (ctx.authProvider.beforeRequest) {
     await ctx.authProvider.beforeRequest();
@@ -47,10 +49,10 @@ export async function streamResponse(
 
   // Always show spinner while waiting for API response
   if (!quiet) {
-    display.startThinking(thinkingLabel);
+    withOutputTab(() => display.startThinking(thinkingLabel));
   }
   if (showThinking && !quiet) {
-    display.startThinkingStream();
+    withOutputTab(() => display.startThinkingStream());
   }
 
   const callNum = ++ctx.usage.requests;
@@ -68,7 +70,7 @@ export async function streamResponse(
       promptText = textPart?.text || '';
     }
     if (promptText && !quiet) {
-      display.logPrompt(promptText);
+      withOutputTab(() => display.logPrompt(promptText));
     }
   }
 
@@ -176,19 +178,20 @@ export async function streamResponse(
 
       // Stop spinner on first content event
       if (ctx.thinkingActive && (type === 'text-delta' || type === 'tool-call')) {
-        display.stopThinking();
+        withOutputTab(() => display.stopThinking());
         ctx.thinkingActive = false;
         if (showThinking && !quiet) {
-          display.endThinkingStream();
+          withOutputTab(() => display.endThinkingStream());
         }
       }
 
       if (type === 'tool-call') {
         hasToolCalls = true;
         if (!quiet) {
-          display.logAction((event as any).toolName);
+          withOutputTab(() => display.logAction((event as any).toolName));
         }
       }
+
     }
 
     // ===== Extract all data from AI SDK normalized promises =====
@@ -202,7 +205,7 @@ export async function streamResponse(
       if (typeof reasoning === 'string' && reasoning) {
         thinkingContent = reasoning;
         if (showThinking && !quiet) {
-          display.streamThinkingChunk(reasoning);
+          withOutputTab(() => display.streamThinkingChunk(reasoning));
         }
       }
     } catch {
@@ -213,6 +216,39 @@ export async function streamResponse(
     const response = await stream.response;
     if (response?.messages) {
       responseMessages = response.messages;
+    }
+    if (!responseContent.trim() && responseMessages.length > 0) {
+      const fallbackText = extractAssistantTextFromMessages(responseMessages);
+      if (fallbackText) {
+        responseContent = fallbackText;
+      }
+    }
+
+    let resolvedUsage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    } | null = null;
+    try {
+      const usage = await (stream as any).usage;
+      resolvedUsage = resolveUsage(usage);
+    } catch {
+      resolvedUsage = null;
+    }
+    if (!resolvedUsage) {
+      resolvedUsage = resolveUsage((response as any)?.usage);
+    }
+    if (!resolvedUsage) {
+      resolvedUsage = resolveUsage((response as any)?.providerMetadata?.usage);
+    }
+    if (!resolvedUsage) {
+      resolvedUsage = resolveUsage((response as any)?.providerMetadata?.tokenUsage);
+    }
+
+    if (resolvedUsage) {
+      ctx.usage.promptTokens += resolvedUsage.promptTokens;
+      ctx.usage.completionTokens += resolvedUsage.completionTokens;
+      ctx.usage.totalTokens += resolvedUsage.totalTokens;
     }
 
     // Tool calls — detect from resolved promise if not caught in stream events
@@ -231,11 +267,11 @@ export async function streamResponse(
 
     // Stop thinking indicators if still active
     if (ctx.thinkingActive) {
-      display.stopThinking();
+      withOutputTab(() => display.stopThinking());
       ctx.thinkingActive = false;
     }
     if (showThinking && !quiet) {
-      display.endThinkingStream();
+      withOutputTab(() => display.endThinkingStream());
     }
 
     // Display the full response
@@ -248,8 +284,8 @@ export async function streamResponse(
         .replace(/^\[you\]\s*/gim, '')
         .trim();
       if (displayText) {
-        if (!display.renderAssistantTranscript(displayText)) {
-          display.renderMarkdown(displayText, true);
+        if (!withOutputTab(() => display.renderAssistantTranscript(displayText))) {
+          withOutputTab(() => display.renderMarkdown(displayText, true));
         }
         ctx.sessionManager.displayedContent = displayText;
       }
@@ -266,8 +302,10 @@ export async function streamResponse(
     });
 
     if (!quiet) {
-      display.streamThinkingChunk(
-        `\u{1F6EC} #${callNum} \u2190 ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
+      withOutputTab(() =>
+        display.streamThinkingChunk(
+          `\u{1F6EC} #${callNum} \u2190 ${deltaPrompt}p + ${deltaCompletion}c tokens\n`,
+        ),
       );
     }
   } catch (error: any) {
@@ -290,19 +328,21 @@ export async function streamResponse(
       clearTimeout(fetchTimeout);
     }
     if (ctx.thinkingActive) {
-      display.stopThinking();
+      withOutputTab(() => display.stopThinking());
       ctx.thinkingActive = false;
     }
     if (showThinking && !quiet) {
-      display.endThinkingStream();
+      withOutputTab(() => display.endThinkingStream());
     }
     ctx.abortController = null;
     ctx.onAbortControllerChange?.(null);
   }
 
   if (thinkingContent && !responseContent.trim() && !hasToolCalls) {
-    display.warningText(
-      `[Model produced thinking but no response (finish: ${finishReason}) - may need to retry]`,
+    withOutputTab(() =>
+      display.warningText(
+        `[Model produced thinking but no response (finish: ${finishReason}) - may need to retry]`,
+      ),
     );
   }
 
@@ -313,4 +353,63 @@ export async function streamResponse(
     hasToolCalls,
     responseMessages: responseMessages.length > 0 ? responseMessages : undefined,
   };
+}
+
+function extractAssistantTextFromMessages(messages: any[]): string {
+  const text: string[] = [];
+  for (const msg of messages) {
+    if (msg?.role !== 'assistant') continue;
+
+    if (typeof msg.content === 'string') {
+      if (msg.content.trim()) text.push(msg.content);
+      continue;
+    }
+
+    if (!Array.isArray(msg.content)) continue;
+    for (const part of msg.content) {
+      if (part?.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+        text.push(part.text);
+      }
+    }
+  }
+  return text.join('').trim();
+}
+
+function resolveUsage(usage: unknown): {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+} | null {
+  if (!usage || typeof usage !== 'object') return null;
+  const raw = usage as Record<string, unknown>;
+
+  const promptTokens =
+    pickNumber(raw, ['promptTokens', 'inputTokens', 'input_tokens', 'prompt_tokens']) ?? 0;
+  const completionTokens =
+    pickNumber(raw, ['completionTokens', 'outputTokens', 'output_tokens', 'completion_tokens']) ?? 0;
+  const totalTokens = pickNumber(raw, ['totalTokens', 'total_tokens']);
+
+  if (promptTokens <= 0 && completionTokens <= 0 && (!totalTokens || totalTokens <= 0)) {
+    return null;
+  }
+
+  const resolvedTotal = Math.max(0, totalTokens ?? promptTokens + completionTokens);
+
+  return {
+    promptTokens: Math.max(0, promptTokens),
+    completionTokens: Math.max(0, completionTokens),
+    totalTokens: resolvedTotal,
+  };
+}
+
+function pickNumber(source: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
 }

@@ -14,16 +14,22 @@ export async function executeGlob(
 
   try {
     const files = await handlers.onGlob(action.pattern, action.path);
-    display.pushExploreProbe('Glob', files.join('\n'), true);
+    const meta = `pattern="${action.pattern}"${action.path ? ` path="${action.path}"` : ''}`;
+    const fileList = files.join('\n');
+    const hasFiles = files.length > 0;
+    const globPayload = hasFiles ? fileList : 'No files found';
+    const globResult = hasFiles ? fileList : `No files found (${meta})`;
+    display.pushExploreProbe('Glob', globPayload, true, meta);
 
     return {
       action: `Glob: ${action.pattern}`,
       success: true,
-      result: files.length > 0 ? files.join('\n') : 'No files found',
+      result: globResult,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    display.pushExploreProbe('Glob', errorMsg, false);
+    const meta = `pattern="${action.pattern}"${action.path ? ` path="${action.path}"` : ''}`;
+    display.pushExploreProbe('Glob', errorMsg, false, meta);
     return {
       action: `Glob: ${action.pattern}`,
       success: false,
@@ -71,7 +77,8 @@ export async function executeLS(
 
   try {
     const entries = await handlers.onLS(action.path, action.ignore);
-    display.pushExploreProbe('LS', entries.join('\n'), true);
+    const lsPayload = entries.length > 0 ? entries.join('\n') : 'No entries found';
+    display.pushExploreProbe('LS', lsPayload, true);
 
     return {
       action: `LS: ${action.path}`,

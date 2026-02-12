@@ -30,14 +30,20 @@ export async function executeHeartbeat(
     }
 
     const result = await handlers.onHeartbeat(action.prompt);
+    const skipped = result.status === 'skipped';
     display.appendAssistantMessage(
-      formatToolAction('Heartbeat', mode, { success: result.type === 'ok' }),
+      formatToolAction('Heartbeat', mode, {
+        success: result.type === 'ok' && !skipped,
+        summary: skipped ? `skipped (${result.skipReason || 'unknown'})` : undefined,
+      }),
     );
 
     return {
       action: 'heartbeat',
-      success: true,
-      result: `Heartbeat ${result.type}: ${result.content}`,
+      success: !skipped,
+      result: skipped
+        ? `Heartbeat skipped: ${result.skipReason || 'unknown'}`
+        : `Heartbeat ${result.type}: ${result.content}`,
     };
   } catch (error: any) {
     const errorMsg = error?.message || String(error);

@@ -4,8 +4,6 @@ export interface TodoItem {
   status: 'pending' | 'in_progress' | 'completed';
   createdAt: number;
   updatedAt: number;
-  /** Connector target for push notification on completion (e.g. 'telegram', 'discord') */
-  notifyTarget?: string;
 }
 
 export interface TodoWriteAction {

@@ -1,5 +1,4 @@
-import type { ActionParserConfig, ParserUtils } from '../../core/actions/parser';
-import { extractAttr, extractBoolAttr } from '../../core/actions/parser';
+import type { ActionParserConfig } from '../../core/actions/parser';
 import type { Action } from '../../core/actions/types';
 import { display } from '../../core/ui';
 import { detectEscapedNewlineCorruption } from '../../core/actions/contentGuards';

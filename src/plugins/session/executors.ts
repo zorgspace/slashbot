@@ -11,6 +11,9 @@ type SessionsSendAction = { type: 'sessions-send'; sessionId: string; message: s
 type SessionsUsageAction = { type: 'sessions-usage' };
 type SessionsCompactionAction = { type: 'sessions-compaction' };
 
+const MAX_HISTORY_MESSAGE_CHARS = 360;
+const MAX_HISTORY_PAYLOAD_CHARS = 12_000;
+
 export async function executeSessionsList(
   _action: SessionsListAction,
   handlers: ActionHandlers,
@@ -54,20 +57,32 @@ export async function executeSessionsHistory(
   return {
     action: `SessionsHistory: ${action.sessionId}`,
     success: true,
-    result:
-      messages.length === 0
-        ? 'No messages'
-        : messages
-            .map((m: any) => {
-              const content =
-                typeof m.content === 'string'
-                  ? m.content
-                  : Array.isArray(m.content)
-                    ? (m.content.find((p: any) => p.type === 'text')?.text ?? '[multimodal]')
-                    : '';
-              return `${m.role}: ${String(content).slice(0, 500)}`;
-            })
-            .join('\n\n'),
+    result: (() => {
+      if (messages.length === 0) {
+        return 'No messages';
+      }
+      let used = 0;
+      const rows: string[] = [];
+      for (const m of messages) {
+        const content =
+          typeof m.content === 'string'
+            ? m.content
+            : Array.isArray(m.content)
+              ? (m.content.find((p: any) => p.type === 'text')?.text ?? '[multimodal]')
+              : '';
+        const row = `${m.role}: ${String(content).slice(0, MAX_HISTORY_MESSAGE_CHARS)}`;
+        const withSpacing = rows.length > 0 ? `\n\n${row}` : row;
+        if (used + withSpacing.length > MAX_HISTORY_PAYLOAD_CHARS) {
+          rows.push(
+            `\n\n[truncated: output capped at ${MAX_HISTORY_PAYLOAD_CHARS} chars for context hygiene]`,
+          );
+          break;
+        }
+        rows.push(withSpacing);
+        used += withSpacing.length;
+      }
+      return rows.join('');
+    })(),
   };
 }
 
@@ -76,17 +91,22 @@ export async function executeSessionsSend(
   handlers: ActionHandlers,
 ): Promise<ActionResult | null> {
   if (!handlers.onSessionsSend) return null;
-  const res = await handlers.onSessionsSend(action.sessionId, action.message, action.run ?? false);
-  display.appendAssistantMessage(
-    formatToolAction('SessionsSend', action.sessionId, {
-      success: true,
-      summary: action.run ? 'queued + executed' : 'queued',
-    }),
-  );
+  await handlers.onSessionsSend(action.sessionId, action.message, action.run ?? false);
+  const ranNow = !!action.run;
+  if (!ranNow) {
+    display.appendAssistantMessage(
+      formatToolAction('SessionsSend', action.sessionId, {
+        success: true,
+        summary: 'queued',
+      }),
+    );
+  }
   return {
     action: `SessionsSend: ${action.sessionId}`,
     success: true,
-    result: res?.response ? `Delivered\nResponse: ${res.response}` : 'Delivered',
+    // Do not echo target session output into the caller transcript.
+    // The target session/tab is the source of truth for execution output.
+    result: ranNow ? 'Delivered and executed in target session.' : 'Delivered',
   };
 }
 

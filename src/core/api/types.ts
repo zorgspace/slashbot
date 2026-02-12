@@ -78,6 +78,7 @@ export interface StreamOptions {
   quiet?: boolean;
   timeout?: number;
   thinkingLabel?: string;
+  outputTabId?: string;
   /** AI SDK tools map to pass to generateText(). When set, enables native tool calling. */
   tools?: Record<string, any>;
 }
@@ -101,6 +102,8 @@ export interface StreamResult {
 export interface AgenticLoopOptions {
   displayStream: boolean;
   quiet?: boolean;
+  executeActions?: boolean;
+  outputTabId?: string;
   maxIterations: number;
   iterationTimeout?: number;
   overallTimeout?: number;
@@ -112,6 +115,7 @@ export interface AgenticLoopOptions {
   editTagDebug: boolean;
   continueActions: boolean;
   maxConsecutiveErrors?: number;
+  executionPolicy?: ExecutionPolicy;
 }
 
 /**
@@ -127,6 +131,15 @@ export interface AgenticLoopResult {
   endMessage?: string;
 }
 
+export type ExecutionPolicyMode = 'default' | 'orchestrator';
+
+export interface ExecutionPolicy {
+  mode?: ExecutionPolicyMode;
+  blockedToolNames?: string[];
+  blockedActionTypes?: string[];
+  blockReason?: string;
+}
+
 /**
  * Internal context interface for extracted streaming/loop functions.
  * LLMClient implements this to pass its state without exposing private fields.
@@ -136,6 +149,9 @@ export interface ClientContext {
   sessionManager: import('./sessions').SessionScope;
   /** Session currently being executed (for scoped abort wiring) */
   sessionId?: string;
+  /** Optional UI tab id for deterministic output routing */
+  outputTabId?: string;
+  executionPolicy?: ExecutionPolicy;
   config: LLMConfig;
   usage: UsageStats;
   thinkingActive: boolean;

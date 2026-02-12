@@ -1,66 +1,97 @@
 /**
  * Heartbeat System Types
  *
- * Inspired by OpenClaw's heartbeat system - periodic agent reflection
- * that allows the AI to surface alerts and take proactive actions.
+ * Reimplemented from the OpenClaw heartbeat behavior:
+ * - predictable scheduling semantics
+ * - robust HEARTBEAT_OK handling
+ * - effective-empty HEARTBEAT.md detection
+ * - active-hours window enforcement
  */
 
 /**
- * Active hours configuration - restrict heartbeats to certain times
+ * Active hours configuration - restrict heartbeats to certain times.
  */
 export interface ActiveHours {
-  start: string; // HH:MM format (24h)
-  end: string; // HH:MM format (24h)
-  timezone?: string; // IANA timezone, defaults to local
+  start: string;
+  end: string;
+  timezone?: string;
 }
 
 /**
- * Heartbeat visibility settings
+ * Heartbeat visibility settings.
  */
 export interface HeartbeatVisibility {
-  showOk?: boolean; // Show OK acknowledgments (default: false)
-  showAlerts?: boolean; // Show alert content (default: true)
-  useIndicator?: boolean; // Emit indicator events for UI (default: true)
+  showOk?: boolean;
+  showAlerts?: boolean;
+  useIndicator?: boolean;
 }
 
 /**
- * Heartbeat configuration
+ * User-configurable heartbeat settings.
  */
 export interface HeartbeatConfig {
-  enabled?: boolean; // Enable heartbeat system (default: true)
-  period?: string; // Interval as duration string: "30m", "1h", "2h" (default: "30m")
-  prompt?: string; // Custom heartbeat instruction
-  model?: string; // Optional model override for heartbeat runs
-  activeHours?: ActiveHours; // Restrict to certain hours
-  ackMaxChars?: number; // Max chars after OK before suppressing (default: 300)
-  visibility?: HeartbeatVisibility; // Visibility settings
-  includeReasoning?: boolean; // Include reasoning in output (default: false)
+  enabled?: boolean;
+  period?: string;
+  every?: string;
+  interval?: string;
+  prompt?: string;
+  model?: string;
+  activeHours?: ActiveHours | string;
+  ackMaxChars?: number;
+  visibility?: HeartbeatVisibility;
+  includeReasoning?: boolean;
+  dedupeWindow?: string;
 }
 
 /**
- * Full heartbeat configuration
+ * Fully resolved runtime heartbeat configuration.
  */
-export interface FullHeartbeatConfig extends HeartbeatConfig {}
+export interface FullHeartbeatConfig {
+  enabled: boolean;
+  period: string;
+  prompt?: string;
+  model?: string;
+  activeHours?: ActiveHours | string;
+  ackMaxChars: number;
+  visibility: Required<HeartbeatVisibility>;
+  includeReasoning: boolean;
+  dedupeWindowMs: number;
+}
 
 /**
- * Heartbeat response type - what the agent returned
+ * Heartbeat result classification.
  */
 export type HeartbeatResponseType = 'ok' | 'alert' | 'error';
 
+export type HeartbeatRunStatus = 'ran' | 'skipped';
+
+export type HeartbeatSkipReason =
+  | 'disabled'
+  | 'not-due'
+  | 'quiet-hours'
+  | 'empty-heartbeat-file'
+  | 'alerts-disabled'
+  | 'in-progress'
+  | 'duplicate';
+
 /**
- * Heartbeat execution result
+ * Heartbeat execution result payload.
  */
 export interface HeartbeatResult {
   type: HeartbeatResponseType;
-  content: string; // The agent's response
-  reasoning?: string; // Thinking/reasoning if available
+  content: string;
+  reasoning?: string;
   timestamp: Date;
-  duration: number; // Execution time in ms
-  actions?: HeartbeatAction[]; // Actions taken during heartbeat
+  duration: number;
+  actions?: HeartbeatAction[];
+  status?: HeartbeatRunStatus;
+  skipReason?: HeartbeatSkipReason;
+  rawResponse?: string;
+  didStripHeartbeatToken?: boolean;
 }
 
 /**
- * Action taken during heartbeat reflection
+ * Action taken during heartbeat reflection.
  */
 export interface HeartbeatAction {
   type: string;
@@ -70,60 +101,85 @@ export interface HeartbeatAction {
 }
 
 /**
- * Heartbeat state persisted to disk
+ * Heartbeat state persisted to disk.
  */
 export interface HeartbeatState {
-  lastRun?: string; // ISO timestamp
+  lastRun?: string;
   lastResult?: HeartbeatResponseType;
-  consecutiveOks: number; // Track consecutive OK responses
+  consecutiveOks: number;
   totalRuns: number;
   totalAlerts: number;
+  totalSkips: number;
+  lastError?: string;
+  lastDurationMs?: number;
+  lastSkippedReason?: HeartbeatSkipReason;
+  lastHeartbeatText?: string;
+  lastHeartbeatSentAt?: number;
 }
 
 /**
- * Default heartbeat prompt - mirrors OpenClaw defaults.
+ * OpenClaw-aligned defaults.
  */
 export const HEARTBEAT_TOKEN = 'HEARTBEAT_OK';
+export const DEFAULT_HEARTBEAT_EVERY = '30m';
 export const DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300;
+export const DEFAULT_HEARTBEAT_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_HEARTBEAT_PROMPT =
-  'Follow the provided HEARTBEAT.md content strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply only HEARTBEAT_OK.';
+  'Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.';
 
 /**
- * Parse duration string to milliseconds
- * Supports: "30m", "1h", "2h30m", "1d", etc.
+ * Parse a duration string to milliseconds.
+ * Supports:
+ * - single value: "5", "5m", "2h", "1d"
+ * - chained values: "2h30m", "1d12h"
+ * Defaults to minutes when no unit is provided.
  */
-export function parseDuration(duration: string): number {
-  const regex = /(\d+)([dhms])/gi;
+export function parseDurationOrNull(
+  raw: string | undefined | null,
+  opts: { defaultUnit?: 'ms' | 's' | 'm' | 'h' | 'd' } = {},
+): number | null {
+  const value = String(raw ?? '')
+    .trim()
+    .toLowerCase();
+  if (!value) return null;
+
+  const tokenRegex = /(\d+(?:\.\d+)?)(ms|s|m|h|d)?/g;
   let total = 0;
-  let match;
+  let consumed = '';
+  let match: RegExpExecArray | null = null;
 
-  while ((match = regex.exec(duration)) !== null) {
-    const value = parseInt(match[1], 10);
-    const unit = match[2].toLowerCase();
+  while ((match = tokenRegex.exec(value)) !== null) {
+    consumed += match[0];
+    const num = Number(match[1]);
+    if (!Number.isFinite(num) || num < 0) return null;
 
-    switch (unit) {
-      case 'd':
-        total += value * 24 * 60 * 60 * 1000;
-        break;
-      case 'h':
-        total += value * 60 * 60 * 1000;
-        break;
-      case 'm':
-        total += value * 60 * 1000;
-        break;
-      case 's':
-        total += value * 1000;
-        break;
-    }
+    const unit = (match[2] ?? opts.defaultUnit ?? 'm') as 'ms' | 's' | 'm' | 'h' | 'd';
+    const multiplier =
+      unit === 'ms'
+        ? 1
+        : unit === 's'
+          ? 1000
+          : unit === 'm'
+            ? 60_000
+            : unit === 'h'
+              ? 3_600_000
+              : 86_400_000;
+    total += Math.round(num * multiplier);
   }
 
-  // Default to 30 minutes if invalid
-  return total > 0 ? total : 30 * 60 * 1000;
+  if (!consumed || consumed.length !== value.length) return null;
+  if (!Number.isFinite(total) || total <= 0) return null;
+  return total;
 }
 
 /**
- * Format duration for display
+ * Backwards compatible duration parser.
+ * Falls back to 30m when parsing fails.
  */
+export function parseDuration(duration: string): number {
+  return parseDurationOrNull(duration, { defaultUnit: 'm' }) ?? 30 * 60 * 1000;
+}
+
 export function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);
@@ -138,7 +194,7 @@ export function formatDuration(ms: number): string {
 
 /**
  * Check if HEARTBEAT.md content is effectively empty.
- * Missing/undefined content is treated as non-empty so heartbeat can still run.
+ * Missing content is treated as non-empty so heartbeat can still run.
  */
 export function isHeartbeatContentEffectivelyEmpty(content: string | undefined | null): boolean {
   if (content === undefined || content === null || typeof content !== 'string') {
@@ -152,137 +208,141 @@ export function isHeartbeatContentEffectivelyEmpty(content: string | undefined |
     if (/^[-*+]\s*(\[[\sXx]?\]\s*)?$/.test(trimmed)) continue;
     return false;
   }
+
   return true;
 }
 
 const ACTIVE_HOURS_TIME_PATTERN = /^([01]\d|2[0-3]|24):([0-5]\d)$/;
 
-/**
- * Check if current time is within active hours.
- * Supports object format { start: "HH:MM", end: "HH:MM", timezone?: "..." }
- * and string format "HH:MM-HH:MM" (local time).
- */
-export function isWithinActiveHours(activeHours?: ActiveHours | string): boolean {
-  if (!activeHours) return true;
-
-  let startTime: string | undefined;
-  let endTime: string | undefined;
-  let timezone: string | undefined;
-  if (typeof activeHours === 'string') {
-    const parts = activeHours.split('-');
-    if (parts.length !== 2) return true;
-    startTime = parts[0].trim();
-    endTime = parts[1].trim();
-  } else {
-    if (!activeHours.start || !activeHours.end) return true;
-    startTime = activeHours.start;
-    endTime = activeHours.end;
-    timezone = activeHours.timezone;
+function parseMinutes(raw: string, opts: { allow24: boolean }): number | null {
+  if (!ACTIVE_HOURS_TIME_PATTERN.test(raw)) return null;
+  const [hourStr, minuteStr] = raw.split(':');
+  const hour = Number(hourStr);
+  const minute = Number(minuteStr);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (hour === 24) {
+    if (!opts.allow24 || minute !== 0) return null;
+    return 24 * 60;
   }
+  return hour * 60 + minute;
+}
 
-  if (
-    !startTime ||
-    !endTime ||
-    !ACTIVE_HOURS_TIME_PATTERN.test(startTime) ||
-    !ACTIVE_HOURS_TIME_PATTERN.test(endTime)
-  ) {
-    return true;
-  }
+function resolveMinutesInTimeZone(nowMs: number, timeZone?: string): number | null {
+  try {
+    if (!timeZone) {
+      const now = new Date(nowMs);
+      return now.getHours() * 60 + now.getMinutes();
+    }
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(nowMs));
 
-  const parseMinutes = (raw: string, allow24: boolean): number | null => {
-    const [hourStr, minuteStr] = raw.split(':');
-    const hour = Number(hourStr);
-    const minute = Number(minuteStr);
+    const map: Record<string, string> = {};
+    for (const part of parts) {
+      if (part.type !== 'literal') {
+        map[part.type] = part.value;
+      }
+    }
+
+    const hour = Number(map.hour);
+    const minute = Number(map.minute);
     if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-    if (hour === 24) {
-      if (!allow24 || minute !== 0) return null;
-      return 24 * 60;
-    }
     return hour * 60 + minute;
-  };
-
-  const startMinutes = parseMinutes(startTime, false);
-  const endMinutes = parseMinutes(endTime, true);
-  if (startMinutes === null || endMinutes === null || startMinutes === endMinutes) {
-    return true;
+  } catch {
+    return null;
   }
-
-  const resolveMinutesInTimeZone = (timeZone?: string): number | null => {
-    try {
-      if (!timeZone) {
-        const now = new Date();
-        return now.getHours() * 60 + now.getMinutes();
-      }
-      const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        hour: '2-digit',
-        minute: '2-digit',
-        hourCycle: 'h23',
-      }).formatToParts(new Date());
-
-      const map: Record<string, string> = {};
-      for (const part of parts) {
-        if (part.type !== 'literal') map[part.type] = part.value;
-      }
-      const hour = Number(map.hour);
-      const minute = Number(map.minute);
-      if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-      return hour * 60 + minute;
-    } catch {
-      return null;
-    }
-  };
-
-  const currentMinutes = resolveMinutesInTimeZone(timezone);
-  if (currentMinutes === null) {
-    return true;
-  }
-
-  if (endMinutes > startMinutes) {
-    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
-  }
-  if (endMinutes < startMinutes) {
-    return currentMinutes >= startMinutes || currentMinutes < endMinutes;
-  }
-  return true;
 }
 
 /**
- * Determine heartbeat response type
+ * Check if current time is within active hours.
+ * Supports object format and "HH:MM-HH:MM" shorthand.
  */
-export function parseHeartbeatResponse(
-  response: string,
-  ackMaxChars: number = DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
-): { type: HeartbeatResponseType; content: string } {
-  const trimmed = (response || '').trim();
-  if (!trimmed) return { type: 'ok', content: '' };
+export function isWithinActiveHours(
+  activeHours?: ActiveHours | string,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!activeHours) return true;
 
-  const stripTokenAtEdges = (raw: string): { text: string; didStrip: boolean } => {
-    let text = raw.trim();
-    if (!text) return { text: '', didStrip: false };
-    if (!text.includes(HEARTBEAT_TOKEN)) return { text, didStrip: false };
+  let start: string | undefined;
+  let end: string | undefined;
+  let timezone: string | undefined;
 
-    let didStrip = false;
-    let changed = true;
-    while (changed) {
-      changed = false;
-      const next = text.trim();
-      if (next.startsWith(HEARTBEAT_TOKEN)) {
-        text = next.slice(HEARTBEAT_TOKEN.length).trimStart();
-        didStrip = true;
-        changed = true;
-        continue;
-      }
-      if (next.endsWith(HEARTBEAT_TOKEN)) {
-        text = next.slice(0, Math.max(0, next.length - HEARTBEAT_TOKEN.length)).trimEnd();
-        didStrip = true;
-        changed = true;
-      }
+  if (typeof activeHours === 'string') {
+    const [startRaw, endRaw] = activeHours.split('-').map(part => part.trim());
+    start = startRaw;
+    end = endRaw;
+  } else {
+    start = activeHours.start;
+    end = activeHours.end;
+    timezone = activeHours.timezone;
+  }
+
+  if (!start || !end) return true;
+  const startMin = parseMinutes(start, { allow24: false });
+  const endMin = parseMinutes(end, { allow24: true });
+  if (startMin === null || endMin === null || startMin === endMin) return true;
+
+  const currentMin = resolveMinutesInTimeZone(nowMs, timezone);
+  if (currentMin === null) return true;
+
+  if (endMin > startMin) {
+    return currentMin >= startMin && currentMin < endMin;
+  }
+  return currentMin >= startMin || currentMin < endMin;
+}
+
+export type StripHeartbeatMode = 'heartbeat' | 'message';
+
+function stripTokenAtEdges(raw: string): { text: string; didStrip: boolean } {
+  let text = raw.trim();
+  if (!text) return { text: '', didStrip: false };
+  if (!text.includes(HEARTBEAT_TOKEN)) return { text, didStrip: false };
+
+  let didStrip = false;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const next = text.trim();
+    if (next.startsWith(HEARTBEAT_TOKEN)) {
+      text = next.slice(HEARTBEAT_TOKEN.length).trimStart();
+      didStrip = true;
+      changed = true;
+      continue;
     }
-    return { text: text.replace(/\s+/g, ' ').trim(), didStrip };
-  };
+    if (next.endsWith(HEARTBEAT_TOKEN)) {
+      text = next.slice(0, Math.max(0, next.length - HEARTBEAT_TOKEN.length)).trimEnd();
+      didStrip = true;
+      changed = true;
+    }
+  }
 
-  const stripMarkup = (text: string): string =>
+  return { text: text.replace(/\s+/g, ' ').trim(), didStrip };
+}
+
+/**
+ * Strip HEARTBEAT_OK in either heartbeat or regular-message mode.
+ */
+export function stripHeartbeatToken(
+  raw?: string,
+  opts: { mode?: StripHeartbeatMode; maxAckChars?: number } = {},
+): { shouldSkip: boolean; text: string; didStrip: boolean } {
+  if (!raw) return { shouldSkip: true, text: '', didStrip: false };
+  const trimmed = raw.trim();
+  if (!trimmed) return { shouldSkip: true, text: '', didStrip: false };
+
+  const mode = opts.mode ?? 'message';
+  const parsedAck = typeof opts.maxAckChars === 'string' ? Number(opts.maxAckChars) : opts.maxAckChars;
+  const maxAckChars = Math.max(
+    0,
+    typeof parsedAck === 'number' && Number.isFinite(parsedAck)
+      ? parsedAck
+      : DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+  );
+
+  const stripMarkup = (text: string) =>
     text
       .replace(/<[^>]*>/g, ' ')
       .replace(/&nbsp;/gi, ' ')
@@ -292,7 +352,7 @@ export function parseHeartbeatResponse(
   const normalized = stripMarkup(trimmed);
   const hasToken = trimmed.includes(HEARTBEAT_TOKEN) || normalized.includes(HEARTBEAT_TOKEN);
   if (!hasToken) {
-    return { type: 'alert', content: trimmed };
+    return { shouldSkip: false, text: trimmed, didStrip: false };
   }
 
   const strippedOriginal = stripTokenAtEdges(trimmed);
@@ -301,13 +361,39 @@ export function parseHeartbeatResponse(
     strippedOriginal.didStrip && strippedOriginal.text ? strippedOriginal : strippedNormalized;
 
   if (!picked.didStrip) {
-    return { type: 'alert', content: trimmed };
+    return { shouldSkip: false, text: trimmed, didStrip: false };
+  }
+
+  if (!picked.text) {
+    return { shouldSkip: true, text: '', didStrip: true };
   }
 
   const rest = picked.text.trim();
-  if (!rest || rest.length <= Math.max(0, ackMaxChars)) {
-    return { type: 'ok', content: '' };
+  if (mode === 'heartbeat' && rest.length <= maxAckChars) {
+    return { shouldSkip: true, text: '', didStrip: true };
   }
 
-  return { type: 'alert', content: rest };
+  return { shouldSkip: false, text: rest, didStrip: true };
+}
+
+/**
+ * Determine heartbeat response type.
+ */
+export function parseHeartbeatResponse(
+  response: string,
+  ackMaxChars: number = DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+): { type: HeartbeatResponseType; content: string; didStripHeartbeatToken: boolean } {
+  const trimmed = (response || '').trim();
+  if (!trimmed) return { type: 'ok', content: '', didStripHeartbeatToken: false };
+
+  const stripped = stripHeartbeatToken(trimmed, { mode: 'heartbeat', maxAckChars: ackMaxChars });
+  if (stripped.shouldSkip) {
+    return { type: 'ok', content: '', didStripHeartbeatToken: stripped.didStrip };
+  }
+
+  if (stripped.didStrip) {
+    return { type: 'alert', content: stripped.text, didStripHeartbeatToken: true };
+  }
+
+  return { type: 'alert', content: trimmed, didStripHeartbeatToken: false };
 }

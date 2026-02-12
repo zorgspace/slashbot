@@ -9,15 +9,17 @@
  */
 
 import { t, fg, bold, type StyledText } from '@opentui/core';
+import { AsyncLocalStorage } from 'async_hooks';
 import { theme } from './theme';
 import type { UIOutput } from './types';
 import { formatToolAction } from './format';
+import { formatInlineDisplayValue } from './valueFormat';
 
 import { isAssistantToolTranscript, parseAssistantToolTranscript } from './toolTranscript';
 
 export interface TUISpinnerCallbacks {
-  showSpinner: (label: string) => void;
-  hideSpinner: () => void;
+  showSpinner: (label: string, tabId?: string) => void;
+  hideSpinner: (tabId?: string) => void;
 }
 
 // Static TUI callbacks - set once when TUI is initialized
@@ -27,17 +29,22 @@ export function setTUISpinnerCallbacks(callbacks: TUISpinnerCallbacks | null): v
   tuiSpinnerCallbacks = callbacks;
 }
 
+type ExploreEvent = {
+  tool: 'Grep' | 'Glob' | 'LS' | 'Read';
+  success: boolean;
+  total: number;
+  preview: string[];
+  meta?: string;
+};
+
 class DisplayService {
   private tui: UIOutput | null = null;
   private thinkingStartTime = 0;
-  private thinkingCallback: ((chunk: string) => void) | null = null;
+  private thinkingCallback: ((chunk: string, tabId?: string) => void) | null = null;
+  private readonly outputTabScope = new AsyncLocalStorage<{ tabId?: string }>();
   private readonly exploreLiveKey = 'explore-live';
-  private exploreEvents: Array<{
-    tool: 'Grep' | 'Glob' | 'LS' | 'Read';
-    success: boolean;
-    total: number;
-    preview: string[];
-  }> = [];
+  private readonly globalExploreKey = '__global__';
+  private readonly exploreEventsByTab = new Map<string, ExploreEvent[]>();
 
   bindTUI(tui: UIOutput): void {
     this.tui = tui;
@@ -47,18 +54,49 @@ class DisplayService {
     this.tui = null;
   }
 
+  withOutputTab<T>(tabId: string | undefined, fn: () => T): T {
+    if (!tabId) {
+      return fn();
+    }
+    return this.outputTabScope.run({ tabId }, fn);
+  }
+
+  private resolveTabId(tabId?: string): string | undefined {
+    return tabId || this.outputTabScope.getStore()?.tabId;
+  }
+
+  private exploreKey(tabId?: string): string {
+    return this.resolveTabId(tabId) || this.globalExploreKey;
+  }
+
+  private getExploreEvents(tabId?: string): ExploreEvent[] {
+    const key = this.exploreKey(tabId);
+    let events = this.exploreEventsByTab.get(key);
+    if (!events) {
+      events = [];
+      this.exploreEventsByTab.set(key, events);
+    }
+    return events;
+  }
+
+  private clearExploreEvents(tabId?: string): void {
+    const key = this.exploreKey(tabId);
+    this.exploreEventsByTab.delete(key);
+  }
+
   // === Core output ===
 
   /**
    * Append a plain message (no assistant border).
    * Replaces: append, appendStyled
    */
-  appendMessage(content: StyledText | string): void {
+  appendMessage(content: StyledText | string, tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
     if (this.tui) {
       if (typeof content === 'string') {
-        this.tui.appendChat(content);
+        this.tui.appendChat(content, targetTabId);
       } else {
-        this.tui.appendStyledChat(content);
+        this.tui.appendStyledChat(content, targetTabId);
       }
     } else {
       const plain =
@@ -72,9 +110,10 @@ class DisplayService {
   /**
    * Append an assistant-bordered message (violet left border in TUI).
    */
-  appendAssistantMessage(content: StyledText | string): void {
+  appendAssistantMessage(content: StyledText | string, tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
     if (this.tui) {
-      this.tui.appendAssistantChat(content);
+      this.tui.appendAssistantChat(content, targetTabId);
     } else {
       const plain =
         typeof content === 'string'
@@ -84,51 +123,75 @@ class DisplayService {
     }
   }
 
-  // === Legacy aliases (avoid touching 100+ callers in commands) ===
-
-  append(text: string): void {
-    this.appendMessage(text);
+  appendAssistantMarkdown(text: string, tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
+    if (this.tui) {
+      this.tui.appendAssistantMarkdown(text, targetTabId);
+      return;
+    }
+    this.appendAssistantMessage(text, targetTabId);
   }
 
-  appendUserMessage(content: string): void {
+  // === Legacy aliases (avoid touching 100+ callers in commands) ===
+
+  append(text: string, tabId?: string): void {
+    this.appendMessage(text, tabId);
+  }
+
+  appendUserMessage(content: string, tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
     if (this.tui) {
-      this.tui.appendUserChat(content);
+      this.tui.appendUserChat(content, targetTabId);
     } else {
       console.log(`[you] ${this.stripAnsi(content)}`);
     }
   }
 
-  beginUserTurn(): void {
-    this.exploreEvents = [];
+  formatInline(value: unknown): string {
+    return formatInlineDisplayValue(value);
+  }
+
+  beginUserTurn(tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
+    this.clearExploreEvents(targetTabId);
     if (this.tui) {
-      this.tui.removeAssistantMarkdownBlock(this.exploreLiveKey);
+      this.tui.removeAssistantMarkdownBlock(this.exploreLiveKey, targetTabId);
     }
   }
 
-  endUserTurn(): void {
+  endUserTurn(tabId?: string): void {
     // Keep the final live explore block visible after the turn ends.
     // It will be cleared at the beginning of the next user turn.
-    this.exploreEvents = [];
+    this.clearExploreEvents(tabId);
   }
 
   pushExploreProbe(
     tool: 'Grep' | 'Glob' | 'LS' | 'Read',
     payload: string,
     success: boolean,
+    meta?: string,
+    tabId?: string,
   ): void {
+    const targetTabId = this.resolveTabId(tabId);
     const lines = (payload || '')
       .split('\n')
       .map(l => l.trim())
       .filter(Boolean);
-    const preview = lines.slice(0, 5);
-    this.exploreEvents.push({
+    const preview = lines.slice(-5);
+    const events = this.getExploreEvents(targetTabId);
+    events.push({
       tool,
       success,
       total: lines.length,
       preview,
+      meta,
     });
     if (!this.tui) return;
-    this.tui.upsertAssistantMarkdownBlock(this.exploreLiveKey, this.buildExploreSummaryText());
+    this.tui.upsertAssistantMarkdownBlock(
+      this.exploreLiveKey,
+      this.buildExploreSummaryText(targetTabId),
+      targetTabId,
+    );
   }
 
   // === Convenience wrappers ===
@@ -169,8 +232,8 @@ class DisplayService {
     this.appendAssistantMessage(t`${fg(theme.error)(text)}`);
   }
 
-  successText(text: string): void {
-    this.appendAssistantMessage(t`${fg(theme.success)(text)}`);
+  successText(text: string, tabId?: string): void {
+    this.appendAssistantMessage(t`${fg(theme.success)(text)}`, tabId);
   }
 
   warningText(text: string): void {
@@ -185,13 +248,23 @@ class DisplayService {
 
   // === Thinking/Spinner ===
 
-  showSpinner(label: string): void {
+  showSpinner(label: string, tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
+    if (tuiSpinnerCallbacks) {
+      tuiSpinnerCallbacks.showSpinner(label, targetTabId);
+      return;
+    }
     if (this.tui) {
       this.tui.showSpinner(label);
     }
   }
 
-  hideSpinner(): void {
+  hideSpinner(tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
+    if (tuiSpinnerCallbacks) {
+      tuiSpinnerCallbacks.hideSpinner(targetTabId);
+      return;
+    }
     if (this.tui) {
       this.tui.hideSpinner();
     }
@@ -199,11 +272,11 @@ class DisplayService {
 
   startThinking(label: string): void {
     this.thinkingStartTime = Date.now();
-    this.showSpinner(label);
+    this.showSpinner(label, this.resolveTabId());
   }
 
   stopThinking(): string {
-    this.hideSpinner();
+    this.hideSpinner(this.resolveTabId());
     return this.formatDuration(Date.now() - this.thinkingStartTime);
   }
 
@@ -222,6 +295,15 @@ class DisplayService {
   }
 
   logAction(action: string): void {
+    const targetTabId = this.resolveTabId();
+    if (tuiSpinnerCallbacks) {
+      const compact = action.replace(/\s+/g, ' ').trim();
+      const label =
+        compact.length === 0
+          ? 'Working...'
+          : `Working: ${compact.length > 72 ? `${compact.slice(0, 69)}...` : compact}`;
+      tuiSpinnerCallbacks.showSpinner(label, targetTabId);
+    }
     this.tui?.logAction(action);
   }
 
@@ -235,7 +317,7 @@ class DisplayService {
 
   // === Thinking stream (replaces thinkingDisplay) ===
 
-  setThinkingCallback(callback: ((chunk: string) => void) | null): void {
+  setThinkingCallback(callback: ((chunk: string, tabId?: string) => void) | null): void {
     this.thinkingCallback = callback;
   }
 
@@ -244,11 +326,12 @@ class DisplayService {
   }
 
   streamThinkingChunk(chunk: string): void {
+    const targetTabId = this.resolveTabId();
     if (this.thinkingCallback) {
-      this.thinkingCallback(chunk);
+      this.thinkingCallback(chunk, targetTabId);
       return;
     }
-    this.tui?.appendThinking(chunk);
+    this.tui?.appendThinking(chunk, targetTabId);
   }
 
   endThinkingStream(): void {
@@ -257,20 +340,21 @@ class DisplayService {
 
   // === Markdown rendering ===
 
-  renderMarkdown(text: string, bordered = false): void {
+  renderMarkdown(text: string, bordered = false, tabId?: string): void {
+    const targetTabId = this.resolveTabId(tabId);
     // When bordered + TUI: use self-contained appendAssistantMarkdown
     if (bordered && this.tui) {
-      this.tui.appendAssistantMarkdown(text);
+      this.tui.appendAssistantMarkdown(text, targetTabId);
       return;
     }
 
     // Non-bordered or console fallback
     const appendLine = bordered
-      ? (content: StyledText | string) => this.appendAssistantMessage(content)
-      : (content: StyledText | string) => this.appendMessage(content);
+      ? (content: StyledText | string) => this.appendAssistantMessage(content, tabId)
+      : (content: StyledText | string) => this.appendMessage(content, tabId);
     const appendPlain = bordered
-      ? (text: string) => this.appendAssistantMessage(text)
-      : (text: string) => this.appendMessage(text);
+      ? (text: string) => this.appendAssistantMessage(text, tabId)
+      : (text: string) => this.appendMessage(text, tabId);
 
     const lines = text.split('\n');
     let inCodeBlock = false;
@@ -352,12 +436,14 @@ class DisplayService {
     const flushExplore = () => {
       if (exploreLines.length === 0) return;
       const header = `Explore - ${exploreLines.length} probe(s) ${exploreSuccess ? '✓' : '✗'}`;
-      this.renderMarkdown(`${header}\n${exploreLines.join('\n')}`, true);
+      const targetTabId = this.resolveTabId();
+      this.renderMarkdown(`${header}\n${exploreLines.join('\n')}`, true, targetTabId);
       exploreLines = [];
       exploreSuccess = true;
     };
 
     for (const entry of entries) {
+      const targetTabId = this.resolveTabId();
       if (entry.kind === 'tool') {
         if (isControlToolName(entry.toolName)) {
           continue;
@@ -373,13 +459,14 @@ class DisplayService {
           formatToolAction(entry.toolName, entry.detail, {
             success: entry.success ?? true,
           }),
+          targetTabId,
         );
         continue;
       }
 
       if (entry.text.trim()) {
         flushExplore();
-        this.appendAssistantMessage(entry.text);
+        this.appendAssistantMessage(entry.text, targetTabId);
       }
     }
     flushExplore();
@@ -388,8 +475,8 @@ class DisplayService {
 
   // === Say result display ===
 
-  sayResult(msg: string): void {
-    this.renderMarkdown(msg, true);
+  sayResult(msg: string, tabId?: string): void {
+    this.renderMarkdown(msg, true, tabId);
   }
 
   // === Prompt confirmation (y/n) ===
@@ -434,22 +521,31 @@ class DisplayService {
     return str.replace(/\x1b\[[0-9;]*m/g, '');
   }
 
-  private buildExploreSummaryText(): string {
-    const probes = this.exploreEvents.length;
-    const totalLines = this.exploreEvents.reduce((sum, item) => sum + item.total, 0);
-    const success = this.exploreEvents.every(item => item.success);
+  private buildExploreSummaryText(tabId?: string): string {
+    const events = this.exploreEventsByTab.get(this.exploreKey(tabId)) || [];
+    const probes = events.length;
+    const totalLines = events.reduce((sum, item) => sum + item.total, 0);
+    const success = events.every(item => item.success);
 
-    const allRows = this.exploreEvents.flatMap(item =>
-      item.preview.map(line => `- ${item.tool}: ${line}`),
+    const metaDescriptions = events
+      .map(item => item.meta)
+      .filter((value): value is string => Boolean(value));
+    const metaLine = metaDescriptions.length > 0 ? `\nMeta: ${metaDescriptions.join(' • ')}` : '';
+
+    const allRows = events.flatMap(item =>
+      item.preview.map(line => {
+        const suffix = item.meta ? ` (${item.meta})` : '';
+        return `- ${item.tool}${suffix}: ${line}`;
+      }),
     );
     const previewRows = allRows.slice(-5);
     const hidden = Math.max(0, totalLines - previewRows.length);
 
     const header = `Explore - ${probes} probe(s) ${success ? '✓' : '✗'} ${totalLines} lines`;
     if (previewRows.length === 0) {
-      return `${header}\n- no matches`;
+      return `${header}${metaLine}\n- no matches`;
     }
-    return `${header}\n${previewRows.join('\n')}${hidden > 0 ? `\n- ... +${hidden} more line(s)` : ''}`;
+    return `${header}${metaLine}\n${previewRows.join('\n')}${hidden > 0 ? `\n- ... +${hidden} more line(s)` : ''}`;
   }
 
   private isExploreToolName(toolName: string): boolean {

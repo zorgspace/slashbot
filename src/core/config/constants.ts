@@ -11,9 +11,11 @@ import * as os from 'os';
 // DIRECTORY PATHS
 // ============================================================================
 
-// Home directory: credentials only
+// Home directory: shared credentials + global defaults
 export const HOME_SLASHBOT_DIR = path.join(os.homedir(), '.slashbot');
 export const HOME_CREDENTIALS_FILE = path.join(HOME_SLASHBOT_DIR, 'credentials.json');
+export const HOME_CONFIG_DIR = path.join(HOME_SLASHBOT_DIR, 'config');
+export const HOME_CONFIG_FILE = path.join(HOME_CONFIG_DIR, 'config.json');
 
 // Local directory: project-specific data (history, tasks)
 export const getLocalSlashbotDir = (workDir?: string) =>
@@ -134,17 +136,27 @@ export const AGENTIC = {
 
 export const CONTEXT = {
   MAX_IMAGES: 3,
-  MAX_MESSAGES: 200,
+  MAX_MESSAGES: 150,
   MAX_HISTORY: 500,
-  COMPRESS_THRESHOLD: 0.8,
+  COMPRESS_THRESHOLD: 0.70,
   MAX_TOKENS: 256000,
 } as const;
 
 export const COMPACTION = {
   /** Compact when token usage exceeds this ratio of model limit */
-  TOKEN_THRESHOLD_RATIO: 0.8,
+  TOKEN_THRESHOLD_RATIO: 0.70,
+  /** Soft warning threshold for context pressure */
+  WARN_RATIO: 0.60,
+  /** Start pruning older tool outputs above this ratio */
+  PRUNE_RATIO: 0.70,
+  /** Start summary compaction above this ratio */
+  SUMMARY_RATIO: 0.80,
+  /** Hard trim when context remains near saturation */
+  HARD_RESET_RATIO: 0.90,
   /** Keep last N tool outputs intact during pruning */
   PRUNE_PROTECT_RECENT: 10,
+  /** Keep last N messages during hard reset */
+  HARD_RESET_KEEP_RECENT_MESSAGES: 8,
   /** Max tokens for the summary message */
   SUMMARY_MAX_TOKENS: 4000,
 } as const;

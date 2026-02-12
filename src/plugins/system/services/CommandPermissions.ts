@@ -6,7 +6,6 @@
  */
 
 import path from 'path';
-import * as readline from 'readline';
 import { display } from '../../../core/ui';
 import { getLocalSlashbotDir, getLocalPermissionsFile } from '../../../core/config/constants';
 

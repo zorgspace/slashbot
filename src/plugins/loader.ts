@@ -20,6 +20,8 @@ import type { Plugin, PluginMetadata } from './types';
 
 const SETTINGS_FILENAME = 'settings.json';
 
+type PluginCtor = new () => Plugin;
+
 type PluginSettingsEntry = {
   module?: string;
   exportName: string;
@@ -35,6 +37,38 @@ type PluginRuntimeOverride = {
 type PluginRuntimeSettingsFile = {
   plugins?: Record<string, PluginRuntimeOverride>;
 };
+
+type FallbackPluginSpec = {
+  load: () => Promise<Record<string, unknown>>;
+  exportName: string;
+};
+
+// Keep this list in sync with src/plugins/*/settings.json and src/connectors/*/settings.json.
+const COMPILED_FALLBACK_PLUGINS: readonly FallbackPluginSpec[] = [
+  { load: () => import('../connectors/discord/plugin'), exportName: 'DiscordPlugin' },
+  { load: () => import('../connectors/telegram/plugin'), exportName: 'TelegramPlugin' },
+  { load: () => import('./agents'), exportName: 'AgentsPlugin' },
+  { load: () => import('./bash'), exportName: 'BashPlugin' },
+  { load: () => import('./git'), exportName: 'GitPlugin' },
+  { load: () => import('./code-editor'), exportName: 'CodeEditorPlugin' },
+  { load: () => import('./core-prompt'), exportName: 'CorePromptPlugin' },
+  { load: () => import('./filesystem'), exportName: 'FilesystemPlugin' },
+  { load: () => import('./heartbeat'), exportName: 'HeartbeatPlugin' },
+  { load: () => import('./mcp'), exportName: 'MCPPlugin' },
+  { load: () => import('./memory'), exportName: 'MemoryPlugin' },
+  { load: () => import('./planning'), exportName: 'PlanningPlugin' },
+  { load: () => import('./providers'), exportName: 'ProvidersPlugin' },
+  { load: () => import('./question'), exportName: 'QuestionPlugin' },
+  { load: () => import('./say'), exportName: 'SayPlugin' },
+  { load: () => import('./session'), exportName: 'SessionPlugin' },
+  { load: () => import('./skills'), exportName: 'SkillsPlugin' },
+  { load: () => import('./system'), exportName: 'SystemPlugin' },
+  { load: () => import('./todo'), exportName: 'TodoPlugin' },
+  { load: () => import('./transcription'), exportName: 'TranscriptionPlugin' },
+  { load: () => import('./tui'), exportName: 'TUIPlugin' },
+  { load: () => import('./wallet'), exportName: 'WalletPlugin' },
+  { load: () => import('./web'), exportName: 'WebPlugin' },
+];
 
 function getLoaderDir(): string {
   return path.dirname(fileURLToPath(import.meta.url));
@@ -153,6 +187,17 @@ function applyMetadataOverride(plugin: Plugin, metadata?: Partial<PluginMetadata
   Object.assign((plugin as any).metadata, metadata);
 }
 
+function instantiatePluginFromModule(
+  moduleNs: Record<string, unknown>,
+  exportName: string,
+): Plugin {
+  const PluginCtor = moduleNs[exportName];
+  if (typeof PluginCtor !== 'function') {
+    throw new Error(`Invalid export "${exportName}" in compiled fallback catalog`);
+  }
+  return new (PluginCtor as PluginCtor)();
+}
+
 /**
  * Load all built-in plugins using discovered settings manifests.
  */
@@ -197,7 +242,35 @@ export async function loadBuiltinPlugins(): Promise<Plugin[]> {
 
 /**
  * Load all plugins (built-in + runtime-overridable).
+ *
+ * Note: in "compiled"/single-binary builds (bun build --compile), plugin settings.json
+ * manifests are not present on disk, so discovery returns an empty list.
+ *
+ * To keep packaged behavior aligned with dev mode, we fall back to a static catalog
+ * of built-in plugins/connectors when discovery yields none.
  */
 export async function loadAllPlugins(): Promise<Plugin[]> {
-  return loadBuiltinPlugins();
+  const discovered = await loadBuiltinPlugins();
+  if (discovered.length > 0) {
+    return discovered;
+  }
+
+  // Compiled-binary fallback: manifests are not present on disk, so we load
+  // all built-in plugins/connectors through static imports.
+  const runtimeOverrides = await loadRuntimeOverrides();
+  const loadedModules = await Promise.all(COMPILED_FALLBACK_PLUGINS.map(spec => spec.load()));
+  const plugins: Plugin[] = [];
+
+  for (let i = 0; i < COMPILED_FALLBACK_PLUGINS.length; i += 1) {
+    const spec = COMPILED_FALLBACK_PLUGINS[i];
+    const plugin = instantiatePluginFromModule(loadedModules[i], spec.exportName);
+    const override = runtimeOverrides[plugin.metadata.id];
+    if (override?.enabled === false) {
+      continue;
+    }
+    applyMetadataOverride(plugin, override?.metadata);
+    plugins.push(plugin);
+  }
+
+  return plugins;
 }

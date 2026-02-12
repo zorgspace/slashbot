@@ -8,7 +8,6 @@
 import { BoxRenderable, TextRenderable, t, fg, bold, dim, type CliRenderer } from '@opentui/core';
 import { theme } from '../../../core/ui/theme';
 import type { SidebarData } from '../../../core/ui/types';
-import { SplitBorder } from '../borders';
 
 export interface HeaderOptions {
   version: string;

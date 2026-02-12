@@ -12,12 +12,13 @@ import type {
   AgentTaskState,
   CreateAgentInput,
   SendTaskInput,
+  AgentRoutingRequest,
+  AgentRoutingDecision,
   AgentTaskRunResult,
   AgentTaskStats,
 } from './types';
 
 const DEFAULT_POLL_MS = 5000;
-const DEFAULT_AGENT_ID = 'agent-1';
 
 const WORKSPACE_FILES = [
   'AGENTS.md',
@@ -27,6 +28,8 @@ const WORKSPACE_FILES = [
   'USER.md',
   'HEARTBEAT.md',
 ] as const;
+
+type AgentTaskRouter = (request: AgentRoutingRequest) => Promise<AgentRoutingDecision | null>;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -40,19 +43,72 @@ function slugify(input: string): string {
     .slice(0, 48);
 }
 
-function defaultAgentPrompt(name: string, responsibility: string): string {
-  const normalizedResponsibility = responsibility.trim().replace(/[.]+$/, '');
+function defaultArchitectPrompt(name: string, responsibility: string): string {
   return [
-    `You are ${name}.`,
-    `Responsibility: ${normalizedResponsibility}.`,
-    'Read AGENTS.md, SOUL.md, TOOLS.md, IDENTITY.md, USER.md, HEARTBEAT.md in your workspace before acting.',
-    'Coordinate with other agents using .agents/tasks.json.',
-    'Preferred orchestration tools: agents_status, agents_send, sessions_list, sessions_history, sessions_send.',
-    'For coordination, do NOT use bash/ls/glob/read_file to inspect .agents or route work.',
-    'When delegating work, emit <agent-send to="agent-id" title="short title">task details</agent-send>.',
-    'Use say_message for progress updates and end_task only when complete.',
-    'Keep outputs concise and execution-focused.',
+    `You are ${name}, the orchestrator.`,
+    `Responsibility: ${responsibility}.`,
+    'CRITICAL: Never implement, edit, or run product code yourself.',
+    'Your role is planning, decomposition, delegation, and verification only.',
+    'Before delegating any user request, inspect available agents first (agents_status / agents_list) and choose the most adequate specialist.',
+    'If no adequate specialist exists, create or retask one before delegation.',
+    'Manage agents aggressively: pop dedicated specialists with /agent spawn, delegate via <agent-send>, and tidy up with /agent delete once the work is done.',
+    '- Never delegate to yourself.',
+    'Track orchestration steps using the todo plugin: create or refresh a <todo-write> list, read it with <todo-read/>, and update statuses as subtasks progress.',
+    'Require each worker to report completion evidence back to you before you mark the larger effort complete.',
+    'Assign tasks after assessing queue, blockers, and todo state; reroute quickly when blockers remain.',
+    'The orchestrator owns the final user-facing completion signal only after verifying worker reports.',
   ].join('\n');
+}
+
+function defaultAgentPrompt(name: string, responsibility: string): string {
+  let normalizedResponsibility = responsibility.replace(/_/g, ' ').trim();
+  normalizedResponsibility =
+    normalizedResponsibility.charAt(0).toUpperCase() + normalizedResponsibility.slice(1);
+  return `You are ${name}, a specialist execution agent.
+
+Your core responsibility: ${normalizedResponsibility}.
+
+Execution policy:
+- Execute delegated work directly using repository/runtime tools.
+- Reproduce issues, implement fixes, and verify with concrete command/test evidence.
+- Keep changes scoped, minimal, and reversible.
+- Use coordination tools only when blocked by missing ownership or missing context.
+- Never delegate to yourself.
+
+Reporting policy:
+- Before end_task, report completion back to the requesting orchestrator using <agent-send>.
+- Include status, files changed, commands/tests run, outcomes, and residual risks.
+- Always end your response with <end_task message="concise verification summary"> when the task is finished.
+
+Communication rules:
+- Use say_message for short progress updates.
+- Keep outputs concise and action-oriented.`;
+}
+
+function defaultConnectorPrompt(name: string, responsibility: string, connectorId: string): string {
+  const connector = connectorId.toUpperCase();
+  return `You are ${name}, the ${connector} connector agent.
+
+Your core responsibility: ${responsibility}.
+
+Execution policy:
+- Handle inbound ${connector} requests directly with available tools.
+- Keep responses concise and platform-safe for connector users.
+- Execute required actions (read/edit/write/bash/tools) without unnecessary delegation.
+- Delegate only when blocked by missing ownership or specialization.
+
+Communication rules:
+- Use clear, short progress/status updates.
+- End with brief plain-language summaries when a request is complete.`;
+}
+
+function isOrchestratorProfile(
+  agent: Pick<AgentProfile, 'id' | 'name' | 'responsibility'>,
+): boolean {
+  const label = `${agent.id} ${agent.name} ${agent.responsibility}`.toLowerCase();
+  return (
+    label.includes('architect') || label.includes('orchestrator') || label.includes('coordinator')
+  );
 }
 
 function decodePromptEntities(input: string): string {
@@ -90,6 +146,7 @@ function templateForWorkspaceFile(params: {
   agent: Pick<AgentProfile, 'id' | 'name' | 'responsibility' | 'systemPrompt'>;
 }): string {
   const { fileName, agent } = params;
+  const isOrchestrator = isOrchestratorProfile(agent);
   if (fileName === 'AGENTS.md') {
     return [
       '# AGENTS.md',
@@ -102,23 +159,54 @@ function templateForWorkspaceFile(params: {
       '',
       '## Operating Rules',
       '- Keep changes minimal and verifiable.',
-      '- Delegate to other agents via <agent-send> when needed.',
+      ...(isOrchestrator
+        ? [
+            '- Do not implement code directly; orchestrate only.',
+            '- Spawn specialists for implementation, then delegate with <agent-send>.',
+            '- Require completion reports with verification evidence before closing work.',
+          ]
+        : [
+            '- Execute delegated implementation work directly.',
+            '- Report completion back to the requesting orchestrator via <agent-send> before end_task.',
+            '- Delegate only when blocked by missing ownership/specialization.',
+          ]),
       '- Record key decisions in TOOLS.md when helpful.',
       '',
       '## Prompt',
       agent.systemPrompt,
       '',
+      '## Agentic Purpose',
+      ...(isOrchestrator
+        ? [
+            '- Plan, delegate, and verify; never perform direct implementation.',
+            '- Route tasks to the best specialist and track progress until completion.',
+            '- Aggregate worker reports and provide final closure once evidence is sufficient.',
+          ]
+        : [
+            '- Execute delegated tasks fully from read to diff to apply to tests/deploy where appropriate.',
+            '- Keep status short and actionable; summary should list root cause, fix, validation, remaining risks.',
+            '- If blocked or needing extra context, send a focused `<agent-send>` request with clear title and rationale.',
+          ]),
+      '',
     ].join('\n');
   }
   if (fileName === 'SOUL.md') {
-    return ['# SOUL.md', '', `You are ${agent.name}.`, 'Work deliberately and communicate clearly.', ''].join(
-      '\n',
-    );
+    return [
+      '# SOUL.md',
+      '',
+      `You are ${agent.name}.`,
+      'Work deliberately and communicate clearly.',
+      '',
+    ].join('\n');
   }
   if (fileName === 'TOOLS.md') {
-    return ['# TOOLS.md', '', '- Add local tool notes here.', '- Add conventions for this agent here.', ''].join(
-      '\n',
-    );
+    return [
+      '# TOOLS.md',
+      '',
+      '- Add local tool notes here.',
+      '- Add conventions for this agent here.',
+      '',
+    ].join('\n');
   }
   if (fileName === 'IDENTITY.md') {
     return [
@@ -134,17 +222,19 @@ function templateForWorkspaceFile(params: {
     return ['# USER.md', '', '- Name:', '- Preferred address:', '- Notes:', ''].join('\n');
   }
   if (fileName === 'HEARTBEAT.md') {
-    return ['# HEARTBEAT.md', '', '- [ ] Check delegated queue.', '- [ ] Report blockers to architect.', ''].join(
-      '\n',
-    );
+    return [
+      '# HEARTBEAT.md',
+      '',
+      ...(isOrchestrator
+        ? [
+            '- [ ] Check worker reports in queue.',
+            '- [ ] Delegate follow-up work or close verified tasks.',
+          ]
+        : ['- [ ] Check delegated queue.', '- [ ] Report blockers to architect.']),
+      '',
+    ].join('\n');
   }
-  return [
-    '# BOOTSTRAP.md',
-    '',
-    `Welcome ${agent.name}.`,
-    'This workspace was created automatically in OpenClaw-style layout.',
-    '',
-  ].join('\n');
+  return ['# BOOTSTRAP.md', '', `Welcome ${agent.name}.`, ''].join('\n');
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -171,7 +261,7 @@ export class AgentOrchestratorService {
   private workDir: string = process.cwd();
   private state: AgentWorkspaceState = {
     version: 1,
-    activeAgentId: DEFAULT_AGENT_ID,
+    activeAgentId: '',
     agents: [],
   };
   private tasks: AgentTaskState = {
@@ -184,6 +274,7 @@ export class AgentOrchestratorService {
   private taskExecutor:
     | ((agent: AgentProfile, task: AgentTask) => Promise<AgentTaskRunResult>)
     | null = null;
+  private taskRouter: AgentTaskRouter | null = null;
 
   constructor(@inject(TYPES.EventBus) private readonly eventBus: EventBus) {}
 
@@ -195,6 +286,10 @@ export class AgentOrchestratorService {
     executor: ((agent: AgentProfile, task: AgentTask) => Promise<AgentTaskRunResult>) | null,
   ): void {
     this.taskExecutor = executor;
+  }
+
+  setTaskRouter(router: AgentTaskRouter | null): void {
+    this.taskRouter = router;
   }
 
   private getAgentsRootDir(): string {
@@ -287,7 +382,7 @@ export class AgentOrchestratorService {
 
   private normalizeAgentProfile(raw: Partial<AgentProfile>, index: number): AgentProfile {
     const rawId = typeof raw.id === 'string' ? raw.id.trim() : '';
-    const id = rawId || (index === 0 ? DEFAULT_AGENT_ID : `agent-${index + 1}`);
+    const id = rawId || `agent-${index + 1}`;
     const name =
       typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : `Agent ${index + 1}`;
     const responsibility =
@@ -308,19 +403,29 @@ export class AgentOrchestratorService {
         ? sanitizeAgentPrompt(raw.systemPrompt)
         : '';
 
+    const kind = raw.kind || 'custom';
+    const autoPollDefault = kind === 'architect' || kind === 'connector' ? false : true;
+    const removableDefault = kind !== 'architect' && kind !== 'connector';
+    const systemPromptDefault =
+      kind === 'architect'
+        ? defaultArchitectPrompt(name, responsibility)
+        : kind === 'connector'
+          ? defaultConnectorPrompt(name, responsibility, id.replace(/^agent-/, '').replace(/agent$/, ''))
+          : defaultAgentPrompt(name, responsibility);
+
     return {
       id,
       name,
-      kind: raw.kind || 'custom',
+      kind,
       responsibility,
-      systemPrompt:
-        rawPrompt || defaultAgentPrompt(name, responsibility),
+      systemPrompt: rawPrompt || systemPromptDefault,
       sessionId:
         typeof raw.sessionId === 'string' && raw.sessionId.trim() ? raw.sessionId : `agent:${id}`,
       workspaceDir,
       agentDir,
       enabled: raw.enabled ?? true,
-      autoPoll: raw.autoPoll ?? true,
+      autoPoll: raw.autoPoll ?? autoPollDefault,
+      removable: raw.removable ?? removableDefault,
       createdAt,
       updatedAt:
         typeof raw.updatedAt === 'string' && raw.updatedAt.trim() ? raw.updatedAt : createdAt,
@@ -380,16 +485,25 @@ export class AgentOrchestratorService {
     }
   }
 
+  private async ensureArchitectPresent(): Promise<void> {
+    if (this.state.agents.length > 0) {
+      return;
+    }
+    await this.createAgent({
+      name: 'Architect',
+      responsibility: 'Architect - plan, delegate, and verify agentic work.',
+    });
+  }
+
   async init(): Promise<void> {
     await mkdir(this.getAgentsRootDir(), { recursive: true });
     await this.migrateLegacyStorageIfNeeded();
     await this.loadState();
     await this.loadTasks();
-    await this.ensureDefaultAgent();
+    await this.ensureArchitectPresent();
     await this.ensureAllAgentStorage();
-    if (!this.getAgent(this.state.activeAgentId)) {
-      this.state.activeAgentId = this.state.agents[0]?.id || DEFAULT_AGENT_ID;
-    }
+    // Always start with the Architect tab
+    this.state.activeAgentId = 'agent-architect';
     await this.saveState();
     await this.saveTasks();
   }
@@ -407,8 +521,8 @@ export class AgentOrchestratorService {
         version: 1,
         activeAgentId:
           typeof raw.activeAgentId === 'string' && raw.activeAgentId.trim()
-            ? raw.activeAgentId
-            : DEFAULT_AGENT_ID,
+            ? raw.activeAgentId.trim()
+            : '',
         agents,
       };
     } catch {
@@ -438,33 +552,6 @@ export class AgentOrchestratorService {
 
   private async saveTasks(): Promise<void> {
     await Bun.write(this.getTasksFile(), JSON.stringify(this.tasks, null, 2));
-  }
-
-  private async ensureDefaultAgent(): Promise<void> {
-    if (this.state.agents.some(a => a.id === DEFAULT_AGENT_ID)) {
-      return;
-    }
-
-    const createdAt = nowIso();
-    const responsibility =
-      'Architect and coordinator. Break down tasks and delegate to specialist agents.';
-    const defaultAgent: AgentProfile = {
-      id: DEFAULT_AGENT_ID,
-      name: 'Agent 1',
-      kind: 'architect',
-      responsibility,
-      systemPrompt: defaultAgentPrompt('Agent 1 (Architect)', responsibility),
-      sessionId: `agent:${DEFAULT_AGENT_ID}`,
-      workspaceDir: this.resolveAgentWorkspaceDir(DEFAULT_AGENT_ID),
-      agentDir: this.resolveAgentDir(DEFAULT_AGENT_ID),
-      enabled: true,
-      autoPoll: false,
-      createdAt,
-      updatedAt: createdAt,
-    };
-
-    this.state.agents.push(defaultAgent);
-    this.state.activeAgentId = DEFAULT_AGENT_ID;
   }
 
   listAgents(): AgentProfile[] {
@@ -505,12 +592,21 @@ export class AgentOrchestratorService {
     return candidate;
   }
 
+  private getConnectorAgentId(connectorId: string): string {
+    const slug = slugify(connectorId) || 'connector';
+    return `agent-${slug}agent`;
+  }
+
   async createAgent(input: CreateAgentInput): Promise<AgentProfile> {
     const createdAt = nowIso();
     const name = input.name.trim() || `Agent ${this.state.agents.length + 1}`;
     const id = this.nextAgentId(name);
-    const responsibility =
-      input.responsibility?.trim() || 'Specialist worker. Execute delegated tasks and report results.';
+    const isArchitect = this.state.agents.length === 0;
+    const kind = isArchitect ? 'architect' : input.kind || 'custom';
+    const responsibility = isArchitect
+      ? 'Architect - plan, delegate, and verify agentic work.'
+      : input.responsibility?.trim() ||
+        'Specialist worker. Execute delegated tasks and report results.';
 
     const inputPrompt =
       typeof input.systemPrompt === 'string' ? sanitizeAgentPrompt(input.systemPrompt) : '';
@@ -518,19 +614,29 @@ export class AgentOrchestratorService {
     const agent: AgentProfile = {
       id,
       name,
-      kind: input.kind || 'custom',
+      kind,
       responsibility,
-      systemPrompt: inputPrompt || defaultAgentPrompt(name, responsibility),
+      systemPrompt:
+        inputPrompt ||
+        (kind === 'architect'
+          ? defaultArchitectPrompt(name, responsibility)
+          : kind === 'connector'
+            ? defaultConnectorPrompt(name, responsibility, id.replace(/^agent-/, '').replace(/agent$/, ''))
+            : defaultAgentPrompt(name, responsibility)),
       sessionId: `agent:${id}`,
       workspaceDir: this.resolveAgentWorkspaceDir(id),
       agentDir: this.resolveAgentDir(id),
       enabled: true,
-      autoPoll: input.autoPoll ?? true,
+      autoPoll: input.autoPoll ?? (kind !== 'architect' && kind !== 'connector'),
+      removable: input.removable ?? (kind !== 'architect' && kind !== 'connector'),
       createdAt,
       updatedAt: createdAt,
     };
 
     this.state.agents.push(agent);
+    if (!this.state.activeAgentId) {
+      this.state.activeAgentId = agent.id;
+    }
     await this.ensureAgentStorage(agent);
     await this.saveState();
     this.emitUpdated();
@@ -566,6 +672,102 @@ export class AgentOrchestratorService {
     return agent;
   }
 
+  async ensureConnectorAgent(options: {
+    connectorId: string;
+    label?: string;
+  }): Promise<AgentProfile | null> {
+    const connectorId = String(options.connectorId || '').trim().toLowerCase();
+    if (!connectorId) {
+      return null;
+    }
+
+    const fallbackLabel = connectorId.charAt(0).toUpperCase() + connectorId.slice(1);
+    const label = (options.label || connectorId).trim() || fallbackLabel;
+    const id = this.getConnectorAgentId(connectorId);
+    const createdAt = nowIso();
+    const connectorName = `${label} Agent`;
+    const connectorResponsibility = `${label} connector operations specialist. Handle ${connectorId} requests and execute platform-facing workflows safely.`;
+    const connectorPrompt = defaultConnectorPrompt(
+      connectorName,
+      connectorResponsibility,
+      connectorId,
+    );
+
+    let agent = this.getAgent(id);
+    let changed = false;
+
+    if (!agent) {
+      agent = {
+        id,
+        name: connectorName,
+        kind: 'connector',
+        responsibility: connectorResponsibility,
+        systemPrompt: connectorPrompt,
+        sessionId: `agent:${id}`,
+        workspaceDir: this.resolveAgentWorkspaceDir(id),
+        agentDir: this.resolveAgentDir(id),
+        enabled: true,
+        autoPoll: false,
+        removable: false,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      this.state.agents.push(agent);
+      changed = true;
+    } else {
+      if (agent.kind !== 'connector') {
+        agent.kind = 'connector';
+        changed = true;
+      }
+      if (!agent.name?.trim()) {
+        agent.name = connectorName;
+        changed = true;
+      }
+      if (!agent.responsibility?.trim()) {
+        agent.responsibility = connectorResponsibility;
+        changed = true;
+      }
+      if (!agent.systemPrompt?.trim()) {
+        agent.systemPrompt = connectorPrompt;
+        changed = true;
+      }
+      if (!agent.sessionId?.trim()) {
+        agent.sessionId = `agent:${id}`;
+        changed = true;
+      }
+      if (!agent.workspaceDir?.trim()) {
+        agent.workspaceDir = this.resolveAgentWorkspaceDir(id);
+        changed = true;
+      }
+      if (!agent.agentDir?.trim()) {
+        agent.agentDir = this.resolveAgentDir(id);
+        changed = true;
+      }
+      if (agent.enabled !== true) {
+        agent.enabled = true;
+        changed = true;
+      }
+      if (agent.autoPoll !== false) {
+        agent.autoPoll = false;
+        changed = true;
+      }
+      if (agent.removable !== false) {
+        agent.removable = false;
+        changed = true;
+      }
+      if (changed) {
+        agent.updatedAt = nowIso();
+      }
+    }
+
+    await this.ensureAgentStorage(agent);
+    if (changed) {
+      await this.saveState();
+      this.emitUpdated();
+    }
+    return agent;
+  }
+
   resolveAgentId(input: string): string | null {
     const normalized = input.trim().toLowerCase();
     if (!normalized) return null;
@@ -574,6 +776,113 @@ export class AgentOrchestratorService {
     const byName = this.state.agents.find(a => a.name.toLowerCase() === normalized);
     if (byName) return byName.id;
     return null;
+  }
+
+  private async resolveDelegationTarget(input: SendTaskInput): Promise<{
+    requestedToAgentId: string;
+    toAgentId: string;
+    rerouted: boolean;
+    reason?: string;
+    confidence?: number;
+    taskBrief?: string;
+  }> {
+    const requestedToAgentId = this.resolveAgentId(input.toAgentId) || input.toAgentId;
+    const requestedAgent = this.getAgent(requestedToAgentId);
+    const fallback = {
+      requestedToAgentId,
+      toAgentId: requestedToAgentId,
+      rerouted: false,
+    };
+
+    if (!this.taskRouter || !requestedAgent) {
+      return fallback;
+    }
+
+    try {
+      const decision = await this.taskRouter({
+        fromAgentId: input.fromAgentId,
+        requestedToAgentId: requestedAgent.id,
+        title: input.title,
+        content: input.content,
+        agents: this.listAgents().filter(agent => agent.enabled),
+      });
+      if (!decision?.toAgentId) {
+        return fallback;
+      }
+
+      const routedToId = this.resolveAgentId(decision.toAgentId) || decision.toAgentId;
+      const routedAgent = this.getAgent(routedToId);
+      if (!routedAgent || !routedAgent.enabled) {
+        return fallback;
+      }
+
+      const confidence =
+        typeof decision.confidence === 'number' && Number.isFinite(decision.confidence)
+          ? Math.max(0, Math.min(1, decision.confidence))
+          : undefined;
+      const reason = typeof decision.rationale === 'string' ? decision.rationale.trim() : '';
+      const taskBrief = typeof decision.taskBrief === 'string' ? decision.taskBrief.trim() : '';
+      return {
+        requestedToAgentId: requestedAgent.id,
+        toAgentId: routedAgent.id,
+        rerouted: routedAgent.id !== requestedAgent.id,
+        reason: reason || undefined,
+        confidence,
+        taskBrief: taskBrief || undefined,
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  private buildTaskContract(params: {
+    fromAgentId: string;
+    requestedToAgentId: string;
+    toAgentId: string;
+    title: string;
+    content: string;
+    routingReason?: string;
+    routingConfidence?: number;
+    taskBrief?: string;
+  }): string {
+    const packetLines = [
+      '[task-contract]',
+      `from: ${params.fromAgentId}`,
+      `requested-target: ${params.requestedToAgentId}`,
+      `assigned-target: ${params.toAgentId}`,
+      `title: ${params.title}`,
+      'autonomy: required',
+      'execution-policy:',
+      '- Start with concrete execution in repository/runtime tools (read/edit/write/bash/test).',
+      '- Use coordination tools only if blocked by missing ownership or missing context.',
+      '- If blocked, report exactly what is missing and what you already tried.',
+      'definition-of-done:',
+      '- Reproduce the issue with concrete commands/steps and expected vs actual behavior.',
+      '- Implement a fix (or document exact blocker with evidence).',
+      '- Validate with command/test output.',
+      '- Summarize files changed, commands run, results, and residual risk.',
+      `- Before end_task, send a completion report to ${params.fromAgentId} via <agent-send>.`,
+      '[end-task-contract]',
+      '',
+    ];
+
+    if (params.toAgentId !== params.requestedToAgentId) {
+      packetLines.push(
+        `[routing] rerouted from ${params.requestedToAgentId} to ${params.toAgentId}`,
+        `[routing] reason: ${params.routingReason || 'No rationale provided'}`,
+        typeof params.routingConfidence === 'number'
+          ? `[routing] confidence: ${params.routingConfidence.toFixed(2)}`
+          : '[routing] confidence: n/a',
+        '',
+      );
+    }
+
+    if (params.taskBrief) {
+      packetLines.push('Task brief:', params.taskBrief, '');
+    }
+
+    packetLines.push('Task details:', params.content.trim());
+    return packetLines.join('\n');
   }
 
   listTasks(): AgentTask[] {
@@ -647,14 +956,21 @@ export class AgentOrchestratorService {
   async deleteAgent(agentId: string): Promise<boolean> {
     const index = this.state.agents.findIndex(a => a.id === agentId);
     if (index < 0) return false;
-    if (this.state.agents.length <= 1) return false;
+    if (
+      this.state.agents[index].kind === 'architect' ||
+      this.state.agents[index].removable === false
+    ) {
+      return false;
+    }
 
     this.state.agents.splice(index, 1);
     this.inFlightAgents.delete(agentId);
-    this.tasks.tasks = this.tasks.tasks.filter(t => t.fromAgentId !== agentId && t.toAgentId !== agentId);
+    this.tasks.tasks = this.tasks.tasks.filter(
+      t => t.fromAgentId !== agentId && t.toAgentId !== agentId,
+    );
 
     if (this.state.activeAgentId === agentId) {
-      this.state.activeAgentId = this.state.agents[0]?.id || DEFAULT_AGENT_ID;
+      this.state.activeAgentId = this.state.agents[0]?.id || '';
     }
 
     await this.saveState();
@@ -672,19 +988,41 @@ export class AgentOrchestratorService {
 
   async sendTask(input: SendTaskInput): Promise<AgentTask> {
     const createdAt = nowIso();
+    const resolved = await this.resolveDelegationTarget(input);
+    const taskTitle = input.title.trim() || 'Task';
+    const content = this.buildTaskContract({
+      fromAgentId: input.fromAgentId,
+      requestedToAgentId: resolved.requestedToAgentId,
+      toAgentId: resolved.toAgentId,
+      title: taskTitle,
+      content: input.content,
+      routingReason: resolved.reason,
+      routingConfidence: resolved.confidence,
+      taskBrief: resolved.taskBrief,
+    });
+
     const task: AgentTask = {
       id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       fromAgentId: input.fromAgentId,
-      toAgentId: input.toAgentId,
-      title: input.title.trim() || 'Task',
-      content: input.content.trim(),
+      toAgentId: resolved.toAgentId,
+      title: taskTitle,
+      content,
       status: 'queued',
       createdAt,
       updatedAt: createdAt,
     };
     this.tasks.tasks.push(task);
     await this.saveTasks();
-    this.eventBus.emit({ type: 'agents:task-queued', task, agentId: input.toAgentId });
+    this.eventBus.emit({ type: 'agents:task-queued', task, agentId: resolved.toAgentId });
+    if (resolved.rerouted) {
+      this.eventBus.emit({
+        type: 'agents:task-rerouted',
+        task,
+        fromAgentId: resolved.requestedToAgentId,
+        toAgentId: resolved.toAgentId,
+        reason: resolved.reason,
+      } as any);
+    }
     this.emitUpdated();
     return task;
   }

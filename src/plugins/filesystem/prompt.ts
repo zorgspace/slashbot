@@ -2,7 +2,7 @@
  * Filesystem Plugin - Prompt contribution
  */
 
-/* eslint-disable no-template-curly-in-string */
+ 
 export const FILESYSTEM_PROMPT = [
   '## read_file — Read a file from disk',
   'ALWAYS read a file before editing it. The output shows numbered lines for reference.',

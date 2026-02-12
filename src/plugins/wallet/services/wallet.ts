@@ -18,7 +18,6 @@ import {
   hashData,
 } from './crypto';
 import {
-  generateKeypair,
   importKeypair,
   getSolBalance,
   getSlashbotBalance,

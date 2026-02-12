@@ -15,6 +15,7 @@ export const theme = {
   // Accent (violet - keeps slashbot identity, headings)
   accent: '#9d7cd8',
   accentMuted: '#7a5fb8',
+  buttonNew: '#FFA500',
 
   // Legacy aliases for backward compatibility
   violet: '#9d7cd8',

@@ -11,11 +11,20 @@
 
 import { Telegraf } from 'telegraf';
 import { display, formatToolAction } from '../../core/ui';
-import { Connector, MessageHandler, PLATFORM_CONFIGS, splitMessage } from '../base';
+import {
+  Connector,
+  MessageHandler,
+  PLATFORM_CONFIGS,
+  splitMessage,
+  type ConnectorActionSpec,
+  type ConnectorCapabilities,
+  type ConnectorStatus,
+} from '../base';
 import { getTranscriptionService } from '../../plugins/transcription/services/TranscriptionService';
 import { imageBuffer } from '../../plugins/filesystem/services/ImageBuffer';
 import { acquireLock, releaseLock } from '../locks';
 import type { EventBus } from '../../core/events/EventBus';
+import { getConnectorActionSpecs, getConnectorCapabilities } from '../catalog';
 
 export interface TelegramConfig {
   botToken: string;
@@ -28,6 +37,7 @@ export class TelegramConnector implements Connector {
   readonly config = PLATFORM_CONFIGS.telegram;
 
   private bot: Telegraf;
+  private primaryChatId: string;
   private authorizedChatIds: Set<string>;
   private replyTargetChatId: string; // Track where to send replies
   private messageHandler: MessageHandler | null = null;
@@ -36,6 +46,7 @@ export class TelegramConnector implements Connector {
 
   constructor(config: TelegramConfig) {
     this.bot = new Telegraf(config.botToken);
+    this.primaryChatId = config.chatId;
     this.authorizedChatIds = new Set<string>();
     this.authorizedChatIds.add(config.chatId);
     if (config.chatIds) {
@@ -355,6 +366,42 @@ export class TelegramConnector implements Connector {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  getCapabilities(): ConnectorCapabilities {
+    return (
+      getConnectorCapabilities(this.source) ?? {
+        chatTypes: ['direct'],
+        supportsMarkdown: true,
+        supportsReactions: false,
+        supportsEdit: false,
+        supportsDelete: false,
+        supportsThreads: false,
+        supportsTyping: true,
+        supportsVoiceInbound: false,
+        supportsImageInbound: false,
+        supportsMultiTarget: false,
+      }
+    );
+  }
+
+  listSupportedActions(): ConnectorActionSpec[] {
+    return getConnectorActionSpecs(this.source);
+  }
+
+  getStatus(): ConnectorStatus {
+    const authorizedTargets = Array.from(this.authorizedChatIds);
+    return {
+      source: this.source,
+      configured: true,
+      running: this.running,
+      primaryTarget: this.primaryChatId,
+      activeTarget: this.replyTargetChatId,
+      authorizedTargets,
+      notes: this.running
+        ? [`${authorizedTargets.length} authorized chat(s)`]
+        : ['Configured but not running'],
+    };
   }
 }
 

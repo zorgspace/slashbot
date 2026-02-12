@@ -5,6 +5,7 @@
 import 'reflect-metadata';
 import { Container } from 'inversify';
 import { TYPES } from './types';
+import type { EventBus } from '../events/EventBus';
 
 // Create the container with singleton scope by default
 export const container = new Container({ defaultScope: 'Singleton' });
@@ -36,6 +37,13 @@ export async function initializeContainer(options: { basePath?: string }): Promi
 
   // EventBus should be bound first as other services may depend on it
   container.bind(TYPES.EventBus).to(EventBus).inSingletonScope();
+
+  // Bind CodeEditor as it's essential and used directly
+  const { createCodeEditor } = await import('../../plugins/code-editor/services/CodeEditor');
+  container
+    .bind(TYPES.CodeEditor)
+    .toDynamicValue(() => createCodeEditor(process.cwd()))
+    .inSingletonScope();
 
   container.bind(TYPES.ConnectorRegistry).to(ConnectorRegistry).inSingletonScope();
 

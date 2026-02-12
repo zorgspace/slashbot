@@ -33,3 +33,10 @@ export interface AgentRunAction {
   type: 'agent-run';
   agent: string;
 }
+
+export interface AgentSendAction {
+  type: 'agent-send';
+  to: string;
+  title: string;
+  content: string;
+}

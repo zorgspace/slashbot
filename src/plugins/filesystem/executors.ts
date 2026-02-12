@@ -5,6 +5,11 @@
 import type { ActionResult, ActionHandlers } from '../../core/actions/types';
 import type { ReadAction, EditAction, WriteAction, CreateAction } from './types';
 import { display, formatToolAction } from '../../core/ui';
+import { buildUnifiedDiff } from '../../core/utils/diffBuilder';
+
+function formatEditWithDiff(path: string, unifiedDiff: string): string {
+  return [`### Edit - ${path} - OK`, '```diff', unifiedDiff, '```'].join('\n');
+}
 
 export async function executeRead(
   action: ReadAction,
@@ -80,7 +85,7 @@ export async function executeRead(
     };
     const lang = langMap[ext] || ext;
     // Send full content to LLM with language header and line numbers
-    const startLine = (action.offset || 0) + 1;
+    const startLine = action.offset && action.offset > 0 ? action.offset : 1;
     const endLine = startLine + lines.length - 1;
     // Include range info in header when partial read, so LLM knows the visible window
     const rangeNote = action.offset || action.limit ? ` (lines ${startLine}-${endLine})` : '';
@@ -122,9 +127,22 @@ export async function executeEdit(
   );
 
   if (result.status === 'applied') {
-    display.appendAssistantMessage(
-      formatToolAction('Edit', action.path, { success: true }),
-    );
+    const unifiedDiff =
+      typeof result.beforeContent === 'string' && typeof result.afterContent === 'string'
+        ? buildUnifiedDiff({
+            filePath: action.path,
+            beforeContent: result.beforeContent,
+            afterContent: result.afterContent,
+          })
+        : null;
+
+    if (unifiedDiff) {
+      display.appendAssistantMarkdown(formatEditWithDiff(action.path, unifiedDiff));
+    } else {
+      display.appendAssistantMessage(
+        formatToolAction('Edit', action.path, { success: true }),
+      );
+    }
   } else if (result.status === 'already_applied') {
     display.appendAssistantMessage(
       formatToolAction('Edit', action.path, { success: true, summary: 'already applied' }),
@@ -142,7 +160,7 @@ export async function executeEdit(
     display.appendAssistantMessage(
       formatToolAction('Edit', action.path, { success: false, summary: 'no match' }),
     );
-    display.error(`Search string not found in ${action.path} \u2014 re-read and retry.`);
+    display.error(`Search string not found in ${action.path} — re-read and retry.`);
   } else {
     display.appendAssistantMessage(
       formatToolAction('Edit', action.path, { success: false }),

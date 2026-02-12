@@ -6,6 +6,8 @@ export type {
   AgentTaskState,
   CreateAgentInput,
   SendTaskInput,
+  AgentRoutingRequest,
+  AgentRoutingDecision,
   AgentTaskRunResult,
   AgentKind,
   AgentTaskStatus,

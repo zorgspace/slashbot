@@ -12,10 +12,8 @@ import {
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import {
-  getAssociatedTokenAddress,
-  createAssociatedTokenAccountInstruction,
-  createTransferInstruction,
-  getAccount,
+  Token,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import {
@@ -25,6 +23,21 @@ import {
   type TokenBalance,
   type TransactionResult,
 } from './types';
+
+const DUMMY_TOKEN_SIGNER = Keypair.generate();
+
+function createTokenClient(connection: Connection, mint: PublicKey): Token {
+  return new Token(connection, mint, TOKEN_PROGRAM_ID, DUMMY_TOKEN_SIGNER);
+}
+
+async function fetchTokenAccountInfo(
+  connection: Connection,
+  mint: PublicKey,
+  account: PublicKey,
+): Promise<Awaited<ReturnType<Token['getAccountInfo']>>> {
+  const token = createTokenClient(connection, mint);
+  return await token.getAccountInfo(account);
+}
 
 let connection: Connection | null = null;
 
@@ -81,10 +94,15 @@ export async function getSlashbotBalance(publicKey: PublicKey): Promise<TokenBal
   const mintPubkey = new PublicKey(SLASHBOT_TOKEN_MINT);
 
   try {
-    const tokenAccount = await getAssociatedTokenAddress(mintPubkey, publicKey);
-    const accountInfo = await getAccount(conn, tokenAccount);
+    const tokenAccount = await Token.getAssociatedTokenAddress(
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+      TOKEN_PROGRAM_ID,
+      mintPubkey,
+      publicKey,
+    );
+    const accountInfo = await fetchTokenAccountInfo(conn, mintPubkey, tokenAccount);
 
-    const raw = accountInfo.amount;
+    const raw = BigInt(accountInfo.amount.toString());
     const formatted = (Number(raw) / Math.pow(10, TOKEN_DECIMALS)).toFixed(TOKEN_DECIMALS);
 
     return { raw, formatted, decimals: TOKEN_DECIMALS };
@@ -180,11 +198,16 @@ export async function transferSlashbot(
     const toPubkey = new PublicKey(toAddress);
 
     // Get source token account
-    const sourceTokenAccount = await getAssociatedTokenAddress(mintPubkey, fromKeypair.publicKey);
+    const sourceTokenAccount = await Token.getAssociatedTokenAddress(
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+      TOKEN_PROGRAM_ID,
+      mintPubkey,
+      fromKeypair.publicKey,
+    );
 
     // Check if source account exists and has sufficient balance
     try {
-      const sourceAccount = await getAccount(conn, sourceTokenAccount);
+      const sourceAccount = await fetchTokenAccountInfo(conn, mintPubkey, sourceTokenAccount);
       const balance = Number(sourceAccount.amount) / Math.pow(10, TOKEN_DECIMALS);
       if (balance < amount) {
         return {
@@ -200,21 +223,28 @@ export async function transferSlashbot(
     }
 
     // Get or create destination token account
-    const destTokenAccount = await getAssociatedTokenAddress(mintPubkey, toPubkey);
+    const destTokenAccount = await Token.getAssociatedTokenAddress(
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+      TOKEN_PROGRAM_ID,
+      mintPubkey,
+      toPubkey,
+    );
 
     const transaction = new Transaction();
 
     // Check if destination token account exists
-    try {
-      await getAccount(conn, destTokenAccount);
-    } catch {
+      try {
+        await fetchTokenAccountInfo(conn, mintPubkey, destTokenAccount);
+      } catch {
       // Create associated token account for recipient
       transaction.add(
-        createAssociatedTokenAccountInstruction(
-          fromKeypair.publicKey,
+        Token.createAssociatedTokenAccountInstruction(
+          ASSOCIATED_TOKEN_PROGRAM_ID,
+          TOKEN_PROGRAM_ID,
+          mintPubkey,
           destTokenAccount,
           toPubkey,
-          mintPubkey,
+          fromKeypair.publicKey,
         ),
       );
     }
@@ -222,11 +252,12 @@ export async function transferSlashbot(
     // Add transfer instruction
     const amountInBaseUnits = BigInt(Math.floor(amount * Math.pow(10, TOKEN_DECIMALS)));
     transaction.add(
-      createTransferInstruction(
+      Token.createTransferInstruction(
+        TOKEN_PROGRAM_ID,
         sourceTokenAccount,
         destTokenAccount,
         fromKeypair.publicKey,
-        amountInBaseUnits,
+        [],        Number(amountInBaseUnits),
       ),
     );
 

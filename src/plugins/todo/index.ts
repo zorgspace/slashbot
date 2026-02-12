@@ -5,7 +5,6 @@
 import type {
   Plugin,
   PluginMetadata,
-  PluginContext,
   ActionContribution,
   PromptContribution,
   SidebarContribution,
@@ -13,10 +12,9 @@ import type {
 } from '../types';
 import { registerActionParser } from '../../core/actions/parser';
 import { getTodoParserConfigs } from './parser';
-import { executeTodoWrite, executeTodoRead, setTodoNotifyCallback } from './executors';
+import { executeTodoWrite, executeTodoRead } from './executors';
 import { TODO_PROMPT } from './prompt';
 import { getTodoToolContributions } from './tools';
-import { TYPES } from '../../core/di/types';
 
 export class TodoPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -27,19 +25,9 @@ export class TodoPlugin implements Plugin {
     description: 'Built-in task list for planning and tracking multi-step work',
   };
 
-  async init(context: PluginContext): Promise<void> {
+  async init(): Promise<void> {
     for (const config of getTodoParserConfigs()) {
       registerActionParser(config);
-    }
-
-    // Wire push notifications through ConnectorRegistry
-    try {
-      const connectorRegistry = context.container.get<any>(TYPES.ConnectorRegistry);
-      setTodoNotifyCallback(async (message: string, target?: string) => {
-        await connectorRegistry.notify(message, target);
-      });
-    } catch {
-      // ConnectorRegistry not available - TUI notifications still work
     }
   }
 

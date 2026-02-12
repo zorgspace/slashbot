@@ -5,22 +5,16 @@
  * chat, communication log panel, and input area.
  */
 
-import {
-  createCliRenderer,
-  BoxRenderable,
-  ConsolePosition,
-  type CliRenderer,
-  type StyledText,
-} from '@opentui/core';
+import { createCliRenderer, BoxRenderable, type CliRenderer, type StyledText } from '@opentui/core';
 import { theme } from '../../core/ui/theme';
 import { display } from '../../core/ui/display';
 import type { UIOutput, SidebarData, TUIAppCallbacks } from '../../core/ui/types';
+import { buildUnifiedDiff } from '../../core/utils/diffBuilder';
 import type { HeaderOptions } from './panels/HeaderPanel';
 import { HeaderPanel } from './panels/HeaderPanel';
 import { TabsPanel, type TabItem } from './panels/TabsPanel';
 import { ChatPanel } from './panels/ChatPanel';
 import { CommPanel } from './panels/CommPanel';
-import { DiffPanel } from './panels/DiffPanel';
 import { CommandPalettePanel } from './panels/CommandPalettePanel';
 import { InputPanel } from './panels/InputPanel';
 import { ThinkingPanel } from './panels/ThinkingPanel';
@@ -67,7 +61,6 @@ export class TUIApp implements UIOutput {
   private tabsPanel!: TabsPanel;
   private chatPanel!: ChatPanel;
   private commPanel!: CommPanel;
-  private diffPanel!: DiffPanel;
   private commandPalette!: CommandPalettePanel;
   private inputPanel!: InputPanel;
   private thinkingPanel!: ThinkingPanel;
@@ -81,6 +74,8 @@ export class TUIApp implements UIOutput {
   private lastSelectedText = '';
   private ignoreNextPaste = false;
 
+  private tabBuffers: { [key: string]: any[] } = {};
+  private tabInputDrafts: Record<string, string> = {};
   constructor(
     callbacks: TUIAppCallbacks,
     options?: {
@@ -116,10 +111,23 @@ export class TUIApp implements UIOutput {
     this.headerPanel = new HeaderPanel(this.renderer);
     root.add(this.headerPanel.getRenderable());
 
-    // Tabs row (Agents manager + agent tabs)
+    // Agents sidebar (select/create/edit/delete)
     this.tabsPanel = new TabsPanel(this.renderer, {
-      onSelect: tabId => {
-        this.callbacks.onTabChange?.(tabId);
+      onSelect: async (tabId, previousTabId) => {
+        this.captureInputDraft(previousTabId);
+        this.restoreInputDraft(tabId);
+        try {
+          await this.callbacks.onTabChange?.(tabId);
+          const buffered = this.tabBuffers[tabId];
+          if (buffered && buffered.length > 0) {
+            this.renderTabHistory(tabId);
+          }
+        } catch (error) {
+          this.captureInputDraft(tabId);
+          this.restoreInputDraft(previousTabId);
+          this.renderTabHistory(previousTabId);
+          throw error;
+        }
       },
       onCreateAgent: () => {
         this.callbacks.onCreateAgent?.();
@@ -127,15 +135,22 @@ export class TUIApp implements UIOutput {
       onEditAgent: agentId => {
         this.callbacks.onEditAgent?.(agentId);
       },
+      onDeleteAgent: agentId => {
+        this.callbacks.onDeleteAgent?.(agentId);
+      },
     });
-    root.add(this.tabsPanel.getRenderable());
 
-    // Content row: left column (chat + comm) + right diff panel
+    this.setActiveTab('agent-architect');
+
+    // Content row: agents sidebar + main chat column + right diff panel
     const contentRow = new BoxRenderable(this.renderer, {
       id: 'content-row',
       flexDirection: 'row',
       flexGrow: 1,
     });
+
+    // Left sidebar: agents list with scroll overflow
+    contentRow.add(this.tabsPanel.getRenderable());
 
     // Left column: chat + comm panel
     const leftColumn = new BoxRenderable(this.renderer, {
@@ -143,8 +158,8 @@ export class TUIApp implements UIOutput {
       flexDirection: 'column',
       flexGrow: 1,
       justifyContent: 'flex-end',
-      paddingLeft:2,
-      paddingRight:2
+      paddingLeft: 2,
+      paddingRight: 2,
     });
 
     // Chat panel
@@ -156,10 +171,6 @@ export class TUIApp implements UIOutput {
     leftColumn.add(this.commPanel.getRenderable());
 
     contentRow.add(leftColumn);
-
-    // Diff panel (right side, hidden by default, Ctrl+D to toggle)
-    this.diffPanel = new DiffPanel(this.renderer);
-    contentRow.add(this.diffPanel.getRenderable());
 
     root.add(contentRow);
 
@@ -178,7 +189,7 @@ export class TUIApp implements UIOutput {
     // Input panel
     this.inputPanel = new InputPanel(this.renderer, {
       onSubmit: async value => {
-        this.chatPanel.appendUserMessage(value);
+        this.appendUserChat(value);
         await this.callbacks.onInput(value);
       },
       completer: this.completer,
@@ -242,7 +253,7 @@ export class TUIApp implements UIOutput {
           source: 'ctrl_c',
         });
         this.inputPanel.clear();
-        this.chatPanel.append('Press Ctrl+C again to exit');
+        this.appendChat('Press Ctrl+C again to exit');
         return;
       }
 
@@ -250,7 +261,7 @@ export class TUIApp implements UIOutput {
       if (key.ctrl && key.name === 'l' && !key.shift) {
         key.stopPropagation();
         key.preventDefault();
-        this.chatPanel.clear();
+        this.clearChat();
         return;
       }
 
@@ -262,13 +273,7 @@ export class TUIApp implements UIOutput {
         return;
       }
 
-      // Ctrl+D - toggle diff panel
-      if (key.ctrl && key.name === 'd' && !key.shift) {
-        key.stopPropagation();
-        key.preventDefault();
-        this.diffPanel.toggle();
-        return;
-      }
+
 
       // Ctrl+V (without Shift) - image paste from clipboard
       if (key.ctrl && key.name === 'v' && !key.shift) {
@@ -325,7 +330,7 @@ export class TUIApp implements UIOutput {
           key.preventDefault();
           const value = this.inputPanel.getValue();
           if (value.trim()) {
-            this.chatPanel.appendUserMessage(value);
+            this.appendUserChat(value);
             this.inputPanel.clear();
             this.callbacks.onInput(value);
           }
@@ -422,52 +427,136 @@ export class TUIApp implements UIOutput {
     return this.tabsPanel.getActiveTabId();
   }
 
-  appendChat(content: string): void {
-    this.chatPanel.append(content);
+  private captureInputDraft(tabId: string): void {
+    if (!tabId || !this.inputPanel) return;
+    this.tabInputDrafts[tabId] = this.inputPanel.getValue();
   }
 
-  appendStyledChat(content: StyledText | string): void {
-    this.chatPanel.appendStyled(content);
+  private restoreInputDraft(tabId: string): void {
+    if (!tabId || !this.inputPanel) return;
+    this.inputPanel.setValue(this.tabInputDrafts[tabId] || '');
   }
 
-  appendUserChat(content: string): void {
-    this.chatPanel.appendUserMessage(content);
+  private renderTabHistory(tabId: string): void {
+    this.chatPanel.clear();
+    const buffer = this.tabBuffers[tabId] || [];
+    for (const action of buffer) {
+      const { method, args } = action as any;
+      (this.chatPanel as any)[method](...args);
+    }
+    this.chatPanel.scrollToBottom();
   }
 
-  appendAssistantChat(content: StyledText | string): void {
-    this.chatPanel.appendAssistantMessage(content);
+  private bufferAction(targetTabId: string, method: string, args: any[]): void {
+    let buffer = this.tabBuffers[targetTabId];
+    if (!buffer) {
+      buffer = this.tabBuffers[targetTabId] = [];
+    }
+    buffer.push({ method, args });
+    if (buffer.length > 400) {
+      buffer.splice(0, buffer.length - 400);
+    }
   }
 
-  appendAssistantMarkdown(text: string): void {
-    this.chatPanel.appendAssistantMarkdown(text);
+  appendChat(content: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'append', [content]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.append(content);
+    }
   }
 
-  upsertAssistantMarkdownBlock(key: string, text: string): void {
-    this.chatPanel.upsertAssistantMarkdownBlock(key, text);
+  appendStyledChat(content: StyledText | string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'appendStyled', [content]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.appendStyled(content);
+    }
   }
 
-  removeAssistantMarkdownBlock(key: string): void {
-    this.chatPanel.removeAssistantMarkdownBlock(key);
+  appendUserChat(content: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'appendUserMessage', [content]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.appendUserMessage(content);
+    }
   }
 
-  startResponse(): void {
-    this.chatPanel.startResponse();
+  appendAssistantChat(content: StyledText | string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'appendAssistantMessage', [content]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.appendAssistantMessage(content);
+    }
   }
 
-  appendResponse(chunk: string): void {
-    this.chatPanel.appendResponse(chunk);
+  appendAssistantMarkdown(text: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'appendAssistantMarkdown', [text]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.appendAssistantMarkdown(text);
+    }
   }
 
-  appendCodeBlock(content: string, filetype?: string): void {
-    this.chatPanel.addCodeBlock(content, filetype);
+  upsertAssistantMarkdownBlock(key: string, text: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'upsertAssistantMarkdownBlock', [key, text]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.upsertAssistantMarkdownBlock(key, text);
+    }
   }
 
-  appendDiffBlock(diff: string, filetype?: string): void {
-    this.chatPanel.addDiffBlock(diff, filetype);
+  removeAssistantMarkdownBlock(key: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'removeAssistantMarkdownBlock', [key]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.removeAssistantMarkdownBlock(key);
+    }
   }
 
-  appendThinking(_chunk: string): void {
-    // Thinking chunks not displayed — spinner-only panel
+  startResponse(tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'startResponse', []);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.startResponse();
+    }
+  }
+
+  appendResponse(chunk: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'appendResponse', [chunk]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.appendResponse(chunk);
+    }
+  }
+
+  appendCodeBlock(content: string, filetype?: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'addCodeBlock', [content, filetype]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.addCodeBlock(content, filetype);
+    }
+  }
+
+  appendDiffBlock(diff: string, filetype?: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.bufferAction(targetTab, 'addDiffBlock', [diff, filetype]);
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.addDiffBlock(diff, filetype);
+    }
+  }
+
+  addDiffEntry(filePath: string, beforeContent: string, afterContent: string, tabId?: string): void {
+    const diff = buildUnifiedDiff({ filePath, beforeContent, afterContent });
+    if (!diff) return;
+    this.appendDiffBlock(diff, 'diff', tabId);
+  }
+
+  appendThinking(chunk: string, tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.commPanel.logThinking(chunk);
+    }
   }
 
   clearThinking(): void {
@@ -534,22 +623,21 @@ export class TUIApp implements UIOutput {
 
   // --- Prompt input (password, text) ---
 
-  async promptInput(label: string, options?: { masked?: boolean }): Promise<string> {
+  async promptInput(
+    label: string,
+    options?: { masked?: boolean; initialValue?: string },
+  ): Promise<string> {
     return this.inputPanel.promptInput(label, options);
   }
 
-  // --- Diff panel methods ---
 
-  addDiffEntry(filePath: string, before: string, after: string): void {
-    this.diffPanel.addDiff(filePath, before, after);
-  }
 
-  clearDiffPanel(): void {
-    this.diffPanel.clear();
-  }
-
-  clearChat(): void {
-    this.chatPanel.clear();
+  clearChat(tabId?: string): void {
+    const targetTab = tabId ?? this.tabsPanel.getActiveTabId();
+    this.tabBuffers[targetTab] = [];
+    if (targetTab === this.tabsPanel.getActiveTabId()) {
+      this.chatPanel.clear();
+    }
   }
 
   showNotification(text: string): void {
@@ -563,6 +651,7 @@ export class TUIApp implements UIOutput {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.tabsPanel?.destroy?.();
     display.unbindTUI();
     this.renderer?.destroy();
     // Restore terminal state

@@ -52,7 +52,7 @@ export const agentCommand: CommandHandler = {
       const summary = service.getSummary();
       const agents = service.listAgents();
       display.append('');
-      display.violet(`Agents: ${summary.totalAgents} (active: ${summary.activeAgentId})`, {
+      display.violet(`Agents: ${summary.totalAgents} (active: ${summary.activeAgentId || 'none'})`, {
         bold: true,
       });
       display.append(
@@ -118,6 +118,10 @@ export const agentCommand: CommandHandler = {
         return true;
       }
       const from = service.getActiveAgentId();
+      if (!from) {
+        display.errorText('No active agent. Create one with /agent spawn <name> first.');
+        return true;
+      }
       const task = await service.sendTask({
         fromAgentId: from,
         toAgentId: toId,
@@ -213,7 +217,7 @@ export const agentCommand: CommandHandler = {
       }
       const ok = await service.deleteAgent(id);
       if (!ok) {
-        display.warningText(`Cannot delete ${id} (agent not found or last remaining agent)`);
+        display.warningText(`Cannot delete ${id} (agent not found)`);
       } else {
         display.successText(`Deleted ${id}`);
       }

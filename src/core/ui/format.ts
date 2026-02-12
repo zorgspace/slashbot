@@ -27,7 +27,11 @@ export function formatToolAction(
   detail: string,
   result?: ToolActionResult,
 ): StyledText {
-  const parts: StyledText[] = [t`${bold(fg(theme.accent)(name))} ${fg(theme.muted)('-')} ${detail}`];
+  const failed = result?.success === false;
+  const header = failed
+    ? t`${bold(fg(theme.error)(name))} ${fg(theme.error)('-')} ${fg(theme.error)(detail)}`
+    : t`${bold(fg(theme.accent)(name))} ${fg(theme.muted)('-')} ${detail}`;
+  const parts: StyledText[] = [header];
 
   if (result) {
     if (result.success) {
@@ -47,7 +51,8 @@ export function formatToolAction(
  * Format just a tool name without detail (for tools with no args).
  */
 export function formatToolName(name: string, result?: ToolActionResult): StyledText {
-  const parts: StyledText[] = [t`${bold(fg(theme.accent)(name))}`];
+  const failed = result?.success === false;
+  const parts: StyledText[] = [failed ? t`${bold(fg(theme.error)(name))}` : t`${bold(fg(theme.accent)(name))}`];
 
   if (result) {
     if (result.success) {
