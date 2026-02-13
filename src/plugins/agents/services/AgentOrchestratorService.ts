@@ -184,8 +184,14 @@ Execution policy:
 - Delegate only when blocked by missing ownership or specialization.
 
 Communication rules:
-- Use clear, short progress/status updates.
-- End with brief plain-language summaries when a request is complete.`;
+- Reply directly to the user's actual request with concrete results.
+- Avoid status-only acknowledgements like "task completed" unless explicitly asked for status.
+- Final reply contract: your final assistant response text is the notify payload for the connector target.
+- Notify tag usage: for inbound connector turns, do NOT use <telegram-send>/<discord-send>; runtime auto-notifies from your final plain response text.
+- Use connector send tags/tools only for proactive outbound notifications outside the inbound turn.
+- Proactive send format examples: <telegram-send chat_id="...">message</telegram-send> and <discord-send channel_id="...">message</discord-send>.
+- Include concrete output values in that final reply; never treat tool execution logs as the answer.
+- Markdown formatting is allowed when it improves readability.`;
 }
 
 function isOrchestratorProfile(

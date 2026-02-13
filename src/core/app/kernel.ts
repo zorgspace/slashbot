@@ -256,8 +256,11 @@ export class Slashbot {
   }
 
   private getContext(): CommandContext {
+    const kernel = this;
     return {
-      grokClient: this.grokClient,
+      get grokClient() {
+        return kernel.grokClient;
+      },
       fileSystem: this.fileSystem,
       configManager: this.configManager,
       codeEditor: this.codeEditor,
@@ -858,8 +861,15 @@ Execution policy:
 - Delegate only when blocked by missing ownership or specialization.
 
 Communication rules:
-- Use clear, short progress/status updates.
-- End with brief plain-language summaries when a request is complete.`,
+- Reply directly to the user's actual request with concrete results.
+- Avoid status-only acknowledgements like "task completed" unless the user explicitly asks for status.
+- Final reply contract: your final assistant response text is the notify payload sent to the connector target chat/channel.
+- Notify tag usage: during an inbound connector turn, do NOT use <telegram-send>/<discord-send>; the runtime auto-notifies with your final reply text.
+- Use connector send tags/tools only for proactive outbound notifications outside the active inbound turn.
+- Proactive send format examples: <telegram-send chat_id="...">message</telegram-send> and <discord-send channel_id="...">message</discord-send>.
+- Include the concrete result values/content in that final reply; do not describe internal execution steps as the answer.
+- Do not treat tool/action transcripts as the final user response.
+- Markdown formatting is allowed when it improves readability.`,
       sessionId: options.sessionId,
       workspaceDir: connectorRoot,
       agentDir: path.join(connectorRoot, 'agent'),
@@ -914,6 +924,7 @@ Communication rules:
     executionDirective: string;
     coordinationDirective: string;
     extraContextLines?: string[];
+    includeDelegatedControlFlowHint?: boolean;
   }): Promise<void> {
     if (!this.grokClient) return;
 
@@ -949,11 +960,17 @@ Communication rules:
       options.executionDirective,
       options.coordinationDirective,
       'Avoid loops on coordination tools; if blocked, state the blocker precisely and what you already tried.',
-      'Use say_message for progress; use end_task only when the delegated task is complete.',
       `Workspace: ${options.agent.workspaceDir}`,
       `AgentDir: ${options.agent.agentDir}`,
       ...(options.extraContextLines || []),
     ];
+    if (options.includeDelegatedControlFlowHint !== false) {
+      payloadLines.splice(
+        8,
+        0,
+        'Use say_message for progress; use end_task only when the delegated task is complete.',
+      );
+    }
     if (bootstrapSections.length > 0) {
       payloadLines.push('Workspace bootstrap files:', bootstrapSections.join('\n\n'));
     }
@@ -980,6 +997,7 @@ Communication rules:
       directives,
       executionDirective,
       coordinationDirective,
+      includeDelegatedControlFlowHint: true,
     });
   }
 
@@ -1031,6 +1049,8 @@ Communication rules:
         `This session handles ${label} connector traffic.`,
         'Execute actions directly to satisfy connector user requests.',
         'Connector responses must stay concise and plain-language.',
+        'Your final assistant response is the exact message body that will be notified to the connector target.',
+        'Do not emit connector send tags/tools in this inbound turn; runtime auto-notifies with your final response text.',
       ],
       executionDirective:
         'Execution default: handle connector user requests directly with available tools in this lane.',
@@ -1041,6 +1061,7 @@ Communication rules:
         ...(targetId ? [`Connector target: ${targetId}`] : []),
         `Connector session: ${sessionId}`,
       ],
+      includeDelegatedControlFlowHint: false,
     });
   }
 
@@ -1073,6 +1094,7 @@ Communication rules:
       coordinationDirective:
         'Use agents_status/agents_send/sessions_* only when blocked by missing ownership or context.',
       extraContextLines: [`Gateway session: ${sessionId}`, `Gateway client: ${normalizedClientId}`],
+      includeDelegatedControlFlowHint: false,
     });
   }
 
@@ -2081,14 +2103,24 @@ Communication rules:
   }
 
   private async initializeGrok(): Promise<void> {
-    const apiKey = this.configManager.getApiKey();
-    if (apiKey) {
+    const savedConfig = this.configManager.getConfig();
+    const isTokenMode = savedConfig.paymentMode === 'token';
+    const configuredApiKey = this.configManager.getApiKey();
+    const bootstrapApiKey = configuredApiKey || (isTokenMode ? 'token-mode-placeholder' : undefined);
+
+    if (bootstrapApiKey) {
       try {
-        // Load saved config
-        const savedConfig = this.configManager.getConfig();
-        this.grokClient = createGrokClient(apiKey, {
-          provider: savedConfig.provider,
-          model: savedConfig.model,
+        const bootstrapProvider = isTokenMode ? 'xai' : savedConfig.provider;
+        const bootstrapModel =
+          isTokenMode &&
+          savedConfig.model &&
+          !savedConfig.model.toLowerCase().startsWith('grok')
+            ? undefined
+            : savedConfig.model;
+
+        this.grokClient = createGrokClient(bootstrapApiKey, {
+          provider: bootstrapProvider,
+          model: bootstrapModel,
         });
         this.grokClient.setSessionRunCallbacks({
           onSessionRunStart: sessionId => this.beginReticulatingSession(sessionId),
@@ -2106,13 +2138,13 @@ Communication rules:
           }
         }
 
-        const savedProvider = savedConfig.provider;
+        const savedProvider = isTokenMode ? 'xai' : savedConfig.provider;
         if (savedProvider) {
           const providerKey =
-            this.configManager.getProviderCredentials(savedProvider)?.apiKey || apiKey;
+            this.configManager.getProviderCredentials(savedProvider)?.apiKey || bootstrapApiKey;
           this.grokClient.setProvider(savedProvider, providerKey);
         }
-        if (savedConfig.model) {
+        if (savedConfig.model && (!isTokenMode || savedConfig.model.toLowerCase().startsWith('grok'))) {
           this.grokClient.setModel(savedConfig.model);
         }
 
@@ -2359,16 +2391,24 @@ Communication rules:
           const shouldPreferWebSearch =
             (source === 'telegram' || source === 'discord') &&
             this.shouldPreferWebSearchForConnectorQuery(trimmed);
-          const blockedToolNames = [`${source}_send`];
-          const blockedActionTypes = [`${source}-send`];
+          const blockedToolNames = [
+            `${source}_send`,
+            'say_message',
+            'end_task',
+            'continue_task',
+          ];
+          const blockedActionTypes = [`${source}-send`, 'say', 'end', 'continue'];
+          const parsedSession = sessionId ? this.parseConnectorSessionId(sessionId) : null;
+          const deliveryTarget = parsedSession?.targetId ? ` ${parsedSession.targetId}` : '';
           let connectorBlockReason =
-            `Do not call ${source} send tools while handling an inbound ${source} message. ` +
-            'Return plain response text instead.';
+            `Do not call ${source} send tools or connector control-flow tools while handling an inbound ${source} message. ` +
+            `Return exactly one final user-facing response body that can be notified to ${source}${deliveryTarget}.`;
           if (shouldPreferWebSearch) {
             blockedToolNames.push('bash', 'exec');
             blockedActionTypes.push('bash', 'exec');
             connectorBlockReason =
-              'This looks like an external web lookup. Use `search` (web_search/x_search) and optionally `fetch`; do not use bash/curl.';
+              'This looks like an external web lookup. Use `search` (web_search/x_search) and optionally `fetch`; do not use bash/curl. ' +
+              `Return exactly one final user-facing response body for ${source}${deliveryTarget}.`;
           }
           const connectorExecutionPolicy =
             source === 'telegram' || source === 'discord'

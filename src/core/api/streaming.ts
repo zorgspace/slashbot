@@ -174,6 +174,7 @@ export async function streamResponse(
     // Consume fullStream only for real-time display control.
     // Data extraction uses AI SDK's normalized promise properties below.
     for await (const event of stream.fullStream) {
+      ctx.authProvider.onStreamChunk?.(event as any);
       const type = (event as any).type;
 
       // Stop spinner on first content event

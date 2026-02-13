@@ -6,31 +6,58 @@ import type { LanguageModel } from 'ai';
 import { PROVIDERS, inferProvider } from './models';
 import type { ProviderInfo } from './types';
 
-type ProviderFactory = (apiKey: string, baseUrl?: string) => (modelId: string) => LanguageModel;
+type ProviderFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+type ProviderFactory = (
+  apiKey: string,
+  baseUrl?: string,
+  headers?: Record<string, string>,
+  customFetch?: ProviderFetch,
+) => (modelId: string) => LanguageModel;
 
 /**
  * Lazy-loaded provider SDK factories.
  * Each returns a function that creates a model reference.
  */
 const providerFactories: Record<string, ProviderFactory> = {
-  xai: (apiKey, baseUrl) => {
+  xai: (apiKey, baseUrl, headers, customFetch) => {
     const { createXai } = require('@ai-sdk/xai');
-    const provider = createXai({ apiKey, baseURL: baseUrl });
+    const provider = createXai({
+      apiKey,
+      baseURL: baseUrl,
+      ...(headers ? { headers } : {}),
+      ...(customFetch ? { fetch: customFetch } : {}),
+    });
     return (modelId: string) => provider(modelId);
   },
-  anthropic: (apiKey, baseUrl) => {
+  anthropic: (apiKey, baseUrl, headers, customFetch) => {
     const { createAnthropic } = require('@ai-sdk/anthropic');
-    const provider = createAnthropic({ apiKey, baseURL: baseUrl });
+    const provider = createAnthropic({
+      apiKey,
+      baseURL: baseUrl,
+      ...(headers ? { headers } : {}),
+      ...(customFetch ? { fetch: customFetch } : {}),
+    });
     return (modelId: string) => provider(modelId);
   },
-  openai: (apiKey, baseUrl) => {
+  openai: (apiKey, baseUrl, headers, customFetch) => {
     const { createOpenAI } = require('@ai-sdk/openai');
-    const provider = createOpenAI({ apiKey, baseURL: baseUrl });
+    const provider = createOpenAI({
+      apiKey,
+      baseURL: baseUrl,
+      ...(headers ? { headers } : {}),
+      ...(customFetch ? { fetch: customFetch } : {}),
+    });
     return (modelId: string) => provider(modelId);
   },
-  google: (apiKey, baseUrl) => {
+  google: (apiKey, baseUrl, headers, customFetch) => {
     const { createGoogleGenerativeAI } = require('@ai-sdk/google');
-    const provider = createGoogleGenerativeAI({ apiKey, baseURL: baseUrl });
+    const provider = createGoogleGenerativeAI({
+      apiKey,
+      baseURL: baseUrl,
+      ...(headers ? { headers } : {}),
+      ...(customFetch ? { fetch: customFetch } : {}),
+    });
     return (modelId: string) => provider(modelId);
   },
 };
@@ -38,6 +65,8 @@ const providerFactories: Record<string, ProviderFactory> = {
 export interface ProviderConfig {
   apiKey: string;
   baseUrl?: string;
+  headers?: Record<string, string>;
+  fetch?: ProviderFetch;
 }
 
 export class ProviderRegistry {
@@ -73,7 +102,7 @@ export class ProviderRegistry {
       }
 
       try {
-        factory = factoryFn(config.apiKey, config.baseUrl);
+        factory = factoryFn(config.apiKey, config.baseUrl, config.headers, config.fetch);
       } catch (err: any) {
         console.error(
           `[Provider Error] Failed to create ${providerId} factory:`,

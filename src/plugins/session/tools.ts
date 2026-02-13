@@ -29,14 +29,14 @@ export function getSessionToolContributions(): ToolContribution[] {
     {
       name: 'sessions_send',
       description:
-        'Send a message to another session. By default queues only; set run=true to execute now in that session.',
+        'Send a message to another session. Agent sessions execute immediately; non-agent sessions queue unless run=true.',
       parameters: z.object({
         sessionId: z.string().describe('Target session id'),
         message: z.string().describe('Message to send'),
         run: z
           .boolean()
           .optional()
-          .describe('Execute immediately in target session (default false)'),
+          .describe('For non-agent targets: execute immediately when true (default false)'),
       }),
       toAction: args => ({
         type: 'sessions-send',

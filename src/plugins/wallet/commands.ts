@@ -5,7 +5,7 @@
 
 import type { CommandHandler, CommandContext } from '../../core/commands/registry';
 import type { TUIApp } from '../tui/TUIApp';
-import { PROXY_CONFIG } from '../../core/config/constants';
+import { MODELS, PROXY_CONFIG } from '../../core/config/constants';
 import { display } from '../../core/ui';
 import { container } from '../../core/di/container';
 import { TYPES } from '../../core/di/types';
@@ -36,6 +36,7 @@ import {
   TREASURY_ADDRESS,
 } from './services';
 import { setPaymentMode, getPaymentMode, ProxyAuthProvider } from './provider';
+import { DirectAuthProvider } from '../providers/auth';
 import { PublicKey } from '@solana/web3.js';
 
 // Active TUI reference — set per-command execution via setActiveTUI()
@@ -748,8 +749,21 @@ export const walletCommands: CommandHandler[] = [
         }
 
         if (mode === 'apikey') {
+          if (!context.configManager.getApiKey()) {
+            display.errorText('No API key configured. Run /login first or stay in token mode.');
+            return false;
+          }
+
           await context.configManager.saveConfig({ paymentMode: 'apikey' });
           setPaymentMode('apikey');
+          if (context.grokClient) {
+            const apiConfig = context.grokClient.getApiConfig();
+            context.grokClient.setAuthProvider(
+              new DirectAuthProvider(apiConfig.apiKey, apiConfig.baseUrl),
+            );
+          } else if (context.configManager.getApiKey()) {
+            await context.reinitializeGrok();
+          }
           renderWalletBlock([
             'Switched to API key payment mode',
             'API calls will be charged to your xAI API key.',
@@ -788,10 +802,21 @@ export const walletCommands: CommandHandler[] = [
             } catch {}
           }
 
-          await context.configManager.saveConfig({ paymentMode: 'token' });
+          await context.configManager.saveConfig({
+            paymentMode: 'token',
+            provider: 'xai',
+            model: MODELS.DEFAULT,
+          });
           setPaymentMode('token');
-          // Wire proxy auth into GrokClient
+          if (!context.grokClient) {
+            await context.reinitializeGrok();
+          }
           if (context.grokClient) {
+            const xaiApiKey =
+              context.configManager.getProviderCredentials('xai')?.apiKey ||
+              context.configManager.getApiKey() ||
+              'token-mode-placeholder';
+            context.grokClient.setProvider('xai', xaiApiKey);
             context.grokClient.setAuthProvider(new ProxyAuthProvider());
           }
 

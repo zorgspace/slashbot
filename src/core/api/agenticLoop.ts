@@ -623,7 +623,9 @@ export async function runAgenticLoop(
         continue;
       }
       if (endResult.result) {
-        display.sayResult(endResult.result);
+        if (opts.displayStream) {
+          display.sayResult(endResult.result, ctx.outputTabId);
+        }
         endMessage = endResult.result;
       }
       ctx.sessionManager.history.push({ role: 'assistant', content: responseContent });
@@ -634,8 +636,8 @@ export async function runAgenticLoop(
     const hasSayAction = actionResults.some(r => r.action === 'Says');
     if (hasSayAction) {
       const sayResult = actionResults.find(r => r.action === 'Says');
-      if (sayResult?.result) {
-        display.sayResult(sayResult.result);
+      if (sayResult?.result && opts.displayStream) {
+        display.sayResult(sayResult.result, ctx.outputTabId);
       }
     }
 

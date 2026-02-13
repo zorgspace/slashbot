@@ -130,6 +130,31 @@ export class SessionPlugin implements Plugin {
     return lookup.get(requested) || lookup.get(requested.toLowerCase()) || null;
   }
 
+  private isAgentSessionTarget(sessionId: string): boolean {
+    const normalized = normalizeSessionId(sessionId)?.toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    if (normalized.startsWith('agent:') || normalized.startsWith('agent-')) {
+      return true;
+    }
+
+    try {
+      if (!this.context.container.isBound(TYPES.AgentOrchestratorService)) {
+        return false;
+      }
+      const agentService = this.context.container.get<any>(TYPES.AgentOrchestratorService);
+      const agents = Array.isArray(agentService?.listAgents?.()) ? agentService.listAgents() : [];
+      return agents.some((agent: any) => {
+        const agentId = normalizeSessionId(agent?.id)?.toLowerCase();
+        const agentSessionId = normalizeSessionId(agent?.sessionId)?.toLowerCase();
+        return normalized === agentId || normalized === agentSessionId;
+      });
+    } catch {
+      return false;
+    }
+  }
+
   private projectRowsToVisibleSessions<T extends { id?: unknown }>(
     rows: T[],
     createPlaceholder: (id: string) => T,
@@ -229,7 +254,8 @@ export class SessionPlugin implements Plugin {
             if (!client?.sendToSession) {
               return { delivered: false, error: 'Session client unavailable.' };
             }
-            const shouldRun = typeof run === 'boolean' ? run : target.startsWith('agent:');
+            const isAgentTarget = this.isAgentSessionTarget(target);
+            const shouldRun = isAgentTarget ? true : typeof run === 'boolean' ? run : false;
             const delivery = await client.sendToSession(target, message, {
               run: shouldRun,
               quiet: shouldRun ? false : true,

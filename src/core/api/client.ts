@@ -57,6 +57,32 @@ const ORCHESTRATOR_BLOCKED_ACTION_TYPES = [
   'bash',
 ];
 
+function deriveBaseUrlFromEndpoint(endpoint: string): string {
+  const trimmed = String(endpoint || '').trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.replace(/\/(chat\/completions|responses)$/i, '');
+}
+
+function getRequestBodyText(body: unknown): string {
+  if (typeof body === 'string') {
+    return body;
+  }
+  if (body instanceof URLSearchParams) {
+    return body.toString();
+  }
+  if (body instanceof ArrayBuffer) {
+    return Buffer.from(body).toString('utf8');
+  }
+  if (ArrayBuffer.isView(body)) {
+    return Buffer.from(body.buffer, body.byteOffset, body.byteLength).toString('utf8');
+  }
+  return '';
+}
+
+type AuthFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export class LLMClient implements ClientContext {
   config: LLMConfig;
   sessionManager: SessionManager;
@@ -80,6 +106,56 @@ export class LLMClient implements ClientContext {
   } = {};
   private readonly abortControllersBySession = new Map<string, Set<AbortController>>();
   private readonly sessionExecutionLanes = new Map<string, Promise<void>>();
+
+  private buildAuthFetch(provider: ApiAuthProvider): AuthFetch {
+    return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const signedHeaders = provider.getHeaders(getRequestBodyText(init?.body));
+      const mergedHeaders = new Headers(init?.headers as HeadersInit | undefined);
+
+      const signedKeys = Object.keys(signedHeaders).map(key => key.toLowerCase());
+      const isWalletSigned =
+        signedKeys.some(key => key.startsWith('x-wallet-')) ||
+        signedKeys.includes('x-body-hash');
+      if (isWalletSigned) {
+        mergedHeaders.delete('authorization');
+        mergedHeaders.delete('api-key');
+        mergedHeaders.delete('x-api-key');
+      }
+
+      for (const [key, value] of Object.entries(signedHeaders)) {
+        if (value !== undefined && value !== null && value !== '') {
+          mergedHeaders.set(key, String(value));
+        }
+      }
+
+      return fetch(input as any, {
+        ...(init || {}),
+        headers: mergedHeaders,
+      });
+    };
+  }
+
+  private applyAuthTransportToProvider(providerId: string = this.getProvider()): void {
+    const currentConfig = this.providerRegistry.getConfig(providerId);
+    const providerInfo = PROVIDERS[providerId];
+    const fallbackApiKey = this.config.apiKey || currentConfig?.apiKey || 'token-mode-placeholder';
+
+    if (this.authProvider instanceof DirectAuthProvider) {
+      const endpointBase = deriveBaseUrlFromEndpoint(this.authProvider.getEndpoint());
+      this.providerRegistry.configure(providerId, {
+        apiKey: currentConfig?.apiKey || fallbackApiKey,
+        baseUrl: this.config.baseUrl || endpointBase || providerInfo?.baseUrl || currentConfig?.baseUrl,
+      });
+      return;
+    }
+
+    const endpointBase = deriveBaseUrlFromEndpoint(this.authProvider.getEndpoint());
+    this.providerRegistry.configure(providerId, {
+      apiKey: currentConfig?.apiKey || fallbackApiKey,
+      baseUrl: endpointBase || currentConfig?.baseUrl || providerInfo?.baseUrl,
+      fetch: this.buildAuthFetch(this.authProvider),
+    });
+  }
 
   constructor(config: LLMConfig, registry?: ProviderRegistry) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -105,6 +181,7 @@ export class LLMClient implements ClientContext {
       this.config.apiKey,
       this.config.baseUrl || GROK_CONFIG.API_BASE_URL,
     );
+    this.applyAuthTransportToProvider(providerId);
 
     this.sessionManager = new SessionManager(() => this.buildSystemPrompt());
   }
@@ -113,6 +190,7 @@ export class LLMClient implements ClientContext {
 
   setAuthProvider(provider: ApiAuthProvider): void {
     this.authProvider = provider;
+    this.applyAuthTransportToProvider();
   }
 
   // ===== Provider management =====
@@ -135,6 +213,7 @@ export class LLMClient implements ClientContext {
     if (providerInfo) {
       this.config.model = providerInfo.defaultModel;
     }
+    this.applyAuthTransportToProvider(providerId);
   }
 
   getProviderRegistry(): ProviderRegistry {
@@ -448,6 +527,116 @@ export class LLMClient implements ClientContext {
         activeController = null;
       }
     };
+  }
+
+  private normalizeConnectorSource(source?: ConnectorSource): string {
+    return String(source || '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private parseConnectorTargetId(sessionId?: string): string {
+    if (typeof sessionId !== 'string') {
+      return '';
+    }
+    if (!sessionId.includes(':')) {
+      return '';
+    }
+    return sessionId.split(':').slice(1).join(':').trim();
+  }
+
+  private isConversationalConnectorSource(source?: ConnectorSource): boolean {
+    const normalized = this.normalizeConnectorSource(source);
+    return normalized === 'telegram' || normalized === 'discord';
+  }
+
+  private isLikelyStatusOnlyConnectorReply(text: string): boolean {
+    const normalized = String(text || '')
+      .trim()
+      .toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    const directStatusPatterns: RegExp[] = [
+      /^task (complete|completed)\b/,
+      /^done[.!]?$/,
+      /^completed[.!]?$/,
+      /^processed\b/,
+      /^queued\b/,
+      /^sent\b/,
+      /^(responded|answered)\b/,
+      /^message sent\b/,
+      /^i (have )?(responded|answered|sent)\b/,
+      /\bfollow-?up question asked\b/,
+      /\b(?:time|answer|result|response)\b.+\bprovided\b/,
+      /\bprovided for\b/,
+    ];
+    if (directStatusPatterns.some(rx => rx.test(normalized))) {
+      return true;
+    }
+
+    return (
+      normalized.length <= 180 &&
+      /\b(task|request|query|message)\b/.test(normalized) &&
+      /\b(complete|completed|done|responded|answered|sent|processed|queued)\b/.test(normalized) &&
+      !/\d/.test(normalized)
+    );
+  }
+
+  private buildConnectorFinalReplyPrompt(
+    source?: ConnectorSource,
+    sessionId?: string,
+  ): string {
+    const normalized = this.normalizeConnectorSource(source);
+    const platform = normalized ? normalized.toUpperCase() : 'CONNECTOR';
+    const targetId = this.parseConnectorTargetId(sessionId);
+    const targetLine = targetId ? `Target ${platform} chat/channel id: ${targetId}.` : '';
+    return [
+      'Provide the exact final user-visible message body to send now.',
+      targetLine,
+      'This is a delivery payload, not a status update.',
+      'Notify rule: on inbound live-chat turns, do NOT output <telegram-send> or <discord-send>; your plain final reply text is auto-notified to this target.',
+      'Use connector send tags/tools only for proactive outbound notifications outside the current inbound turn.',
+      'Proactive format examples: <telegram-send chat_id="123456789">message</telegram-send> or <discord-send channel_id="123456789012345678">message</discord-send>.',
+      'Do not acknowledge task completion or internal execution.',
+      'Do not mention tools, XML tags, sessions, or workflow.',
+      'Include concrete computed results, values, and requested details.',
+      'Markdown is allowed when it improves readability.',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  private buildConnectorPlatformHint(source?: ConnectorSource, sessionId?: string): string {
+    if (!source) {
+      return '';
+    }
+
+    const normalized = this.normalizeConnectorSource(source);
+    const platform = normalized ? normalized.toUpperCase() : String(source).toUpperCase();
+    const targetId = this.parseConnectorTargetId(sessionId);
+    const targetHint = targetId ? ` CHAT:${targetId}` : '';
+
+    if (this.isConversationalConnectorSource(source)) {
+      return [
+        `\n[PLATFORM: ${platform}${targetHint}]`,
+        'You are replying to an end user in live chat.',
+        'Delivery contract: your final assistant response text is the notify payload sent to this chat/channel.',
+        'Notify rule: do NOT emit <telegram-send>/<discord-send> during this inbound turn; the runtime auto-notifies using your final plain reply text.',
+        'Only use connector send tags/tools for proactive outbound notifications outside this inbound request.',
+        'If proactive send is needed later, format as <telegram-send chat_id="...">message</telegram-send> or <discord-send channel_id="...">message</discord-send>.',
+        'Answer the user request directly and precisely with concrete details.',
+        'Do NOT send status-only acknowledgements such as "task completed", "done", "processed", "queued", or "sent".',
+        'Do NOT mention internal tools, XML tags, sessions, agents, or implementation workflow unless the user explicitly asks for it.',
+        'Do NOT use control-flow tool tags such as say_message/end_task/continue_task in connector chat turns.',
+        'If tools were used, convert tool output into the final user-facing answer.',
+        'If data is missing or uncertain, state what is missing and ask exactly one focused follow-up question.',
+        'Markdown formatting is allowed when it improves readability.',
+      ].join('\n');
+    }
+
+    return `\n[PLATFORM: ${platform}${targetHint} - Reply with the final user-facing answer. Markdown is allowed.]`;
   }
 
   abortSession(sessionId: string): boolean {
@@ -776,12 +965,7 @@ export class LLMClient implements ClientContext {
       // from different Telegram chats or Discord channels clobber each other.
       const scope = this.sessionManager.scoped(effectiveSessionId);
 
-      const chatIdFromSession = sessionId?.includes(':') ? sessionId.split(':')[1] : undefined;
-      const chatHint = chatIdFromSession ? ` CHAT:${chatIdFromSession}` : '';
-
-      const platformHint = source
-        ? `\n[PLATFORM: ${source.toUpperCase()}${chatHint} - Execute actions, then respond with a 1-2 sentence SUMMARY in plain language. NEVER include code, file contents, or technical details. Describe what was done simply (e.g., "Fixed the login bug" not code snippets).]`
-        : '';
+      const platformHint = this.buildConnectorPlatformHint(source, effectiveSessionId);
 
       const recentImages = getRecentImages();
       const messageHasImages = recentImages.length > 0;
@@ -873,14 +1057,45 @@ export class LLMClient implements ClientContext {
 
       this.responseEndCallback?.();
 
-      if (result.endMessage) {
-        if (options?.displayResult !== false) {
-          display.sayResult(result.endMessage, outputTabId);
-        }
-        return { response: result.endMessage, endMessage: result.endMessage };
+      const conversationalConnector = this.isConversationalConnectorSource(source);
+      let cleanResponse = cleanSelfDialogue(
+        cleanXmlTags(result.endMessage || result.finalResponse),
+      ).trim();
+
+      if (conversationalConnector && this.isLikelyStatusOnlyConnectorReply(cleanResponse)) {
+        cleanResponse = '';
       }
 
-      const cleanResponse = cleanSelfDialogue(cleanXmlTags(result.finalResponse)).trim();
+      if (!cleanResponse && conversationalConnector) {
+        scope.history.push({
+          role: 'user',
+          content: this.buildConnectorFinalReplyPrompt(source, effectiveSessionId),
+        });
+        const fallbackResult = await runAgenticLoop(ctx, false, {
+          displayStream: false,
+          quiet: true,
+          outputTabId,
+          executionPolicy,
+          executeActions: false,
+          maxIterations: 1,
+          iterationTimeout: 15000,
+          overallTimeout: Math.min(timeout, 25000),
+          cacheFileContents: false,
+          includeFileContext: false,
+          tokenLimitStrategy: 'condense',
+          hallucinationDetection: 'basic',
+          emptyResponseRetry: false,
+          editTagDebug: false,
+          continueActions: false,
+          maxConsecutiveErrors: AGENTIC.MAX_CONSECUTIVE_ERRORS,
+        });
+        cleanResponse = cleanSelfDialogue(
+          cleanXmlTags(fallbackResult.endMessage || fallbackResult.finalResponse),
+        ).trim();
+        if (this.isLikelyStatusOnlyConnectorReply(cleanResponse)) {
+          cleanResponse = '';
+        }
+      }
 
       const shouldDisplay = options?.displayResult !== false;
 
@@ -890,11 +1105,21 @@ export class LLMClient implements ClientContext {
         }
         return { response: cleanResponse, endMessage: result.endMessage };
       } else if (result.actionsSummary.length > 0) {
-        const summary = `Done: ${result.actionsSummary.join(', ')}`;
+        const summary = this.isConversationalConnectorSource(source)
+          ? 'I could not produce a precise final answer yet. Please resend your question and I will answer directly.'
+          : `Done: ${result.actionsSummary.join(', ')}`;
         if (shouldDisplay) {
           display.sayResult(summary, outputTabId);
         }
         return { response: summary, endMessage: result.endMessage };
+      }
+      if (this.isConversationalConnectorSource(source)) {
+        const fallback =
+          'I could not generate a final answer from that request. Please rephrase your question.';
+        if (shouldDisplay) {
+          display.sayResult(fallback, outputTabId);
+        }
+        return { response: fallback, endMessage: result.endMessage };
       }
       if (shouldDisplay) {
         display.sayResult('Done.', outputTabId);
