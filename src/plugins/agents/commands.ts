@@ -53,7 +53,7 @@ export const agentCommand: CommandHandler = {
 
     if (cmd === 'status' || cmd === 'list') {
       const summary = service.getSummary();
-      const agents = service.listAgents();
+      const agentStatuses = service.getAgentStatuses();
       display.append('');
       display.violet(
         `Agents: ${summary.totalAgents} (active: ${summary.activeAgentId || 'none'})`,
@@ -62,21 +62,36 @@ export const agentCommand: CommandHandler = {
         },
       );
       display.append(
-        `Queue: ${summary.queued} queued, ${summary.running} running, ${summary.done} done, ${summary.failed} failed`,
+        `Queue: ${summary.queued} queued, ${summary.running} running, ${summary.done} done, ${summary.failed} failed, ${summary.stalled} stalled, ${summary.needsVerification} pending verification`,
+      );
+      display.muted(
+        `Runs: active=${summary.activeRuns} archived=${summary.archivedRuns} heartbeat=${summary.heartbeatAt}`,
       );
       display.append('');
-      for (const agent of agents) {
-        const marker = agent.id === summary.activeAgentId ? '*' : ' ';
-        const poll = agent.autoPoll ? 'poll=on' : 'poll=off';
-        const run = agent.lastRunAt ? `lastRun=${agent.lastRunAt}` : 'lastRun=never';
-        const stats = service.getTaskStatsForAgent(agent.id);
-        const err = agent.lastError ? ` error=${agent.lastError}` : '';
-        display.append(` [${marker}] ${agent.id} (${agent.name}) - ${agent.responsibility}`);
-        display.muted(
-          `      ${poll} enabled=${agent.enabled} queue=${stats.queued} running=${stats.running} done=${stats.done} failed=${stats.failed} ${run}${err}`,
+      for (const entry of agentStatuses) {
+        const marker = entry.agentId === summary.activeAgentId ? '*' : ' ';
+        const poll = entry.autoPoll ? 'poll=on' : 'poll=off';
+        const run = entry.lastRunAt ? `lastRun=${entry.lastRunAt}` : 'lastRun=never';
+        const err = entry.lastError ? ` error=${entry.lastError}` : '';
+        const stats = entry.stats;
+        display.append(
+          ` [${marker}] ${entry.agentId} (${entry.name}) lifecycle=${entry.lifecycle} - ${service.getAgent(entry.agentId)?.responsibility || ''}`,
         );
-        display.muted(`      workspace=${agent.workspaceDir}`);
-        display.muted(`      agentDir=${agent.agentDir}`);
+        display.muted(
+          `      ${poll} enabled=${entry.enabled} queue=${stats.queued} running=${stats.running} done=${stats.done} failed=${stats.failed} stalled=${stats.stalled} verifyPending=${stats.needsVerification} ${run}${err}`,
+        );
+        if (entry.currentTask) {
+          display.muted(
+            `      currentTask=${entry.currentTask.id} "${entry.currentTask.title}" status=${entry.currentTask.status} ageMs=${entry.currentTask.durationMs}${entry.currentTask.staleReason ? ` stale=${entry.currentTask.staleReason}` : ''}`,
+          );
+        } else {
+          display.muted('      currentTask=none');
+        }
+        display.muted(
+          `      capability=ready:${entry.capability.ready} missing=${
+            entry.capability.missing.join(',') || 'none'
+          }`,
+        );
       }
       display.append('');
       return true;
@@ -127,6 +142,12 @@ export const agentCommand: CommandHandler = {
           ` - ${task.id} [${task.status}] verify=${verification} from=${task.fromAgentId} to=${task.toAgentId}${recallLabel}`,
         );
         display.muted(`      title=${task.title}`);
+        if (task.runId) {
+          display.muted(`      run=${task.runId}`);
+        }
+        if (task.staleReason) {
+          display.muted(`      stale=${task.staleReason}`);
+        }
         if (task.verificationNotes) {
           display.muted(`      verify-notes=${task.verificationNotes}`);
         }

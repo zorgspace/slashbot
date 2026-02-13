@@ -1,7 +1,7 @@
 /**
  * Shared border definitions for TUI panels
  *
- * SplitBorder: left/right vertical bars only (┃), no top/bottom.
+ * SplitBorder: left/right dotted rails only (•), no top/bottom.
  * Used by header, input, footer for a clean side-rail look.
  */
 
@@ -23,12 +23,12 @@ const EmptyBorderChars: BorderCharacters = {
 
 export const SplitBorder = {
   border: ['left', 'right'] as BorderSides[],
-  customBorderChars: { ...EmptyBorderChars, vertical: '┃' },
+  customBorderChars: { ...EmptyBorderChars, vertical: '•' },
 };
 
 export const LeftBorder = {
   border: ['left'] as BorderSides[],
-  customBorderChars: { ...EmptyBorderChars, vertical: '┃' },
+  customBorderChars: { ...EmptyBorderChars, vertical: '•' },
 };
 
 export const TopBorder = {

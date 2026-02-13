@@ -1,4 +1,11 @@
 export type AgentKind = 'architect' | 'worker' | 'reviewer' | 'connector' | 'custom';
+export type AgentLifecycleStatus =
+  | 'idle'
+  | 'queued'
+  | 'running'
+  | 'stalled'
+  | 'blocked'
+  | 'disabled';
 
 export interface AgentProfile {
   id: string;
@@ -16,6 +23,7 @@ export interface AgentProfile {
   lastRunAt?: string;
   lastError?: string;
   removable?: boolean;
+  lastHeartbeatAt?: string;
 }
 
 export type AgentTaskStatus = 'queued' | 'running' | 'done' | 'failed';
@@ -42,6 +50,12 @@ export interface AgentTask {
   verifiedAt?: string;
   recallOfTaskId?: string;
   recallCount?: number;
+  runId?: string;
+  stalledAt?: string;
+  staleReason?: string;
+  awaitingVerificationSince?: string;
+  lastHeartbeatAt?: string;
+  lastVerificationReminderAt?: string;
 }
 
 export interface AgentWorkspaceState {
@@ -53,6 +67,79 @@ export interface AgentWorkspaceState {
 export interface AgentTaskState {
   version: 1;
   tasks: AgentTask[];
+}
+
+export type AgentRunStatus = 'running' | 'done' | 'failed' | 'stalled' | 'archived';
+
+export interface AgentRunRecord {
+  runId: string;
+  taskId: string;
+  agentId: string;
+  fromAgentId: string;
+  status: AgentRunStatus;
+  label: string;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  lastHeartbeatAt?: string;
+  summary?: string;
+  error?: string;
+  archivedAt?: string;
+}
+
+export interface AgentRunState {
+  version: 1;
+  runs: AgentRunRecord[];
+}
+
+export interface AgentCapabilityReport {
+  ready: boolean;
+  requirements: string[];
+  missing: string[];
+  checkedAt: string;
+}
+
+export interface AgentStatusEntry {
+  agentId: string;
+  sessionId: string;
+  name: string;
+  kind: AgentKind;
+  enabled: boolean;
+  autoPoll: boolean;
+  lifecycle: AgentLifecycleStatus;
+  stats: AgentTaskStats;
+  inFlightTaskId?: string;
+  stalledTaskId?: string;
+  lastRunAt?: string;
+  lastError?: string;
+  lastHeartbeatAt?: string;
+  currentTask?: {
+    id: string;
+    title: string;
+    status: AgentTaskStatus;
+    queuedAt: string;
+    startedAt?: string;
+    updatedAt: string;
+    durationMs: number;
+    staleReason?: string;
+    runId?: string;
+  };
+  capability: AgentCapabilityReport;
+}
+
+export interface AgentOrchestratorSummary {
+  activeAgentId: string;
+  totalAgents: number;
+  queued: number;
+  running: number;
+  done: number;
+  failed: number;
+  stalled: number;
+  needsVerification: number;
+  activeRuns: number;
+  archivedRuns: number;
+  polling: boolean;
+  heartbeatAt: string;
 }
 
 export interface CreateAgentInput {
@@ -95,4 +182,6 @@ export interface AgentTaskStats {
   running: number;
   done: number;
   failed: number;
+  stalled: number;
+  needsVerification: number;
 }

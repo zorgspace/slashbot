@@ -30,6 +30,8 @@ export async function executeAgentStatus(
     const payload = await handlers.onAgentStatus();
     const summary = payload?.summary || {};
     const agents = Array.isArray(payload?.agents) ? payload.agents : [];
+    const statuses = Array.isArray(payload?.statuses) ? payload.statuses : [];
+    const runs = Array.isArray(payload?.runs) ? payload.runs : [];
 
     display.appendAssistantMessage(
       formatToolAction('AgentsStatus', `active=${summary.activeAgentId || 'none'}`, {
@@ -40,11 +42,32 @@ export async function executeAgentStatus(
 
     const lines = [
       `Active: ${summary.activeAgentId || 'none'}`,
-      `Queue: ${summary.queued || 0} queued, ${summary.running || 0} running, ${summary.done || 0} done, ${summary.failed || 0} failed`,
-      ...agents.map((agent: any) => {
-        const poll = agent?.autoPoll ? 'poll=on' : 'poll=off';
-        return `- ${agent?.id} (${agent?.name}) [${poll}]`;
-      }),
+      `Queue: ${summary.queued || 0} queued, ${summary.running || 0} running, ${summary.done || 0} done, ${summary.failed || 0} failed, ${summary.stalled || 0} stalled, ${summary.needsVerification || 0} pending verification`,
+      `Runs: ${summary.activeRuns || 0} active, ${summary.archivedRuns || 0} archived`,
+      ...(statuses.length > 0
+        ? statuses.map((entry: any) => {
+            const poll = entry?.autoPoll ? 'poll=on' : 'poll=off';
+            const lifecycle = entry?.lifecycle || 'idle';
+            const currentTask = entry?.currentTask;
+            const taskLine = currentTask
+              ? ` task=${currentTask.id} "${currentTask.title}" status=${currentTask.status} ageMs=${currentTask.durationMs}${
+                  currentTask?.staleReason ? ` stale="${currentTask.staleReason}"` : ''
+                }`
+              : ' task=none';
+            return `- ${entry?.agentId} (${entry?.name}) [${poll}] lifecycle=${lifecycle}${taskLine}`;
+          })
+        : agents.map((agent: any) => {
+            const poll = agent?.autoPoll ? 'poll=on' : 'poll=off';
+            return `- ${agent?.id} (${agent?.name}) [${poll}]`;
+          })),
+      ...(runs.length > 0
+        ? [
+            'Recent runs:',
+            ...runs.slice(0, 5).map((run: any) => {
+              return `  - ${run?.runId} task=${run?.taskId} agent=${run?.agentId} status=${run?.status}`;
+            }),
+          ]
+        : []),
     ];
 
     return {
@@ -210,7 +233,9 @@ export async function executeAgentTasks(
         ...list.map((task: any) => {
           const verification =
             task?.verificationStatus || (task?.status === 'done' ? 'unverified' : 'n/a');
-          return `${task?.id} [${task?.status}] verify=${verification} from=${task?.fromAgentId} to=${task?.toAgentId} title=${task?.title}`;
+          const stale = task?.staleReason ? ` stale="${task.staleReason}"` : '';
+          const runId = task?.runId ? ` run=${task.runId}` : '';
+          return `${task?.id} [${task?.status}] verify=${verification} from=${task?.fromAgentId} to=${task?.toAgentId}${runId}${stale} title=${task?.title}`;
         }),
       ].join('\n'),
     };
@@ -259,11 +284,35 @@ export async function executeAgentSend(
       };
     }
     const sent = await handlers.onAgentSend(action);
+    const sentObject =
+      sent && typeof sent === 'object' && !Array.isArray(sent)
+        ? (sent as {
+            taskId?: string;
+            toAgentId?: string;
+            fromAgentId?: string;
+            title?: string;
+          })
+        : null;
+    const success = !!sent;
+    const target = sentObject?.toAgentId || action.to;
+    const taskId = sentObject?.taskId || '';
+
+    display.appendAssistantMessage(
+      formatToolAction('AgentsSend', `to=${target}`, {
+        success,
+        summary: success ? taskId || 'queued' : 'send failed',
+      }),
+    );
+
     return {
       action: 'agent-send',
-      success: !!sent,
-      result: sent ? 'Message sent' : 'Failed to send',
-      error: sent ? undefined : 'Send failed',
+      success,
+      result: success
+        ? [taskId ? `task=${taskId}` : 'task=queued', `to=${target}`, `title=${action.title}`].join(
+            ' ',
+          )
+        : 'Failed to send',
+      error: success ? undefined : 'Send failed',
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

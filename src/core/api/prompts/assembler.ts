@@ -120,7 +120,11 @@ export class PromptAssembler {
       }
     }
 
-    const fullPromptContext = process.env.SLASHBOT_FULL_PROMPT_CONTEXT === '1';
+    const forceFullPromptContext = process.env.SLASHBOT_FULL_PROMPT_CONTEXT === '1';
+    const forceMinimalPromptContext =
+      process.env.SLASHBOT_MIN_PROMPT_CONTEXT === '1' ||
+      process.env.SLASHBOT_FULL_PROMPT_CONTEXT === '0';
+    const fullPromptContext = forceFullPromptContext || !forceMinimalPromptContext;
 
     // Add project context dynamically (light by default, full when explicitly requested)
     const cwd = process.cwd();
@@ -137,7 +141,7 @@ export class PromptAssembler {
         '',
         '# Project Context',
         `Directory: ${cwd}`,
-        'Memory-first mode is enabled: rely on memory tools for durable project context.',
+        'Minimal prompt context mode is enabled: rely on memory tools for durable context, and opt into full bootstrap context by unsetting SLASHBOT_MIN_PROMPT_CONTEXT.',
       ].join('\n');
     }
 

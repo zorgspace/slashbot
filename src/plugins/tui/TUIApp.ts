@@ -691,6 +691,7 @@ export class TUIApp implements UIOutput {
   }
 
   endResponse(): void {
+    this.chatPanel.endResponse();
     this.commPanel.endResponse();
   }
 

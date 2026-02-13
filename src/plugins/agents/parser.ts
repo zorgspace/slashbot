@@ -18,7 +18,8 @@ export function getAgentsParserConfigs(): ActionParserConfig[] {
             type: 'agent-create',
             name,
             responsibility: extractAttr(fullTag, 'responsibility') || undefined,
-            systemPrompt: extractAttr(fullTag, 'prompt') || undefined,
+            systemPrompt:
+              extractAttr(fullTag, 'systemPrompt') || extractAttr(fullTag, 'prompt') || undefined,
             autoPoll:
               extractAttr(fullTag, 'autopoll') === 'true'
                 ? true
@@ -49,7 +50,8 @@ export function getAgentsParserConfigs(): ActionParserConfig[] {
             agent,
             name: extractAttr(fullTag, 'name') || undefined,
             responsibility: extractAttr(fullTag, 'responsibility') || undefined,
-            systemPrompt: extractAttr(fullTag, 'prompt') || undefined,
+            systemPrompt:
+              extractAttr(fullTag, 'systemPrompt') || extractAttr(fullTag, 'prompt') || undefined,
             enabled: enabledRaw === 'true' ? true : enabledRaw === 'false' ? false : undefined,
             autoPoll: autoPollRaw === 'true' ? true : autoPollRaw === 'false' ? false : undefined,
           });

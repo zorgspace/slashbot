@@ -14,6 +14,7 @@ import type {
   ContextProvider,
   EventSubscription,
 } from '../types';
+import type { ToolRegistry } from '../../core/api/toolRegistry';
 import { CORE_PROMPT } from './prompt';
 import { getProviderHints } from './provider-hints';
 
@@ -28,6 +29,7 @@ export class CorePromptPlugin implements Plugin {
 
   private provider = 'xai';
   private context!: PluginContext;
+  private toolRegistry: ToolRegistry | null = null;
 
   async init(context: PluginContext): Promise<void> {
     this.context = context;
@@ -37,9 +39,38 @@ export class CorePromptPlugin implements Plugin {
       const configManager = context.container.get<any>(TYPES.ConfigManager);
       const config = configManager.getConfig();
       this.provider = config.provider || 'xai';
+      try {
+        this.toolRegistry = context.container.get<ToolRegistry>(TYPES.ToolRegistry);
+      } catch {
+        this.toolRegistry = null;
+      }
     } catch {
       // ConfigManager not bound yet
     }
+  }
+
+  private async buildToolingPrompt(): Promise<string> {
+    if (!this.toolRegistry) {
+      try {
+        const { TYPES } = await import('../../core/di/types');
+        this.toolRegistry = this.context.container.get<ToolRegistry>(TYPES.ToolRegistry);
+      } catch {
+        this.toolRegistry = null;
+      }
+    }
+    const toolEntries = this.toolRegistry?.getToolDefinitions?.() || [];
+    const toolLines =
+      toolEntries.length > 0
+        ? toolEntries.map(tool => `- ${tool.name}: ${tool.description}`).join('\n')
+        : '- Tool list unavailable at prompt build time. Use only tools shown in runtime context.';
+    return [
+      '## Tooling',
+      'Tool availability (filtered by policy):',
+      'Tool names are case-sensitive. Call tools exactly as listed.',
+      toolLines,
+      '',
+      'TOOLS.md is user guidance only and does not grant extra permissions.',
+    ].join('\n');
   }
 
   getActionContributions(): ActionContribution[] {
@@ -53,6 +84,12 @@ export class CorePromptPlugin implements Plugin {
         title: 'Core',
         priority: 0, // Highest priority - appears first
         content: CORE_PROMPT,
+      },
+      {
+        id: 'core.prompt.tooling',
+        title: 'Tooling',
+        priority: 1,
+        content: async () => await this.buildToolingPrompt(),
       },
     ];
   }

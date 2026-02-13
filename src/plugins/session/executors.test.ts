@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { executeSessionsHistory, executeSessionsSend } from './executors';
+import { display, formatToolAction } from '../../core/ui';
 
 vi.mock('../../core/ui', () => ({
   display: {
@@ -79,6 +80,9 @@ describe('session executors', () => {
   });
 
   it('reports executed status when delivery declares immediate execution', async () => {
+    vi.mocked(display.appendAssistantMessage).mockClear();
+    vi.mocked(formatToolAction).mockClear();
+
     const handlers: any = {
       onSessionsSend: vi.fn(async () => ({
         delivered: true,
@@ -97,6 +101,11 @@ describe('session executors', () => {
 
     expect(result?.success).toBe(true);
     expect(result?.result).toBe('Delivered and executed in target session.');
+    expect(formatToolAction).toHaveBeenCalledWith('SessionsSend', 'agent:worker', {
+      success: true,
+      summary: 'executed',
+    });
+    expect(display.appendAssistantMessage).toHaveBeenCalledWith('tool-action');
   });
 
   it('preserves undefined run flag so agent auto-run policy can apply', async () => {

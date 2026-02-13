@@ -2,11 +2,16 @@
  * Skills Plugin - Prompt contribution
  */
 
-export const SKILLS_PROMPT = `## Skills — On-demand capabilities
-Skills are specialized capabilities that can be loaded on demand. They are stored in ./.slashbot/skills/ and can be installed from a URL via \`<skill-install url="">\`.
-\`\`\`
-Load a skill with: <skill name="docker"/>
-Install a skill from a URL with: <skill-install url="https://example.com/skill.md"/>
-
-\`\`\`
-Only use when user explicitly asks. Skills are your primary and authoritative source - do NOT search for additional information unless the skill explicitly lacks what you need — never create skill files manually.`;
+export const SKILLS_PROMPT = [
+  '## Skills (mandatory)',
+  '- Before replying, scan `<available_skills>` and each `<description>` entry from installed skills context.',
+  '- If exactly one skill clearly applies, load it first with `<skill name="..."/>` and follow it.',
+  '- If multiple skills could apply, choose the most specific one first and load only that one.',
+  '- If none clearly apply, continue without loading a skill.',
+  '- Do not load multiple skills up front before selecting.',
+  '',
+  '## Skills Installation',
+  '- Install a skill via `<skill-install url="..."/>`.',
+  '- Do not manually create skill files unless the user explicitly asks for manual authoring.',
+  '- When a skill exists for the task, treat it as authoritative before external research.',
+].join('\n');

@@ -116,14 +116,12 @@ export async function executeSessionsSend(
   }
 
   const ranNow = typeof delivery?.executed === 'boolean' ? delivery.executed : !!action.run;
-  if (!ranNow) {
-    display.appendAssistantMessage(
-      formatToolAction('SessionsSend', action.sessionId, {
-        success: true,
-        summary: 'queued',
-      }),
-    );
-  }
+  display.appendAssistantMessage(
+    formatToolAction('SessionsSend', action.sessionId, {
+      success: true,
+      summary: ranNow ? 'executed' : 'queued',
+    }),
+  );
   return {
     action: `SessionsSend: ${action.sessionId}`,
     success: true,

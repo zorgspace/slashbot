@@ -10,6 +10,13 @@ import type {
   AgentTask,
   AgentWorkspaceState,
   AgentTaskState,
+  AgentRunRecord,
+  AgentRunState,
+  AgentRunStatus,
+  AgentStatusEntry,
+  AgentCapabilityReport,
+  AgentLifecycleStatus,
+  AgentOrchestratorSummary,
   CreateAgentInput,
   SendTaskInput,
   AgentRoutingRequest,
@@ -21,6 +28,14 @@ import type {
 
 const DEFAULT_POLL_MS = 5000;
 const DEFAULT_TASK_MAX_RETRIES = 2;
+const DEFAULT_STATUS_HEARTBEAT_MS = 5000;
+const DEFAULT_RUNNING_STALL_MS = 2 * 60 * 1000;
+const DEFAULT_QUEUED_STALL_MS = 3 * 60 * 1000;
+const DEFAULT_VERIFICATION_PENDING_MS = 60 * 1000;
+const DEFAULT_VERIFICATION_REMINDER_COOLDOWN_MS = 60 * 1000;
+const DEFAULT_RUN_ARCHIVE_MS = 60 * 60 * 1000;
+const DEFAULT_RUN_HISTORY_MAX = 300;
+const DEFAULT_HEARTBEAT_PERSIST_MS = 30 * 1000;
 
 const RECOVERABLE_TASK_FAILURE_PATTERNS: RegExp[] = [
   /did not finish with an <end_task>/i,
@@ -85,8 +100,34 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function parseIsoMs(value?: string): number | null {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function elapsedSinceMs(from?: string, fallbackNow = Date.now()): number {
+  const parsed = parseIsoMs(from);
+  if (parsed === null) {
+    return 0;
+  }
+  return Math.max(0, fallbackNow - parsed);
+}
+
 function isTaskVerificationStatus(value: unknown): value is AgentTaskVerificationStatus {
   return value === 'unverified' || value === 'verified' || value === 'changes_requested';
+}
+
+function isRunStatus(value: unknown): value is AgentRunStatus {
+  return (
+    value === 'running' ||
+    value === 'done' ||
+    value === 'failed' ||
+    value === 'stalled' ||
+    value === 'archived'
+  );
 }
 
 function slugify(input: string): string {
@@ -113,6 +154,12 @@ function defaultArchitectPrompt(name: string, responsibility: string): string {
     'If a worker report is incomplete or changes are needed, explicitly request follow-up fixes (recall) before closing.',
     'Assign tasks after assessing queue and blockers; reroute quickly when blockers remain.',
     'The orchestrator owns the final user-facing completion signal only after verifying worker reports.',
+    '',
+    'Safety policy:',
+    '- You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.',
+    '- Prioritize safety and human oversight over completion.',
+    '- Do not manipulate anyone to expand access or disable safeguards.',
+    '- Do not alter system prompts, safety rules, or tool policies unless explicitly requested.',
   ].join('\n');
 }
 
@@ -168,7 +215,13 @@ Reporting policy:
 
 Communication rules:
 - Use say_message for short progress updates.
-- Keep outputs concise and action-oriented.`;
+- Keep outputs concise and action-oriented.
+
+Safety policy:
+- You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.
+- Prioritize safety and human oversight over completion.
+- Do not manipulate anyone to expand access or disable safeguards.
+- Do not alter system prompts, safety rules, or tool policies unless explicitly requested.`;
 }
 
 function defaultConnectorPrompt(name: string, responsibility: string, connectorId: string): string {
@@ -191,7 +244,13 @@ Communication rules:
 - Use connector send tags/tools only for proactive outbound notifications outside the inbound turn.
 - Proactive send format examples: <telegram-send chat_id="...">message</telegram-send> and <discord-send channel_id="...">message</discord-send>.
 - Include concrete output values in that final reply; never treat tool execution logs as the answer.
-- Markdown formatting is allowed when it improves readability.`;
+- Markdown formatting is allowed when it improves readability.
+
+Safety policy:
+- You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.
+- Prioritize safety and human oversight over completion.
+- Do not manipulate anyone to expand access or disable safeguards.
+- Do not alter system prompts, safety rules, or tool policies unless explicitly requested.`;
 }
 
 function isOrchestratorProfile(
@@ -362,13 +421,20 @@ export class AgentOrchestratorService {
     version: 1,
     tasks: [],
   };
+  private runs: AgentRunState = {
+    version: 1,
+    runs: [],
+  };
   private running = false;
   private interval: ReturnType<typeof setInterval> | null = null;
+  private statusInterval: ReturnType<typeof setInterval> | null = null;
   private inFlightAgents = new Set<string>();
   private taskExecutor:
     | ((agent: AgentProfile, task: AgentTask) => Promise<AgentTaskRunResult>)
     | null = null;
   private taskRouter: AgentTaskRouter | null = null;
+  private maintenanceInFlight = false;
+  private lastHeartbeatAt = nowIso();
 
   constructor(@inject(TYPES.EventBus) private readonly eventBus: EventBus) {}
 
@@ -412,6 +478,10 @@ export class AgentOrchestratorService {
 
   private getTasksFile(): string {
     return `${this.getAgentsRootDir()}/tasks.json`;
+  }
+
+  private getRunsFile(): string {
+    return `${this.getAgentsRootDir()}/runs.json`;
   }
 
   private getLegacyAgentsFile(): string {
@@ -532,7 +602,54 @@ export class AgentOrchestratorService {
         typeof raw.updatedAt === 'string' && raw.updatedAt.trim() ? raw.updatedAt : createdAt,
       lastRunAt: raw.lastRunAt,
       lastError: raw.lastError,
+      lastHeartbeatAt:
+        typeof raw.lastHeartbeatAt === 'string' && raw.lastHeartbeatAt.trim()
+          ? raw.lastHeartbeatAt
+          : undefined,
     };
+  }
+
+  private normalizeRunRecord(raw: Partial<AgentRunRecord>): AgentRunRecord | null {
+    const runId = typeof raw.runId === 'string' ? raw.runId.trim() : '';
+    const taskId = typeof raw.taskId === 'string' ? raw.taskId.trim() : '';
+    const agentId = typeof raw.agentId === 'string' ? raw.agentId.trim() : '';
+    const fromAgentId = typeof raw.fromAgentId === 'string' ? raw.fromAgentId.trim() : '';
+    if (!runId || !taskId || !agentId || !fromAgentId) {
+      return null;
+    }
+
+    const createdAt = typeof raw.createdAt === 'string' && raw.createdAt.trim() ? raw.createdAt : nowIso();
+    const status = isRunStatus(raw.status) ? raw.status : 'running';
+    const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : 'Task run';
+    const normalized: AgentRunRecord = {
+      runId,
+      taskId,
+      agentId,
+      fromAgentId,
+      status,
+      label,
+      createdAt,
+    };
+
+    if (typeof raw.startedAt === 'string' && raw.startedAt.trim()) {
+      normalized.startedAt = raw.startedAt;
+    }
+    if (typeof raw.endedAt === 'string' && raw.endedAt.trim()) {
+      normalized.endedAt = raw.endedAt;
+    }
+    if (typeof raw.lastHeartbeatAt === 'string' && raw.lastHeartbeatAt.trim()) {
+      normalized.lastHeartbeatAt = raw.lastHeartbeatAt;
+    }
+    if (typeof raw.summary === 'string' && raw.summary.trim()) {
+      normalized.summary = raw.summary.trim();
+    }
+    if (typeof raw.error === 'string' && raw.error.trim()) {
+      normalized.error = raw.error.trim();
+    }
+    if (typeof raw.archivedAt === 'string' && raw.archivedAt.trim()) {
+      normalized.archivedAt = raw.archivedAt;
+    }
+    return normalized;
   }
 
   private async ensureAgentStorage(agent: AgentProfile): Promise<void> {
@@ -601,12 +718,17 @@ export class AgentOrchestratorService {
     await this.migrateLegacyStorageIfNeeded();
     await this.loadState();
     await this.loadTasks();
+    await this.loadRuns();
     await this.ensureArchitectPresent();
+    this.reconcileRunStateFromTasks();
+    this.lastHeartbeatAt = nowIso();
     await this.ensureAllAgentStorage();
     // Always start with the Architect tab
     this.state.activeAgentId = 'agent-architect';
     await this.saveState();
     await this.saveTasks();
+    await this.saveRuns();
+    this.emitSummaryHeartbeat();
   }
 
   private async loadState(): Promise<void> {
@@ -655,6 +777,14 @@ export class AgentOrchestratorService {
             normalized.verificationStatus =
               normalized.status === 'done' ? 'unverified' : normalized.verificationStatus;
           }
+          if (normalized.status !== 'done') {
+            normalized.awaitingVerificationSince = undefined;
+          } else if (
+            typeof normalized.awaitingVerificationSince !== 'string' ||
+            !normalized.awaitingVerificationSince.trim()
+          ) {
+            normalized.awaitingVerificationSince = normalized.finishedAt || normalized.updatedAt;
+          }
           if (typeof normalized.recallCount !== 'number' || !Number.isFinite(normalized.recallCount)) {
             normalized.recallCount = undefined;
           }
@@ -676,11 +806,54 @@ export class AgentOrchestratorService {
           if (typeof normalized.recallOfTaskId !== 'string' || !normalized.recallOfTaskId.trim()) {
             normalized.recallOfTaskId = undefined;
           }
+          if (typeof normalized.runId !== 'string' || !normalized.runId.trim()) {
+            normalized.runId = undefined;
+          }
+          if (typeof normalized.stalledAt !== 'string' || !normalized.stalledAt.trim()) {
+            normalized.stalledAt = undefined;
+          }
+          if (typeof normalized.staleReason !== 'string' || !normalized.staleReason.trim()) {
+            normalized.staleReason = undefined;
+          }
+          if (typeof normalized.lastHeartbeatAt !== 'string' || !normalized.lastHeartbeatAt.trim()) {
+            normalized.lastHeartbeatAt = undefined;
+          }
+          if (
+            typeof normalized.lastVerificationReminderAt !== 'string' ||
+            !normalized.lastVerificationReminderAt.trim()
+          ) {
+            normalized.lastVerificationReminderAt = undefined;
+          }
           return normalized;
         });
       this.tasks = {
         version: 1,
         tasks,
+      };
+    } catch {
+      // Keep defaults
+    }
+  }
+
+  private async loadRuns(): Promise<void> {
+    try {
+      const file = Bun.file(this.getRunsFile());
+      if (!(await file.exists())) {
+        return;
+      }
+      const raw = (await file.json()) as Partial<AgentRunState>;
+      const rawRuns = Array.isArray(raw.runs) ? raw.runs : [];
+      const normalizedRuns: AgentRunRecord[] = [];
+      for (const rawRun of rawRuns) {
+        const normalized = this.normalizeRunRecord(rawRun as Partial<AgentRunRecord>);
+        if (!normalized) {
+          continue;
+        }
+        normalizedRuns.push(normalized);
+      }
+      this.runs = {
+        version: 1,
+        runs: normalizedRuns,
       };
     } catch {
       // Keep defaults
@@ -693,6 +866,10 @@ export class AgentOrchestratorService {
 
   private async saveTasks(): Promise<void> {
     await Bun.write(this.getTasksFile(), JSON.stringify(this.tasks, null, 2));
+  }
+
+  private async saveRuns(): Promise<void> {
+    await Bun.write(this.getRunsFile(), JSON.stringify(this.runs, null, 2));
   }
 
   listAgents(): AgentProfile[] {
@@ -776,6 +953,7 @@ export class AgentOrchestratorService {
       removable: input.removable ?? (kind !== 'architect' && kind !== 'connector'),
       createdAt,
       updatedAt: createdAt,
+      lastHeartbeatAt: createdAt,
     };
 
     this.state.agents.push(agent);
@@ -858,6 +1036,7 @@ export class AgentOrchestratorService {
         removable: false,
         createdAt,
         updatedAt: createdAt,
+        lastHeartbeatAt: createdAt,
       };
       this.state.agents.push(agent);
       changed = true;
@@ -1051,6 +1230,245 @@ export class AgentOrchestratorService {
     return this.tasks.tasks.find(task => task.id === normalizedId) || null;
   }
 
+  listRuns(options?: {
+    agentId?: string;
+    status?: AgentRunStatus;
+    limit?: number;
+  }): AgentRunRecord[] {
+    const agentId = typeof options?.agentId === 'string' ? options.agentId.trim() : '';
+    const status = isRunStatus(options?.status) ? options?.status : undefined;
+    const limitRaw = options?.limit;
+    const limit =
+      typeof limitRaw === 'number' && Number.isFinite(limitRaw)
+        ? Math.max(1, Math.floor(limitRaw))
+        : 40;
+    let runs = [...this.runs.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    if (agentId) {
+      runs = runs.filter(run => run.agentId === agentId);
+    }
+    if (status) {
+      runs = runs.filter(run => run.status === status);
+    }
+    return runs.slice(0, limit);
+  }
+
+  private getRunRecord(runId?: string): AgentRunRecord | null {
+    if (!runId) {
+      return null;
+    }
+    return this.runs.runs.find(run => run.runId === runId) || null;
+  }
+
+  private upsertRunRecord(run: AgentRunRecord): void {
+    const index = this.runs.runs.findIndex(entry => entry.runId === run.runId);
+    if (index >= 0) {
+      this.runs.runs[index] = run;
+      return;
+    }
+    this.runs.runs.push(run);
+  }
+
+  private updateRunRecord(runId: string, patch: Partial<AgentRunRecord>): AgentRunRecord | null {
+    const run = this.getRunRecord(runId);
+    if (!run) {
+      return null;
+    }
+    Object.assign(run, patch);
+    this.upsertRunRecord(run);
+    return run;
+  }
+
+  private makeRunRecord(agent: AgentProfile, task: AgentTask, runId: string, startedAt: string): AgentRunRecord {
+    return {
+      runId,
+      taskId: task.id,
+      agentId: agent.id,
+      fromAgentId: task.fromAgentId,
+      status: 'running',
+      label: task.title || 'Task run',
+      createdAt: startedAt,
+      startedAt,
+      lastHeartbeatAt: startedAt,
+      archivedAt: new Date(Date.now() + DEFAULT_RUN_ARCHIVE_MS).toISOString(),
+    };
+  }
+
+  private markRunAsSettled(params: {
+    runId?: string;
+    status: Exclude<AgentRunStatus, 'running'>;
+    summary?: string;
+    error?: string;
+    endedAt?: string;
+  }): void {
+    if (!params.runId) {
+      return;
+    }
+    const endedAt = params.endedAt || nowIso();
+    const current = this.getRunRecord(params.runId);
+    if (!current) {
+      return;
+    }
+    current.status = params.status;
+    current.endedAt = endedAt;
+    current.lastHeartbeatAt = endedAt;
+    current.summary = params.summary?.trim() || current.summary;
+    current.error = params.error?.trim() || current.error;
+    current.archivedAt = new Date(Date.now() + DEFAULT_RUN_ARCHIVE_MS).toISOString();
+    this.upsertRunRecord(current);
+  }
+
+  private reconcileRunStateFromTasks(): void {
+    const now = nowIso();
+    const taskIds = new Set(this.tasks.tasks.map(task => task.id));
+    for (const run of this.runs.runs) {
+      if (!taskIds.has(run.taskId) && (run.status === 'running' || run.status === 'stalled')) {
+        run.status = 'failed';
+        run.error = run.error || 'Run orphaned: task missing from registry';
+        run.endedAt = now;
+        run.archivedAt = new Date(Date.now() + DEFAULT_RUN_ARCHIVE_MS).toISOString();
+      }
+    }
+
+    for (const task of this.tasks.tasks) {
+      if (!task.runId) {
+        continue;
+      }
+      const existing = this.getRunRecord(task.runId);
+      if (existing) {
+        if (task.status === 'running' && existing.status === 'running') {
+          existing.lastHeartbeatAt = task.lastHeartbeatAt || now;
+        }
+        continue;
+      }
+      const restoredStatus: AgentRunStatus =
+        task.status === 'running'
+          ? task.stalledAt
+            ? 'stalled'
+            : 'running'
+          : task.status === 'done'
+            ? 'done'
+            : task.status === 'failed'
+              ? 'failed'
+              : 'archived';
+      this.runs.runs.push({
+        runId: task.runId,
+        taskId: task.id,
+        agentId: task.toAgentId,
+        fromAgentId: task.fromAgentId,
+        status: restoredStatus,
+        label: task.title || 'Task run',
+        createdAt: task.startedAt || task.createdAt,
+        startedAt: task.startedAt,
+        endedAt: task.finishedAt,
+        lastHeartbeatAt: task.lastHeartbeatAt || task.updatedAt,
+        summary: task.resultSummary,
+        error: task.error,
+        archivedAt: new Date(Date.now() + DEFAULT_RUN_ARCHIVE_MS).toISOString(),
+      });
+    }
+  }
+
+  private buildAgentCapability(agent: AgentProfile): AgentCapabilityReport {
+    const requirements = ['session-id', 'workspace-dir', 'agent-dir'];
+    const missing: string[] = [];
+    if (!agent.sessionId?.trim()) {
+      missing.push('session-id');
+    }
+    if (!agent.workspaceDir?.trim()) {
+      missing.push('workspace-dir');
+    }
+    if (!agent.agentDir?.trim()) {
+      missing.push('agent-dir');
+    }
+    if (agent.kind === 'connector' && agent.autoPoll) {
+      missing.push('connector-autopoll-off');
+    }
+    return {
+      ready: missing.length === 0,
+      requirements,
+      missing,
+      checkedAt: nowIso(),
+    };
+  }
+
+  private getCurrentTaskSnapshot(
+    agentId: string,
+    nowMs: number,
+  ): AgentStatusEntry['currentTask'] | undefined {
+    const running = this.tasks.tasks.find(task => task.toAgentId === agentId && task.status === 'running');
+    const queued = this.tasks.tasks
+      .filter(task => task.toAgentId === agentId && task.status === 'queued')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    const current = running || queued;
+    if (!current) {
+      return undefined;
+    }
+    const baseTime = current.startedAt || current.createdAt;
+    return {
+      id: current.id,
+      title: current.title,
+      status: current.status,
+      queuedAt: current.createdAt,
+      startedAt: current.startedAt,
+      updatedAt: current.updatedAt,
+      durationMs: elapsedSinceMs(baseTime, nowMs),
+      staleReason: current.staleReason,
+      runId: current.runId,
+    };
+  }
+
+  private resolveLifecycle(
+    agent: AgentProfile,
+    stats: AgentTaskStats,
+    currentTask: AgentStatusEntry['currentTask'],
+  ): AgentLifecycleStatus {
+    if (!agent.enabled) {
+      return 'disabled';
+    }
+    if (stats.stalled > 0 || !!currentTask?.staleReason) {
+      return 'stalled';
+    }
+    if (stats.running > 0) {
+      return 'running';
+    }
+    if (stats.queued > 0) {
+      return 'queued';
+    }
+    if (agent.lastError || stats.failed > 0) {
+      return 'blocked';
+    }
+    return 'idle';
+  }
+
+  getAgentStatuses(): AgentStatusEntry[] {
+    const nowMs = Date.now();
+    return this.listAgents().map(agent => {
+      const stats = this.getTaskStatsForAgent(agent.id);
+      const currentTask = this.getCurrentTaskSnapshot(agent.id, nowMs);
+      const stalledTaskId =
+        this.tasks.tasks.find(task => task.toAgentId === agent.id && !!task.stalledAt)?.id || undefined;
+      return {
+        agentId: agent.id,
+        sessionId: agent.sessionId,
+        name: agent.name,
+        kind: agent.kind,
+        enabled: agent.enabled,
+        autoPoll: agent.autoPoll,
+        lifecycle: this.resolveLifecycle(agent, stats, currentTask),
+        stats,
+        inFlightTaskId:
+          this.tasks.tasks.find(task => task.toAgentId === agent.id && task.status === 'running')
+            ?.id || undefined,
+        stalledTaskId,
+        lastRunAt: agent.lastRunAt,
+        lastError: agent.lastError,
+        lastHeartbeatAt: agent.lastHeartbeatAt,
+        currentTask,
+        capability: this.buildAgentCapability(agent),
+      };
+    });
+  }
+
   async verifyTask(input: {
     taskId: string;
     verifierAgentId: string;
@@ -1079,6 +1497,9 @@ export class AgentOrchestratorService {
     task.verifiedByAgentId = verifierAgentId;
     task.verifiedAt = now;
     task.verificationNotes = notes || undefined;
+    task.awaitingVerificationSince = undefined;
+    task.lastVerificationReminderAt = undefined;
+    task.staleReason = undefined;
     task.updatedAt = now;
 
     await this.saveTasks();
@@ -1127,6 +1548,9 @@ export class AgentOrchestratorService {
     sourceTask.verifiedAt = now;
     sourceTask.verificationNotes = reason;
     sourceTask.recallCount = (sourceTask.recallCount || 0) + 1;
+    sourceTask.awaitingVerificationSince = undefined;
+    sourceTask.lastVerificationReminderAt = undefined;
+    sourceTask.staleReason = undefined;
     sourceTask.updatedAt = now;
 
     const followUpDetails = [
@@ -1162,6 +1586,7 @@ export class AgentOrchestratorService {
       recallCount: sourceTask.recallCount,
       createdAt: now,
       updatedAt: now,
+      lastHeartbeatAt: now,
     };
 
     this.tasks.tasks.push(recalledTask);
@@ -1188,6 +1613,8 @@ export class AgentOrchestratorService {
       running: 0,
       done: 0,
       failed: 0,
+      stalled: 0,
+      needsVerification: 0,
     };
     for (const task of this.tasks.tasks) {
       if (task.toAgentId !== agentId) continue;
@@ -1195,6 +1622,13 @@ export class AgentOrchestratorService {
       if (task.status === 'running') stats.running += 1;
       if (task.status === 'done') stats.done += 1;
       if (task.status === 'failed') stats.failed += 1;
+      if (task.stalledAt) stats.stalled += 1;
+      if (
+        task.status === 'done' &&
+        (!task.verificationStatus || task.verificationStatus === 'unverified')
+      ) {
+        stats.needsVerification += 1;
+      }
     }
     return stats;
   }
@@ -1257,6 +1691,9 @@ export class AgentOrchestratorService {
     this.tasks.tasks = this.tasks.tasks.filter(
       t => t.fromAgentId !== agentId && t.toAgentId !== agentId,
     );
+    this.runs.runs = this.runs.runs.filter(
+      run => run.agentId !== agentId && run.fromAgentId !== agentId,
+    );
 
     if (this.state.activeAgentId === agentId) {
       this.state.activeAgentId = this.state.agents[0]?.id || '';
@@ -1264,6 +1701,7 @@ export class AgentOrchestratorService {
 
     await this.saveState();
     await this.saveTasks();
+    await this.saveRuns();
 
     try {
       await rm(this.resolveAgentBaseDir(agentId), { recursive: true, force: true });
@@ -1302,6 +1740,7 @@ export class AgentOrchestratorService {
       recallCount: 0,
       createdAt,
       updatedAt: createdAt,
+      lastHeartbeatAt: createdAt,
     };
     this.tasks.tasks.push(task);
     await this.saveTasks();
@@ -1315,6 +1754,7 @@ export class AgentOrchestratorService {
         reason: resolved.reason,
       } as any);
     }
+    this.emitSummaryHeartbeat();
     this.emitUpdated();
     return task;
   }
@@ -1327,6 +1767,12 @@ export class AgentOrchestratorService {
         // best effort poll loop
       });
     }, DEFAULT_POLL_MS);
+    this.statusInterval = setInterval(() => {
+      this.runAutonomousStatusMaintenance().catch(() => {
+        // best effort maintenance loop
+      });
+    }, DEFAULT_STATUS_HEARTBEAT_MS);
+    await this.runAutonomousStatusMaintenance();
   }
 
   stop(): void {
@@ -1335,10 +1781,16 @@ export class AgentOrchestratorService {
       clearInterval(this.interval);
       this.interval = null;
     }
+    if (this.statusInterval) {
+      clearInterval(this.statusInterval);
+      this.statusInterval = null;
+    }
   }
 
   private async poll(): Promise<void> {
     await this.loadTasks();
+    await this.loadRuns();
+    await this.runAutonomousStatusMaintenance({ emitHeartbeat: false });
     const agents = this.listAgents().filter(a => a.enabled && a.autoPoll);
     const runs: Promise<void>[] = [];
     for (const agent of agents) {
@@ -1350,16 +1802,20 @@ export class AgentOrchestratorService {
     if (runs.length > 0) {
       await Promise.allSettled(runs);
     }
+    this.emitSummaryHeartbeat();
   }
 
   async runNextForAgent(agentId: string): Promise<boolean> {
     await this.loadTasks();
+    await this.loadRuns();
+    await this.runAutonomousStatusMaintenance({ emitHeartbeat: false });
     const agent = this.getAgent(agentId);
     if (!agent || !agent.enabled) return false;
     if (this.inFlightAgents.has(agent.id)) return false;
     const task = this.tasks.tasks.find(t => t.toAgentId === agent.id && t.status === 'queued');
     if (!task) return false;
     await this.runTask(agent, task);
+    this.emitSummaryHeartbeat();
     return true;
   }
 
@@ -1402,13 +1858,31 @@ export class AgentOrchestratorService {
       return;
     }
 
+    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const startedAt = nowIso();
     this.inFlightAgents.add(agent.id);
     task.status = 'running';
-    task.startedAt = nowIso();
-    task.updatedAt = task.startedAt;
+    task.runId = runId;
+    task.startedAt = startedAt;
+    task.updatedAt = startedAt;
     task.error = undefined;
-    await this.saveTasks();
+    task.stalledAt = undefined;
+    task.staleReason = undefined;
+    task.awaitingVerificationSince = undefined;
+    task.lastVerificationReminderAt = undefined;
+    task.lastHeartbeatAt = startedAt;
+    agent.lastHeartbeatAt = startedAt;
+    agent.updatedAt = startedAt;
+    this.upsertRunRecord(this.makeRunRecord(agent, task, runId, startedAt));
+    await Promise.all([this.saveTasks(), this.saveRuns(), this.saveState()]);
     this.eventBus.emit({ type: 'agents:task-running', task, agentId: agent.id });
+    this.eventBus.emit({
+      type: 'agents:run-started',
+      run: this.getRunRecord(runId),
+      taskId: task.id,
+      runId,
+      agentId: agent.id,
+    } as any);
     this.emitUpdated();
 
     try {
@@ -1416,6 +1890,7 @@ export class AgentOrchestratorService {
       if (this.summaryLooksUnverified(result.summary)) {
         throw new Error(`Task ended with failed verification: ${result.summary.slice(0, 400)}`);
       }
+      const finishedAt = nowIso();
       task.status = 'done';
       task.resultSummary = result.summary;
       task.error = undefined;
@@ -1423,16 +1898,36 @@ export class AgentOrchestratorService {
       task.verificationNotes = undefined;
       task.verifiedByAgentId = undefined;
       task.verifiedAt = undefined;
-      task.finishedAt = nowIso();
-      task.updatedAt = task.finishedAt;
-      agent.lastRunAt = task.finishedAt;
+      task.awaitingVerificationSince = finishedAt;
+      task.lastVerificationReminderAt = undefined;
+      task.finishedAt = finishedAt;
+      task.updatedAt = finishedAt;
+      task.lastHeartbeatAt = finishedAt;
+      agent.lastRunAt = finishedAt;
+      agent.lastHeartbeatAt = finishedAt;
       agent.lastError = undefined;
-      await this.saveTasks();
-      await this.saveState();
+      agent.updatedAt = finishedAt;
+      this.markRunAsSettled({
+        runId: task.runId,
+        status: 'done',
+        summary: result.summary.slice(0, 4000),
+        endedAt: finishedAt,
+      });
+      await Promise.all([this.saveTasks(), this.saveRuns(), this.saveState()]);
       this.eventBus.emit({ type: 'agents:task-done', task, agentId: agent.id });
+      this.eventBus.emit({
+        type: 'agents:run-finished',
+        run: this.getRunRecord(task.runId),
+        taskId: task.id,
+        runId: task.runId,
+        agentId: agent.id,
+        status: 'done',
+      } as any);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (this.shouldRetryTaskFailure(task, msg)) {
+        const retryAt = nowIso();
+        const failedRunId = task.runId;
         task.retryCount = Math.max(0, Number(task.retryCount || 0)) + 1;
         task.status = 'queued';
         task.error = undefined;
@@ -1443,12 +1938,25 @@ export class AgentOrchestratorService {
         task.verificationNotes = undefined;
         task.verifiedByAgentId = undefined;
         task.verifiedAt = undefined;
-        task.updatedAt = nowIso();
+        task.awaitingVerificationSince = undefined;
+        task.lastVerificationReminderAt = undefined;
+        task.stalledAt = undefined;
+        task.staleReason = undefined;
+        task.lastHeartbeatAt = retryAt;
+        task.updatedAt = retryAt;
+        task.runId = undefined;
         this.appendRetryContext(task, msg);
         agent.lastRunAt = task.updatedAt;
+        agent.lastHeartbeatAt = retryAt;
         agent.lastError = msg;
-        await this.saveTasks();
-        await this.saveState();
+        agent.updatedAt = retryAt;
+        this.markRunAsSettled({
+          runId: failedRunId,
+          status: 'failed',
+          error: msg,
+          endedAt: retryAt,
+        });
+        await Promise.all([this.saveTasks(), this.saveRuns(), this.saveState()]);
         this.eventBus.emit({
           type: 'agents:task-queued',
           task,
@@ -1464,46 +1972,243 @@ export class AgentOrchestratorService {
           retryCount: task.retryCount,
           maxRetries: task.maxRetries ?? DEFAULT_TASK_MAX_RETRIES,
         } as any);
+        this.eventBus.emit({
+          type: 'agents:run-finished',
+          run: this.getRunRecord(failedRunId),
+          taskId: task.id,
+          runId: failedRunId,
+          agentId: agent.id,
+          status: 'failed',
+          error: msg,
+        } as any);
         return;
       }
+      const finishedAt = nowIso();
       task.status = 'failed';
       task.error = msg;
       task.verificationStatus = undefined;
       task.verificationNotes = undefined;
       task.verifiedByAgentId = undefined;
       task.verifiedAt = undefined;
-      task.finishedAt = nowIso();
-      task.updatedAt = task.finishedAt;
-      agent.lastRunAt = task.finishedAt;
+      task.awaitingVerificationSince = undefined;
+      task.lastVerificationReminderAt = undefined;
+      task.stalledAt = undefined;
+      task.staleReason = undefined;
+      task.finishedAt = finishedAt;
+      task.updatedAt = finishedAt;
+      task.lastHeartbeatAt = finishedAt;
+      agent.lastRunAt = finishedAt;
+      agent.lastHeartbeatAt = finishedAt;
       agent.lastError = msg;
-      await this.saveTasks();
-      await this.saveState();
+      agent.updatedAt = finishedAt;
+      this.markRunAsSettled({
+        runId: task.runId,
+        status: 'failed',
+        error: msg,
+        endedAt: finishedAt,
+      });
+      await Promise.all([this.saveTasks(), this.saveRuns(), this.saveState()]);
       this.eventBus.emit({ type: 'agents:task-failed', task, agentId: agent.id, error: msg });
+      this.eventBus.emit({
+        type: 'agents:run-finished',
+        run: this.getRunRecord(task.runId),
+        taskId: task.id,
+        runId: task.runId,
+        agentId: agent.id,
+        status: 'failed',
+        error: msg,
+      } as any);
     } finally {
       this.inFlightAgents.delete(agent.id);
+      this.emitSummaryHeartbeat();
       this.emitUpdated();
     }
   }
 
-  getSummary(): {
-    activeAgentId: string;
-    totalAgents: number;
-    queued: number;
-    running: number;
-    done: number;
-    failed: number;
-    polling: boolean;
-  } {
+  private async runAutonomousStatusMaintenance(options?: {
+    emitHeartbeat?: boolean;
+  }): Promise<void> {
+    if (this.maintenanceInFlight) {
+      if (options?.emitHeartbeat !== false) {
+        this.emitSummaryHeartbeat();
+      }
+      return;
+    }
+    this.maintenanceInFlight = true;
+    try {
+      const nowMs = Date.now();
+      const now = nowIso();
+      let tasksChanged = false;
+      let runsChanged = false;
+      let stateChanged = false;
+
+      for (const run of this.runs.runs) {
+        if (run.status === 'running' || run.status === 'stalled') {
+          continue;
+        }
+        const archiveAtMs = parseIsoMs(run.archivedAt);
+        if (archiveAtMs !== null && archiveAtMs <= nowMs && run.status !== 'archived') {
+          run.status = 'archived';
+          runsChanged = true;
+        }
+      }
+
+      if (this.runs.runs.length > DEFAULT_RUN_HISTORY_MAX) {
+        this.runs.runs = [...this.runs.runs]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .slice(0, DEFAULT_RUN_HISTORY_MAX);
+        runsChanged = true;
+      }
+
+      for (const task of this.tasks.tasks) {
+        const baseAt = task.startedAt || task.createdAt;
+        const ageMs = elapsedSinceMs(baseAt, nowMs);
+        const isRunning = task.status === 'running';
+        const isQueued = task.status === 'queued';
+        const threshold = isRunning ? DEFAULT_RUNNING_STALL_MS : DEFAULT_QUEUED_STALL_MS;
+
+        if ((isRunning || isQueued) && ageMs >= threshold) {
+          if (!task.stalledAt) {
+            task.stalledAt = now;
+            task.staleReason = isRunning
+              ? `running for ${Math.floor(ageMs / 1000)}s without completion`
+              : `queued for ${Math.floor(ageMs / 1000)}s without pickup`;
+            task.updatedAt = now;
+            tasksChanged = true;
+            this.eventBus.emit({
+              type: 'agents:task-stalled',
+              task,
+              taskId: task.id,
+              agentId: task.toAgentId,
+              durationMs: ageMs,
+              staleReason: task.staleReason,
+            } as any);
+          }
+
+          if (task.runId) {
+            const run = this.getRunRecord(task.runId);
+            if (run && run.status === 'running') {
+              run.status = 'stalled';
+              run.lastHeartbeatAt = now;
+              runsChanged = true;
+            }
+          }
+        } else if (!isRunning && !isQueued && task.stalledAt) {
+          task.stalledAt = undefined;
+          task.staleReason = undefined;
+          task.updatedAt = now;
+          tasksChanged = true;
+        }
+
+        if (
+          task.status === 'done' &&
+          (!task.verificationStatus || task.verificationStatus === 'unverified')
+        ) {
+          if (!task.awaitingVerificationSince) {
+            task.awaitingVerificationSince = task.finishedAt || task.updatedAt || now;
+            tasksChanged = true;
+          }
+          const waitMs = elapsedSinceMs(task.awaitingVerificationSince, nowMs);
+          const reminderMs = elapsedSinceMs(task.lastVerificationReminderAt, nowMs);
+          if (
+            waitMs >= DEFAULT_VERIFICATION_PENDING_MS &&
+            (!task.lastVerificationReminderAt ||
+              reminderMs >= DEFAULT_VERIFICATION_REMINDER_COOLDOWN_MS)
+          ) {
+            task.lastVerificationReminderAt = now;
+            task.staleReason = `awaiting verification for ${Math.floor(waitMs / 1000)}s`;
+            task.updatedAt = now;
+            tasksChanged = true;
+            this.eventBus.emit({
+              type: 'agents:task-verification-pending',
+              task,
+              taskId: task.id,
+              agentId: task.toAgentId,
+              waitMs,
+            } as any);
+          }
+        } else if (
+          task.awaitingVerificationSince ||
+          task.lastVerificationReminderAt ||
+          task.staleReason?.startsWith('awaiting verification')
+        ) {
+          task.awaitingVerificationSince = undefined;
+          task.lastVerificationReminderAt = undefined;
+          if (task.staleReason?.startsWith('awaiting verification')) {
+            task.staleReason = undefined;
+          }
+          task.updatedAt = now;
+          tasksChanged = true;
+        }
+
+        if (isRunning && task.runId) {
+          const run = this.getRunRecord(task.runId);
+          if (run) {
+            if (elapsedSinceMs(run.lastHeartbeatAt, nowMs) >= DEFAULT_HEARTBEAT_PERSIST_MS) {
+              run.lastHeartbeatAt = now;
+              runsChanged = true;
+            }
+            if (run.status === 'stalled' && !task.stalledAt) {
+              run.status = 'running';
+              runsChanged = true;
+            }
+          }
+        }
+      }
+
+      for (const agent of this.state.agents) {
+        const hasActive = this.tasks.tasks.some(
+          task => task.toAgentId === agent.id && (task.status === 'running' || task.status === 'queued'),
+        );
+        if (hasActive && elapsedSinceMs(agent.lastHeartbeatAt, nowMs) >= DEFAULT_HEARTBEAT_PERSIST_MS) {
+          agent.lastHeartbeatAt = now;
+          agent.updatedAt = now;
+          stateChanged = true;
+        }
+      }
+
+      if (tasksChanged) {
+        await this.saveTasks();
+      }
+      if (runsChanged) {
+        await this.saveRuns();
+      }
+      if (stateChanged) {
+        await this.saveState();
+      }
+      if (tasksChanged || runsChanged || stateChanged) {
+        this.emitUpdated();
+      }
+      if (options?.emitHeartbeat !== false) {
+        this.emitSummaryHeartbeat();
+      }
+    } finally {
+      this.maintenanceInFlight = false;
+    }
+  }
+
+  getSummary(): AgentOrchestratorSummary {
     let queued = 0;
     let running = 0;
     let done = 0;
     let failed = 0;
+    let stalled = 0;
+    let needsVerification = 0;
     for (const task of this.tasks.tasks) {
       if (task.status === 'queued') queued += 1;
       if (task.status === 'running') running += 1;
       if (task.status === 'done') done += 1;
       if (task.status === 'failed') failed += 1;
+      if (task.stalledAt) stalled += 1;
+      if (
+        task.status === 'done' &&
+        (!task.verificationStatus || task.verificationStatus === 'unverified')
+      ) {
+        needsVerification += 1;
+      }
     }
+    const activeRuns = this.runs.runs.filter(run => run.status === 'running' || run.status === 'stalled').length;
+    const archivedRuns = this.runs.runs.filter(run => run.status === 'archived').length;
     return {
       activeAgentId: this.state.activeAgentId,
       totalAgents: this.state.agents.length,
@@ -1511,12 +2216,39 @@ export class AgentOrchestratorService {
       running,
       done,
       failed,
+      stalled,
+      needsVerification,
+      activeRuns,
+      archivedRuns,
       polling: this.running,
+      heartbeatAt: this.lastHeartbeatAt,
     };
   }
 
+  private emitSummaryHeartbeat(): void {
+    this.lastHeartbeatAt = nowIso();
+    const summary = this.getSummary();
+    this.eventBus.emit({
+      type: 'agents:summary',
+      summary,
+      agents: this.getAgentStatuses(),
+      runs: this.listRuns({ limit: 20 }),
+      heartbeatAt: summary.heartbeatAt,
+    } as any);
+    this.eventBus.emit({
+      type: 'agents:heartbeat',
+      summary,
+      heartbeatAt: summary.heartbeatAt,
+    } as any);
+  }
+
   private emitUpdated(): void {
-    this.eventBus.emit({ type: 'agents:updated', summary: this.getSummary() });
+    this.eventBus.emit({
+      type: 'agents:updated',
+      summary: this.getSummary(),
+      agents: this.getAgentStatuses(),
+      runs: this.listRuns({ limit: 20 }),
+    } as any);
   }
 }
 

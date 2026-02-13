@@ -1044,7 +1044,7 @@ function applyRalphRecovery(params: {
     };
   }
 
-  // Keep only the latest recovery nudge, similar to OpenClaw attempt-loop cleanup.
+  // Keep only the latest recovery nudge, similar to robust attempt-loop cleanup.
   const cleaned = params.history.filter(
     m => !(m.role === 'user' && typeof m.content === 'string' && m.content.includes(RALPH_TAG)),
   );

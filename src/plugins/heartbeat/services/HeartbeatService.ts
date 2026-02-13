@@ -1,7 +1,7 @@
 /**
  * Heartbeat Service - Periodic AI Reflection System
  *
- * Reimplemented from OpenClaw heartbeat behavior:
+ * Reimplemented from reference heartbeat behavior:
  * - robust scheduling with due-time timers
  * - HEARTBEAT.md effective-empty skip handling
  * - HEARTBEAT_OK normalization with ack threshold

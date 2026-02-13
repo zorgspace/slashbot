@@ -2,7 +2,7 @@
  * HeaderPanel - Modern logo with shadow + version info + status indicators
  *
  * Combines logo, version/model/cwd info, and status dots.
- * Uses SplitBorder (┃ left/right) and backgroundPanel for depth.
+ * Uses SplitBorder (dotted left/right rails) and backgroundPanel for depth.
  */
 
 import { BoxRenderable, TextRenderable, t, fg, bold, dim, type CliRenderer } from '@opentui/core';

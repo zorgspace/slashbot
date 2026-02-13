@@ -12,7 +12,6 @@ This folder documents every built-in plugin currently shipped with Slashbot.
 - [core.bash](./core.bash.md)
 - [core.code-editor](./core.code-editor.md)
 - [core.filesystem](./core.filesystem.md)
-- [core.git](./core.git.md)
 - [core.prompt](./core.prompt.md)
 - [core.providers](./core.providers.md)
 - [core.say](./core.say.md)

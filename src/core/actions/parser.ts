@@ -151,12 +151,19 @@ export function parseActions(content: string): Action[] {
 }
 
 export function extractAttr(tag: string, attr: string): string | undefined {
-  const regex = new RegExp(`${attr}="([^"]*)"`); // Simple regex for attr="value"
+  const normalizedAttr = attr.trim();
+  if (!normalizedAttr) return undefined;
+  const escapedAttr = normalizedAttr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(
+    `\\b${escapedAttr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>/]+))`,
+    'i',
+  );
   const match = tag.match(regex);
-  return match ? match[1] : undefined;
+  if (!match) return undefined;
+  return match[1] ?? match[2] ?? match[3];
 }
 
 export function extractBoolAttr(tag: string, attr: string): boolean {
-  const value = extractAttr(tag, attr);
-  return value === 'true';
+  const value = extractAttr(tag, attr)?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
 }

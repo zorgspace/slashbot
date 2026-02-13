@@ -368,4 +368,77 @@ describe('AgentOrchestratorService default agent behavior', () => {
     expect(sourceAfterRecall?.verificationStatus).toBe('changes_requested');
     expect(sourceAfterRecall?.verificationNotes).toContain('regression test');
   });
+
+  it('exposes current running task in agent status snapshots', async () => {
+    const { service, workDir } = await createTempService();
+    cleanupDirs.push(workDir);
+
+    const worker = await service.createAgent({
+      name: 'Worker',
+      responsibility: 'Implementation specialist',
+    });
+
+    await service.sendTask({
+      fromAgentId: 'agent-architect',
+      toAgentId: worker.id,
+      title: 'Long running task',
+      content: 'Execute a long running operation',
+    });
+
+    let releaseExecution!: () => void;
+    const executionGate = new Promise<void>(resolve => {
+      releaseExecution = () => resolve();
+    });
+    service.setTaskExecutor(async () => {
+      await executionGate;
+      return { summary: 'Build passed and tests passed' };
+    });
+
+    const runPromise = service.runNextForAgent(worker.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    const statusEntry = service.getAgentStatuses().find(entry => entry.agentId === worker.id);
+    expect(statusEntry?.currentTask).toBeTruthy();
+    expect(statusEntry?.currentTask?.status).toBe('running');
+    expect(statusEntry?.currentTask?.title).toContain('Long running task');
+    expect(statusEntry?.lifecycle).toBe('running');
+
+    releaseExecution();
+    await runPromise;
+  });
+
+  it('autonomously marks stale queued tasks so status can self-manage health', async () => {
+    const { service, workDir } = await createTempService();
+    cleanupDirs.push(workDir);
+
+    const worker = await service.createAgent({
+      name: 'Worker',
+      responsibility: 'Implementation specialist',
+    });
+
+    const task = await service.sendTask({
+      fromAgentId: 'agent-architect',
+      toAgentId: worker.id,
+      title: 'Queued too long',
+      content: 'This task will stay in queue for too long',
+    });
+
+    const oldDate = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const mutableTask = service.getTask(task.id);
+    expect(mutableTask).not.toBeNull();
+    if (mutableTask) {
+      mutableTask.createdAt = oldDate;
+      mutableTask.updatedAt = oldDate;
+    }
+
+    await (service as any).runAutonomousStatusMaintenance();
+
+    const staleTask = service.getTask(task.id);
+    expect(staleTask?.stalledAt).toBeTruthy();
+    expect(staleTask?.staleReason).toContain('queued');
+
+    const statusEntry = service.getAgentStatuses().find(entry => entry.agentId === worker.id);
+    expect(statusEntry?.lifecycle).toBe('stalled');
+    expect(statusEntry?.currentTask?.id).toBe(task.id);
+  });
 });

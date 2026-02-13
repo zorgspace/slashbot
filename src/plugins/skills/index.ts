@@ -19,6 +19,7 @@ import { getSkillsParserConfigs } from './parser';
 import { skillsCommands } from './commands';
 import { SKILLS_PROMPT } from './prompt';
 import type { SkillManager } from './services/SkillManager';
+import { getLocalSkillsDir } from '../../core/config/constants';
 
 export class SkillsPlugin implements Plugin {
   readonly metadata: PluginMetadata = {
@@ -44,7 +45,7 @@ export class SkillsPlugin implements Plugin {
     if (!context.container.isBound(TYPES.SkillManager)) {
       context.container
         .bind(TYPES.SkillManager)
-        .toDynamicValue(() => createSkillManager(context.workDir))
+        .toDynamicValue(() => createSkillManager(getLocalSkillsDir(context.workDir)))
         .inSingletonScope();
     }
 

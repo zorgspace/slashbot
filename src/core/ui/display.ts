@@ -476,9 +476,9 @@ class DisplayService {
       } else if (line.startsWith('# ')) {
         appendLine(t`${bold(fg(theme.accent)(line))}`);
       } else if (line.startsWith('> ')) {
-        appendLine(t`${fg(theme.muted)('\u2502 ' + line.slice(2))}`);
+        appendLine(t`${fg(theme.muted)('> ' + line.slice(2))}`);
       } else if (/^[-*] /.test(line)) {
-        appendLine(t`${fg(theme.primary)('\u2022')} ${line.slice(2)}`);
+        appendLine(t`${fg(theme.muted)('- ' + line.slice(2))}`);
       } else {
         appendPlain(line);
       }

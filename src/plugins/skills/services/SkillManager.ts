@@ -179,6 +179,15 @@ function extractSkillName(url: string): string {
     .replace(/^-|-$/g, '');
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 export function createSkillManager(_basePath?: string): SkillManager {
   const skillsDir = _basePath || getLocalSkillsDir();
 
@@ -559,31 +568,38 @@ export function createSkillManager(_basePath?: string): SkillManager {
       if (skills.length === 0) {
         return '';
       }
+      const ordered = [...skills].sort((a, b) => a.name.localeCompare(b.name));
+      const lines: string[] = ['<available_skills>'];
+      for (const skill of ordered) {
+        const rawDescription = skill.metadata?.description || 'No description';
+        const description = escapeXml(rawDescription.trim() || 'No description');
+        const version = skill.metadata?.version ? escapeXml(skill.metadata.version.trim()) : '';
+        const relativeSkillPath = path.relative(skillsDir, skill.path).replace(/\\/g, '/');
+        const location = relativeSkillPath.startsWith('..')
+          ? skill.path.replace(/\\/g, '/')
+          : `.slashbot/skills/${relativeSkillPath}`;
 
-      let prompt = '\n\n# Installed Skills\n';
-      prompt +=
-        'The following skills are installed locally. Use them when the user request matches their purpose or triggers.\n\n';
-
-      for (const skill of skills) {
-        const desc = skill.metadata?.description || 'No description';
-        const version = skill.metadata?.version ? ` v${skill.metadata.version}` : '';
-        const triggers = skill.metadata?.triggers?.length
-          ? ` (triggers: ${skill.metadata.triggers.join(', ')})`
-          : '';
-        prompt += `- **${skill.name}**${version}: ${desc}${triggers}\n`;
+        lines.push('  <skill>');
+        lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+        lines.push(`    <description>${description}</description>`);
+        if (version) {
+          lines.push(`    <version>${version}</version>`);
+        }
+        const triggers = Array.isArray(skill.metadata?.triggers) ? skill.metadata.triggers : [];
+        if (triggers.length > 0) {
+          lines.push('    <triggers>');
+          for (const trigger of triggers) {
+            const normalized = trigger.trim();
+            if (!normalized) continue;
+            lines.push(`      <trigger>${escapeXml(normalized)}</trigger>`);
+          }
+          lines.push('    </triggers>');
+        }
+        lines.push(`    <location>${escapeXml(location)}</location>`);
+        lines.push('  </skill>');
       }
-
-      prompt += '\n## How to use skills\n';
-      prompt += '- Load a skill with: <skill name="skill_name"/>\n';
-      prompt += '- The skill content will be returned, then follow its instructions\n';
-      prompt +=
-        '- BEFORE doing a web search, check if an installed skill can answer the question\n';
-      prompt +=
-        "- When a user request matches a skill's triggers or purpose, load that skill first\n";
-      prompt +=
-        '\n**IMPORTANT:** When using a skill, follow its documentation completely. The skill is your primary and authoritative source - do NOT search for additional information unless the skill explicitly lacks what you need.\n';
-
-      return prompt;
+      lines.push('</available_skills>');
+      return lines.join('\n');
     },
   };
 }

@@ -23,7 +23,7 @@ describe('isExploreToolName', () => {
   });
 
   it('ignores non-explore tools', () => {
-    const negatives = ['git_worktree_list', 'todo_read', 'memory_search', 'bash', 'say_message'];
+    const negatives = ['git_status', 'todo_read', 'memory_search', 'bash', 'say_message'];
     for (const value of negatives) {
       expect(isExploreToolName(value), `expected ${value} to not be explore`).toBe(false);
     }

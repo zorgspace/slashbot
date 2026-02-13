@@ -61,6 +61,8 @@ export function cleanXmlTags(content: string | unknown): string {
   // Strip xAI tool call XML and literal placeholders to prevent display in chat
   result = result.replace(/<xai:function_call\b[^>]*>[\s\S]*?<\/xai:function_call>/gi, '');
   result = result.replace(/\[tool calls?\]/gi, '');
+  // Prompt policy allows an optional <markdown> wrapper; unwrap it for rendering.
+  result = unwrapMarkdownTags(result);
 
   return result.trim();
 }

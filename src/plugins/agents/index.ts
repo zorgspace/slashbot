@@ -94,6 +94,8 @@ export class AgentsPlugin implements Plugin {
           onAgentStatus: async () => ({
             summary: service.getSummary(),
             agents: service.listAgents(),
+            statuses: service.getAgentStatuses(),
+            runs: service.listRuns({ limit: 20 }),
           }),
         },
         execute: executeAgentStatus,
@@ -208,14 +210,19 @@ export class AgentsPlugin implements Plugin {
           onAgentSend: async (action: { to: string; title: string; content: string }) => {
             const fromId = this.resolveSenderAgentId(service);
             const toId = service.resolveAgentId(action.to);
-            if (!toId) return false;
-            await service.sendTask({
+            if (!toId) return null;
+            const task = await service.sendTask({
               fromAgentId: fromId,
               toAgentId: toId,
               title: action.title,
               content: action.content,
             });
-            return true;
+            return {
+              taskId: task.id,
+              fromAgentId: task.fromAgentId,
+              toAgentId: task.toAgentId,
+              title: task.title,
+            };
           },
         },
         execute: executeAgentSend,
@@ -264,7 +271,7 @@ export class AgentsPlugin implements Plugin {
       {
         name: 'agents_status',
         description:
-          'Get multi-agent orchestration status: active agent, queue counts, and known agents.',
+          'Get autonomous multi-agent status, including each agent current task, stall health, and run activity.',
         parameters: z.object({}),
         toAction: () => ({
           type: 'agent-status',
@@ -451,6 +458,9 @@ export class AgentsPlugin implements Plugin {
           const getActiveTabId = payload.getActiveTabId as (() => string) | undefined;
           const renderAgentsManagerTab = payload.renderAgentsManagerTab as (() => void) | undefined;
           const notifyAgentTab = payload.notifyAgentTab as ((agentId: string) => void) | undefined;
+          const handleAgentTaskDone = payload.handleAgentTaskDone as
+            | ((event: any) => void)
+            | undefined;
           const handleAgentTaskFailed = payload.handleAgentTaskFailed as
             | ((event: any) => void)
             | undefined;
@@ -460,6 +470,7 @@ export class AgentsPlugin implements Plugin {
             !getActiveTabId ||
             !renderAgentsManagerTab ||
             !notifyAgentTab ||
+            !handleAgentTaskDone ||
             !handleAgentTaskFailed
           ) {
             return;
@@ -472,10 +483,20 @@ export class AgentsPlugin implements Plugin {
               renderAgentsManagerTab();
             }
           });
+          eventBus.on('agents:summary', () => {
+            refreshTabs();
+            if (getActiveTabId() === 'agents') {
+              renderAgentsManagerTab();
+            }
+          });
           for (const eventName of [
             'agents:task-queued',
             'agents:task-running',
-            'agents:task-done',
+            'agents:task-stalled',
+            'agents:task-verification-pending',
+            'agents:run-started',
+            'agents:run-finished',
+            'agents:summary',
           ]) {
             eventBus.on(eventName, (event: any) => {
               const agentId = typeof event?.agentId === 'string' ? event.agentId : '';
@@ -484,6 +505,18 @@ export class AgentsPlugin implements Plugin {
               }
             });
           }
+          eventBus.on('agents:task-done', (event: any) => {
+            const workerAgentId = typeof event?.agentId === 'string' ? event.agentId : '';
+            if (workerAgentId) {
+              notifyAgentTab(workerAgentId);
+            }
+            const requesterAgentId =
+              typeof event?.task?.fromAgentId === 'string' ? event.task.fromAgentId : '';
+            if (requesterAgentId && requesterAgentId !== workerAgentId) {
+              notifyAgentTab(requesterAgentId);
+            }
+            handleAgentTaskDone(event || {});
+          });
           eventBus.on('agents:task-failed', (event: any) => {
             const agentId = typeof event?.agentId === 'string' ? event.agentId : '';
             if (agentId) {
@@ -584,7 +617,7 @@ export class AgentsPlugin implements Plugin {
           '- Verify delegated task results before closure; if needed, recall the specialist with explicit follow-up instructions.',
           '- For routing/coordination, use `agents_status`, `agents_list`, and `agents_tasks` when needed.',
           '',
-          'Storage layout (OpenClaw-style, project-local):',
+          'Storage layout (project-local):',
           '- .agents/agents.json',
           '- .agents/tasks.json',
           '- .agents/<agentId>/workspace/{AGENTS,SOUL,TOOLS,IDENTITY,USER,HEARTBEAT}.md',

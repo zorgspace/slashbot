@@ -126,6 +126,18 @@ export class ToolRegistry {
   }
 
   /**
+   * Get registered tool definitions for prompt/runtime introspection.
+   */
+  getToolDefinitions(): Array<{ name: string; description: string }> {
+    return Array.from(this.contributions.values())
+      .map(contrib => ({
+        name: contrib.name,
+        description: contrib.description || '',
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
    * Get the number of registered tools
    */
   get size(): number {

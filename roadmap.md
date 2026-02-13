@@ -1,6 +1,6 @@
 # Slashbot Implementation Backlog
 
-Backlog generated from the `openclaw` vs `slashbot` gap analysis.
+Backlog generated from the multi-agent feature gap analysis.
 
 ## Prioritized backlog
 

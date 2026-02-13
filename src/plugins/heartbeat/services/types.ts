@@ -1,7 +1,7 @@
 /**
  * Heartbeat System Types
  *
- * Reimplemented from the OpenClaw heartbeat behavior:
+ * Reimplemented from the reference heartbeat behavior:
  * - predictable scheduling semantics
  * - robust HEARTBEAT_OK handling
  * - effective-empty HEARTBEAT.md detection
@@ -118,7 +118,7 @@ export interface HeartbeatState {
 }
 
 /**
- * OpenClaw-aligned defaults.
+ * Runtime-aligned defaults.
  */
 export const HEARTBEAT_TOKEN = 'HEARTBEAT_OK';
 export const DEFAULT_HEARTBEAT_EVERY = '30m';
