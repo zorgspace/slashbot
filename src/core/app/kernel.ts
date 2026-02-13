@@ -1841,10 +1841,10 @@ Communication rules:
       return;
     }
 
-    if (agent.removable === false) {
-      display.warningText('This agent is protected and cannot be deleted.');
-      return;
-    }
+    // if (agent.removable === false) {
+    //   display.warningText('This agent is protected and cannot be deleted.');
+    //   return;
+    // }
 
     const action = (
       await this.tuiApp.promptInput('Edit action [name|role|prompt|autopoll|enable|disable|delete]')
