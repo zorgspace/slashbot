@@ -19,7 +19,7 @@ export const HOME_CONFIG_FILE = path.join(HOME_CONFIG_DIR, 'config.json');
 
 // Local directory: project-specific data (history, tasks)
 export const getLocalSlashbotDir = (workDir?: string) =>
-  path.join(workDir || process.cwd(), '.slashbot');
+  path.join(workDir ?? process.cwd(), '.slashbot');
 export const getLocalConfigDir = (workDir?: string) =>
   path.join(getLocalSlashbotDir(workDir), 'config');
 export const getLocalConfigFile = (workDir?: string) =>
@@ -115,7 +115,7 @@ const walletConfig = loadWalletConfig();
 
 export const PROXY_CONFIG = {
   /** Proxy server URL */
-  BASE_URL: walletConfig?.proxyUrl || 'https://getslashbot.com',
+  BASE_URL: walletConfig?.proxyUrl ?? 'https://getslashbot.com',
   /** Grok proxy endpoint */
   GROK_ENDPOINT: '/api/grok',
   /** Credits endpoint */
@@ -123,7 +123,7 @@ export const PROXY_CONFIG = {
   /** Whether to use proxy mode (requires wallet) */
   ENABLED: !!walletConfig?.walletAddress,
   /** User's Solana wallet address for billing */
-  WALLET_ADDRESS: walletConfig?.walletAddress || '',
+  WALLET_ADDRESS: walletConfig?.walletAddress ?? '',
   /** Treasury address for deposits */
   TREASURY_ADDRESS: 'DVGjCZVJ3jMw8gsHAQjuYFMj8xQJyVf17qKrciYCS9u7',
   /** SLASHBOT token mint */
@@ -254,7 +254,6 @@ export const ALLOWED_GIT_COMMANDS = [
   'commit',
   'checkout',
   'stash',
-  'worktree',
 ] as const;
 
 // ============================================================================
