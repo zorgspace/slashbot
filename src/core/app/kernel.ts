@@ -253,6 +253,10 @@ export class Slashbot {
     for (const subscription of pluginEventSubscriptions) {
       this.eventBus.on(subscription.event, subscription.handler);
     }
+
+    // Wire kernel handlers to agent task lifecycle events
+    this.eventBus.on('agents:task-queued', this.handleAgentTaskQueued.bind(this));
+    this.eventBus.on('agents:task-done', this.handleAgentTaskDone.bind(this));
   }
 
   private getContext(): CommandContext {
@@ -656,6 +660,194 @@ export class Slashbot {
       tabId: agent.id,
       context,
     });
+  }
+
+  private extractTaskDetailsFromContract(content: string | undefined): string {
+    const normalized = String(content || '').trim();
+    if (!normalized) {
+      return '';
+    }
+    const marker = 'Task details:\n';
+    const idx = normalized.indexOf(marker);
+    if (idx >= 0) {
+      return normalized.slice(idx + marker.length).trim();
+    }
+    return normalized;
+  }
+
+  private hasQueuedTasksForAgent(agentId: string): boolean {
+    if (!this.agentService || !agentId) {
+      return false;
+    }
+    return this.agentService
+      .listTasks()
+      .some(task => task.toAgentId === agentId && task.status === 'queued');
+  }
+
+  private triggerAgentReasoning(agentId: string, attempts = 3): void {
+    if (!this.agentService || !agentId) {
+      return;
+    }
+    if (!this.hasQueuedTasksForAgent(agentId)) {
+      return;
+    }
+    void this.agentService
+      .runNextForAgent(agentId)
+      .then(ran => {
+        if (ran) {
+          return;
+        }
+        if (attempts <= 0 || !this.hasQueuedTasksForAgent(agentId)) {
+          return;
+        }
+        setTimeout(() => this.triggerAgentReasoning(agentId, attempts - 1), 300);
+      })
+      .catch(() => {
+        // Best effort follow-up trigger only.
+      });
+  }
+
+  private handleAgentTaskQueued(event: {
+    agentId?: string;
+    task?: {
+      id?: string;
+      title?: string;
+      content?: string;
+      fromAgentId?: string;
+      toAgentId?: string;
+    };
+  }): void {
+    if (!this.agentService) {
+      return;
+    }
+    const targetId =
+      typeof event.task?.toAgentId === 'string' && event.task.toAgentId.trim()
+        ? event.task.toAgentId.trim()
+        : typeof event.agentId === 'string'
+          ? event.agentId.trim()
+          : '';
+    if (!targetId) {
+      return;
+    }
+    const target = this.agentService.getAgent(targetId);
+    if (!target || !this.isOrchestratorAgent(target)) {
+      return;
+    }
+    const fromId =
+      typeof event.task?.fromAgentId === 'string' ? event.task.fromAgentId.trim() : '';
+    if (!fromId || fromId === target.id) {
+      return;
+    }
+    const fromAgent = this.agentService.getAgent(fromId);
+    const senderLabel = fromAgent ? `${fromAgent.name} (${fromAgent.id})` : fromId;
+    const taskId = typeof event.task?.id === 'string' ? event.task.id.trim() : '';
+    const taskTitle = typeof event.task?.title === 'string' ? event.task.title.trim() : '';
+    const body = this.extractTaskDetailsFromContract(
+      typeof event.task?.content === 'string' ? event.task.content : '',
+    );
+    const markdown = [
+      `**Message received from ${senderLabel}**`,
+      taskId ? `Task: ${taskTitle || taskId} (${taskId})` : taskTitle ? `Task: ${taskTitle}` : '',
+      '',
+      body || '_No message body provided._',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    this.persistAssistantMarkdownToSession(target.sessionId, markdown);
+    display.withOutputTab(target.id, () => display.appendAssistantMarkdown(markdown));
+
+    this.triggerAgentReasoning(target.id);
+  }
+
+  private handleAgentTaskDone(event: {
+    agentId?: string;
+    task?: {
+      id?: string;
+      title?: string;
+      content?: string;
+      resultSummary?: string;
+      fromAgentId?: string;
+      toAgentId?: string;
+    };
+  }): void {
+    if (!this.agentService) {
+      return;
+    }
+    const requesterId =
+      typeof event.task?.fromAgentId === 'string' ? event.task.fromAgentId.trim() : '';
+    if (!requesterId) {
+      return;
+    }
+    const requester = this.agentService.getAgent(requesterId);
+    if (!requester) {
+      return;
+    }
+    const workerId =
+      typeof event.task?.toAgentId === 'string' && event.task.toAgentId.trim()
+        ? event.task.toAgentId.trim()
+        : typeof event.agentId === 'string'
+          ? event.agentId.trim()
+          : '';
+    const worker = workerId ? this.agentService.getAgent(workerId) : null;
+    const taskId = typeof event.task?.id === 'string' ? event.task.id.trim() : '';
+    const taskTitle = typeof event.task?.title === 'string' ? event.task.title.trim() : '';
+    const summary =
+      typeof event.task?.resultSummary === 'string' ? event.task.resultSummary.trim() : '';
+    const workerLabel = worker ? `${worker.name} (${worker.id})` : workerId || 'worker';
+    const taskLabel = taskTitle || taskId || 'Delegated task';
+    const markdown = [
+      `**Completion report received from ${workerLabel}**`,
+      taskId ? `Task: ${taskLabel} (${taskId})` : `Task: ${taskLabel}`,
+      '',
+      summary ? summary : '_No completion summary was provided._',
+    ].join('\n');
+
+    this.persistAssistantMarkdownToSession(requester.sessionId, markdown);
+    display.withOutputTab(requester.id, () => display.appendAssistantMarkdown(markdown));
+
+    if (!this.isOrchestratorAgent(requester) || !workerId || workerId === requester.id) {
+      return;
+    }
+
+    const hasQueuedWorkerMessage = this.agentService
+      .listTasks()
+      .some(
+        task =>
+          task.status === 'queued' && task.fromAgentId === workerId && task.toAgentId === requester.id,
+      );
+
+    if (hasQueuedWorkerMessage) {
+      this.triggerAgentReasoning(requester.id);
+      return;
+    }
+
+    const followupTitle = taskTitle
+      ? `Review completion: ${taskTitle}`
+      : taskId
+        ? `Review completion: ${taskId}`
+        : 'Review delegated completion';
+    const followupContent = [
+      `Subagent ${workerLabel} completed delegated task ${taskId || taskLabel}.`,
+      'Decide whether to create another delegated job or finish the parent job.',
+      '',
+      'Completion summary:',
+      summary || '_No completion summary was provided._',
+    ].join('\n');
+
+    void this.agentService
+      .sendTask({
+        fromAgentId: workerId,
+        toAgentId: requester.id,
+        title: followupTitle,
+        content: followupContent,
+      })
+      .then(() => {
+        this.triggerAgentReasoning(requester.id);
+      })
+      .catch(() => {
+        // Best effort fallback only.
+      });
   }
 
   private isInternalUserMessage(text: string): boolean {
@@ -1764,7 +1956,7 @@ Communication rules:
     if (!this.tuiApp || !this.agentService) return;
     this.tuiApp.clearChat();
     const summary = this.agentService.getSummary();
-    const agents = this.agentService.listAgents();
+    const agentStatuses = this.agentService.getAgentStatuses();
     const now = new Date().toLocaleTimeString();
 
     this.tuiApp.appendAssistantChat(
@@ -1772,6 +1964,7 @@ Communication rules:
         `Agents Manager  ${now}`,
         `Active: ${summary.activeAgentId || 'none'}`,
         `Global queue: ${summary.queued} queued, ${summary.running} running, ${summary.done} done, ${summary.failed} failed`,
+        `Health: ${summary.stalled} stalled, ${summary.needsVerification} pending verification, ${summary.activeRuns} active runs`,
       ].join('\n'),
     );
 
@@ -1786,19 +1979,25 @@ Communication rules:
     );
 
     const lines: string[] = [];
-    for (const agent of agents) {
-      const active = agent.id === summary.activeAgentId ? '*' : ' ';
-      const poll = agent.autoPoll ? 'on' : 'off';
-      const enabled = agent.enabled ? 'on' : 'off';
-      const lastRun = agent.lastRunAt ? agent.lastRunAt : 'never';
-      const stats = this.agentService.getTaskStatsForAgent(agent.id);
-      lines.push(`[${active}] ${agent.name} (${agent.id})`);
-      lines.push(`role: ${agent.responsibility}`);
+    for (const entry of agentStatuses) {
+      const active = entry.agentId === summary.activeAgentId ? '*' : ' ';
+      const poll = entry.autoPoll ? 'on' : 'off';
+      const enabled = entry.enabled ? 'on' : 'off';
+      const lastRun = entry.lastRunAt ? entry.lastRunAt : 'never';
+      lines.push(`[${active}] ${entry.name} (${entry.agentId})`);
+      lines.push(`lifecycle: ${entry.lifecycle}`);
       lines.push(
-        `status: enabled=${enabled} poll=${poll} | queue=${stats.queued} running=${stats.running} done=${stats.done} failed=${stats.failed} | lastRun=${lastRun}`,
+        `status: enabled=${enabled} poll=${poll} | queue=${entry.stats.queued} running=${entry.stats.running} done=${entry.stats.done} failed=${entry.stats.failed} stalled=${entry.stats.stalled} verifyPending=${entry.stats.needsVerification} | lastRun=${lastRun}`,
       );
-      if (agent.lastError) {
-        lines.push(`lastError: ${agent.lastError}`);
+      if (entry.currentTask) {
+        lines.push(
+          `currentTask: ${entry.currentTask.id} "${entry.currentTask.title}" [${entry.currentTask.status}] ageMs=${entry.currentTask.durationMs}${entry.currentTask.staleReason ? ` stale=${entry.currentTask.staleReason}` : ''}`,
+        );
+      } else {
+        lines.push('currentTask: none');
+      }
+      if (entry.lastError) {
+        lines.push(`lastError: ${entry.lastError}`);
       }
       lines.push('');
     }
@@ -2879,6 +3078,8 @@ Communication rules:
       getGrokClient: () => this.grokClient,
       renderAgentsManagerTab: () => this.renderAgentsManagerTab(),
       notifyAgentTab: (agentId: string) => this.notifyAgentTab(agentId),
+      handleAgentTaskQueued: (event: any) => this.handleAgentTaskQueued(event || {}),
+      handleAgentTaskDone: (event: any) => this.handleAgentTaskDone(event || {}),
       handleAgentTaskFailed: (event: any) => this.handleAgentTaskFailed(event || {}),
     });
 
