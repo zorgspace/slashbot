@@ -188,17 +188,19 @@ function escapeXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
-export function createSkillManager(_basePath?: string): SkillManager {
-  const skillsDir = _basePath || getLocalSkillsDir();
+export function createSkillManager(_basePathOrDirs?: string | string[]): SkillManager {
+  const dirs: string[] = Array.isArray(_basePathOrDirs) ? _basePathOrDirs : [_basePathOrDirs || getLocalSkillsDir()];
 
   return {
     getSkillsDir(): string {
-      return skillsDir;
+      return dirs[0] || '';
     },
 
     async init(): Promise<void> {
       const { mkdir } = await import('fs/promises');
-      await mkdir(skillsDir, { recursive: true });
+      for (const dir of dirs) {
+        await mkdir(dir, { recursive: true });
+      }
 
       // Install default skills if not already installed
       for (const defaultSkill of DEFAULT_SKILLS) {
@@ -215,86 +217,92 @@ export function createSkillManager(_basePath?: string): SkillManager {
       }
     },
 
-    async listSkills(): Promise<Skill[]> {
-      const skills: Skill[] = [];
+  async listSkills(): Promise<Skill[]> {
+      const skillMap = new Map<string, Skill>();
+      const { readdir } = await import('fs/promises');
 
-      try {
-        const { readdir } = await import('fs/promises');
-        const entries = await readdir(skillsDir, { withFileTypes: true });
+      for (const dir of dirs) {
+        try {
+          const entries = await readdir(dir, { withFileTypes: true });
 
-        for (const entry of entries) {
-          if (entry.isDirectory()) {
-            // Check for skill.md inside directory (case-insensitive)
-            const dirEntries = await readdir(path.join(skillsDir, entry.name));
-            const skillFile = dirEntries.find(f => f.toLowerCase() === 'skill.md');
-            if (skillFile) {
-              const skillPath = path.join(skillsDir, entry.name, skillFile);
-              const file = Bun.file(skillPath);
-              const content = await file.text();
+          for (const entry of entries) {
+            if (entry.isDirectory()) {
+              const dirEntries = await readdir(path.join(dir, entry.name));
+              const skillFile = dirEntries.find(f => f.toLowerCase() === 'skill.md');
+              if (skillFile) {
+                const skillPath = path.join(dir, entry.name, skillFile);
+                const file = Bun.file(skillPath);
+                const content = await file.text();
+                const { metadata } = parseSkillMetadata(content);
+                const skillName = entry.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+                if (!skillMap.has(skillName)) {
+                  skillMap.set(skillName, {
+                    name: entry.name,
+                    path: skillPath,
+                    content,
+                    metadata,
+                  });
+                }
+              }
+            } else if (entry.isFile() && entry.name.endsWith('.md')) {
+              const skillPath = path.join(dir, entry.name);
+              const content = await Bun.file(skillPath).text();
               const { metadata } = parseSkillMetadata(content);
-              skills.push({
-                name: entry.name,
-                path: skillPath,
-                content,
-                metadata,
-              });
+              const skillName = entry.name.replace(/\\.md$/, '').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+              if (!skillMap.has(skillName)) {
+                skillMap.set(skillName, {
+                  name: skillName,
+                  path: skillPath,
+                  content,
+                  metadata,
+                });
+              }
             }
-          } else if (entry.isFile() && entry.name.endsWith('.md')) {
-            // Direct .md file
-            const skillPath = path.join(skillsDir, entry.name);
-            const content = await Bun.file(skillPath).text();
-            const { metadata } = parseSkillMetadata(content);
-            skills.push({
-              name: entry.name.replace(/\.md$/, ''),
-              path: skillPath,
-              content,
-              metadata,
-            });
           }
-        }
-      } catch {
-        // Skills directory doesn't exist yet
+        } catch {}
       }
 
-      return skills;
+      return Array.from(skillMap.values());
     },
 
     async getSkill(name: string): Promise<Skill | null> {
       const { readdir } = await import('fs/promises');
       const normalizedName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
-      // Check for directory-based skill first (case-insensitive skill.md lookup)
-      const skillDirPath = path.join(skillsDir, normalizedName);
-      try {
-        const dirEntries = await readdir(skillDirPath);
-        const skillFile = dirEntries.find(f => f.toLowerCase() === 'skill.md');
-        if (skillFile) {
-          const dirPath = path.join(skillDirPath, skillFile);
-          const content = await Bun.file(dirPath).text();
+      for (const dir of dirs) {
+        // Check for directory-based skill first (case-insensitive skill.md lookup)
+        const skillDirPath = path.join(dir, normalizedName);
+        try {
+          const dirEntries = await readdir(skillDirPath);
+          const skillFile = dirEntries.find(f => f.toLowerCase() === 'skill.md');
+          if (skillFile) {
+            const dirPath = path.join(skillDirPath, skillFile);
+            const content = await Bun.file(dirPath).text();
+            const { metadata } = parseSkillMetadata(content);
+            return {
+              name: normalizedName,
+              path: dirPath,
+              content,
+              metadata,
+            };
+          }
+        } catch {
+          // Directory doesn't exist, continue
+        }
+
+        // Check for file-based skill
+        const filePath = path.join(dir, `${normalizedName}.md`);
+        const file = Bun.file(filePath);
+        if (await file.exists()) {
+          const content = await file.text();
           const { metadata } = parseSkillMetadata(content);
           return {
             name: normalizedName,
-            path: dirPath,
+            path: filePath,
             content,
             metadata,
           };
         }
-      } catch {
-        // Directory doesn't exist, continue to file-based check
-      }
-
-      // Check for file-based skill
-      const filePath = path.join(skillsDir, `${normalizedName}.md`);
-      const file = Bun.file(filePath);
-      if (await file.exists()) {
-        const content = await file.text();
-        const { metadata } = parseSkillMetadata(content);
-        return {
-          name: normalizedName,
-          path: filePath,
-          content,
-          metadata,
-        };
       }
 
       return null;
@@ -335,7 +343,8 @@ export function createSkillManager(_basePath?: string): SkillManager {
         name || metadata?.name?.toLowerCase().replace(/[^a-z0-9-]/g, '-') || extractSkillName(url);
 
       // Create skill directory and write file
-      const skillDir = path.join(skillsDir, skillName);
+      const installDir = dirs[dirs.length - 1];
+      const skillDir = path.join(installDir, skillName);
       await mkdir(skillDir, { recursive: true });
 
       const skillPath = path.join(skillDir, 'skill.md');

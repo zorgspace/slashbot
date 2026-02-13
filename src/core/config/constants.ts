@@ -28,6 +28,11 @@ export const getLocalPromptsDir = (workDir?: string) =>
   path.join(getLocalSlashbotDir(workDir), 'prompts');
 export const getLocalSkillsDir = (workDir?: string) =>
   path.join(getLocalSlashbotDir(workDir), 'skills');
+
+export const getSkillsDirs = (workDir?: string): string[] => [
+  path.join(os.homedir(), '.agents', 'skills'),
+  getLocalSkillsDir(workDir),
+];
 export const getLocalLocksDir = (workDir?: string) =>
   path.join(getLocalSlashbotDir(workDir), 'locks');
 export const getLocalHistoryFile = (workDir?: string) =>
