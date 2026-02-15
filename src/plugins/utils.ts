@@ -1,39 +1,100 @@
 /**
- * Plugin Utilities
+ * Plugin utility functions — shared argument parsing, text processing, and formatting helpers.
+ *
+ * Used across all plugins for consistent input validation and output formatting.
+ *
+ * Argument parsing:
+ *  - `asObject(value)` — Assert value is a plain object (throws on arrays/primitives).
+ *  - `asString(value, name)` — Assert value is a string.
+ *  - `asNonEmptyString(value, name)` — Assert value is a non-empty string.
+ *  - `asStringArray(value, name)` — Assert value is a string[] (defaults to []).
+ *  - `asOptionalStringArray(value, maxItems?)` — Parse optional string[] with max cap.
+ *
+ * Text processing:
+ *  - `splitMessage(text, maxLen)` — Split text into chunks respecting newline boundaries.
+ *  - `stripHtml(html)` — Strip HTML tags, scripts, styles, and decode entities.
+ *  - `slugify(text)` — Convert text to URL-safe slug.
  */
+import type { JsonValue } from '../core/kernel/contracts.js';
 
-import type { ActionContribution } from './types';
-import type { ActionHandlers } from '../core/actions/types';
-
-/**
- * Build a merged ActionHandlers object from plugin action contributions.
- * Each contribution provides handler functions that are merged into a single object.
- */
-export function buildHandlersFromContributions(
-  contributions: ActionContribution[],
-): ActionHandlers {
-  const handlers: ActionHandlers = {};
-
-  for (const contribution of contributions) {
-    // Merge handler functions into the combined handlers object
-    Object.assign(handlers, contribution.handler);
+export function asObject(value: JsonValue): Record<string, JsonValue> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Expected object arguments');
   }
-
-  return handlers;
+  return value as Record<string, JsonValue>;
 }
 
-/**
- * Build an action executor map from plugin contributions.
- * Maps action type -> execute function for dynamic dispatch.
- */
-export function buildExecutorMap(
-  contributions: ActionContribution[],
-): Map<string, ActionContribution['execute']> {
-  const map = new Map<string, ActionContribution['execute']>();
+export function asString(value: unknown, name: string): string {
+  if (typeof value !== 'string') throw new Error(`Expected string for ${name}`);
+  return value;
+}
 
-  for (const contribution of contributions) {
-    map.set(contribution.type, contribution.execute);
+export function asNonEmptyString(value: JsonValue | undefined, name: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Expected string field: ${name}`);
   }
+  return value;
+}
 
-  return map;
+export function asStringArray(value: JsonValue | undefined, name: string): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new Error(`Expected string[] field: ${name}`);
+  }
+  return value as string[];
+}
+
+export function asOptionalStringArray(value: JsonValue | undefined, maxItems = 5): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const normalized = value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter((entry) => entry.length > 0)
+    .slice(0, maxItems);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+export function splitMessage(text: string, maxLen: number): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (trimmed.length <= maxLen) return [trimmed];
+  const parts: string[] = [];
+  let remaining = trimmed;
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      parts.push(remaining);
+      break;
+    }
+    let splitAt = remaining.lastIndexOf('\n', maxLen);
+    if (splitAt <= 0) splitAt = maxLen;
+    parts.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+  return parts.filter((p) => p.length > 0);
+}
+
+export function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
 }

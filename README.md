@@ -1,100 +1,116 @@
 # Slashbot
 
-CLI assistant powered by Grok with a plugin-based runtime, connector support (Telegram/Discord), and a TUI-first workflow.
+Local‑first AI assistant platform with:
+- A small, extensible kernel
+- Deterministic hooks
+- Plugin‑first runtime registration
+- Shared CLI/TUI and gateway surfaces
 
-## Requirements
+Slashbot runs agents locally and lets them plan and execute using tools like `shell.exec`, `fs.read`, `fs.write`, `fs.patch`, `web.fetch`, and `web.search` in a bounded loop (typically until build/tests pass or a goal is reached).
 
-- Bun runtime installed (`https://bun.sh`)
-- At least one provider API key (`xAI`, `Anthropic`, `OpenAI`, or `Google`)
+The main agent is **agent‑first**: it creates a macro plan before acting and executes directly in a single bounded loop.
 
-## Quick Start
+---
 
-1. Install dependencies:
+## Features
 
-```bash
-bun install
-```
+- **Local‑first**: runs on your machine; you control configuration and providers
+- **Plugin‑based runtime**: core kept small, behavior extended via plugins
+- **Deterministic hooks**: predictable execution flow and lifecycle points
+- **Unified surfaces**: same core for CLI, TUI, and gateway/server
+- **Tool‑driven execution**: controlled toolset for safe automation
+- **Agentic planning**: macro‑planning and bounded loops
 
-2. Configure your API key:
+---
 
-```bash
-slashbot login <api_key>
-```
+## Quick start
 
-Or run interactive setup:
-
-```bash
-bun run dev
-# then in slashbot:
-/login
-```
-
-3. Start Slashbot:
+### 1. Install dependencies
 
 ```bash
-bun run dev
+npm install
 ```
 
-## Non-Interactive Mode
-
-Send one message and exit:
+### 2. Build
 
 ```bash
-bun run src/index.ts -m "Summarize docs/ARCHITECTURE.md"
+npm run build
 ```
 
-## Install as a Global Binary
-
-Build and install `/usr/local/bin/slashbot`:
+### 3. Run TUI locally
 
 ```bash
-bun run install-global
+npm run dev
 ```
 
-## Common Commands
+This starts the interactive TUI so you can chat with Slashbot and run agents locally.
 
-- `/login` guided provider + model setup
-- `/logout` clear active API key
-- `/config` show current provider/model and config location
-- `/provider` switch between configured providers
-- `/model` switch model for current provider
-- `/telegram` configure Telegram connector
-- `/discord` configure Discord connector
-- `/automation` manage cron/webhook automation jobs
-- `/help` show full command list
+---
 
-Gateway commands:
+## Development
 
-- `slashbot gateway start --host 127.0.0.1 --port 7788`
-- `slashbot gateway status`
-- `slashbot gateway pair --label my-client`
-- `slashbot gateway stop`
+- **Build**: `npm run build`
+- **Tests**: `npm test`
+- **Watch mode**: `npm run dev`
 
-## Configuration Files
+Slashbot is written in TypeScript and built with a plugin‑first architecture. New connectors, tools, and skills are registered via plugins.
 
-- `~/.slashbot/credentials.json`: shared secrets (API keys, provider creds, connector tokens)
-- `~/.slashbot/config/config.json`: global non-secret defaults
-- `./.slashbot/config/config.json`: project-local non-secret overrides
-- `./.slashbot/plugins.settings.json`: runtime plugin overrides per project
-- `./settings.json`: optional project-level plugin overrides
+---
 
-## Quality Commands
+## Architecture overview
 
-```bash
-bun run typecheck
-bun run lint
-# Optional strict lint pass (current tech debt surface)
-bun run lint:full
-bun run test
-bun run build
-```
+Slashbot is organized around a small kernel and an extensible plugin system:
 
-## Documentation
+- **Kernel**: core agent loop, planning, tool execution, history, and logging
+- **Plugins**: register tools, connectors (Discord, Telegram, etc.), skills, and hooks
+- **Connectors**: bridge external surfaces (CLI/TUI, HTTP gateway, chat apps)
+- **Skills**: higher‑level automations implemented as scripts or workflows
 
-- `docs/start/getting-started.md`
-- `docs/channels/telegram.md`
-- `docs/channels/discord.md`
-- `docs/GATEWAY_AUTOMATION.md`
-- `docs/plugins/README.md`
-- `docs/ARCHITECTURE.md`
-- `docs/ROADMAP.md`
+Execution is driven by deterministic hooks and a bounded agent loop:
+
+1. The agent receives a user request and current context
+2. It creates a macro plan (high‑level steps)
+3. It executes the plan using tools, updating history and state
+4. It stops when the goal is reached or a safety bound is hit
+
+---
+
+## Heartbeat module
+
+The heartbeat module periodically:
+
+- Checks that Slashbot is running correctly
+- Summarizes recent activity in this workspace
+- Sends a short status message to configured connectors (e.g., Telegram)
+
+It uses the shared system prompt so it can:
+
+- Understand how to format summaries
+- Decide when to send messages
+- Trigger basic actions (like tests or health checks) if configured
+
+Configuration is stored in `HEARTBEAT.md` and related plugin settings.
+
+---
+
+## Slashbin
+
+`slashbin` is the local command palette for Slashbot — a directory of small, composable scripts and skills you can trigger from the agent.
+
+- Scripts live under `skills/` and can be installed or created via the **skill‑creator** plugin
+- Each skill exposes a clear, text‑based interface so agents can call it deterministically
+- You keep everything local: code, prompts, and configuration stay on your machine
+
+### Using Slashbin
+
+1. Browse installed skills:
+   - Check the `skills/` folder in this repo
+   - Use the TUI or CLI to ask: *"What skills are available?"*
+2. Run a skill from chat:
+   - In the TUI: describe the task and mention the skill by name if you know it
+   - In connectors (Discord/Telegram): use the usual `/chat` or `/say` entrypoints
+3. Add new skills:
+   - Use the bundled **skill-creator** to scaffold a new skill
+   - Or drop your own script into `skills/` following existing examples
+
+Slashbin is how you turn Slashbot into *your* local toolbox: small, auditable utilities that the agent can orchestrate end‑to‑end.

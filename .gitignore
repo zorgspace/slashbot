@@ -1,8 +1,6 @@
-dist/
-node_modules/
-*.log
-bun.lockb
+node_modules
+dist
 .env
-.slashbot/
-dev.pid
-.agents/
+.slashbot2
+.slashbot
+*.log

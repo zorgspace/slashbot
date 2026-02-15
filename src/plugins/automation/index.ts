@@ -1,225 +1,547 @@
-import type {
-  ActionContribution,
-  Plugin,
-  PluginContext,
-  PluginMetadata,
-  PromptContribution,
-  SidebarContribution,
-  ToolContribution,
-} from '../types';
-import type { CommandHandler } from '../../core/commands/registry';
-import { TYPES } from '../../core/di/types';
-import { registerActionParser } from '../../core/actions/parser';
-import type { AutomationService } from './services/AutomationService';
-import { getAutomationParserConfigs } from './parser';
-import {
-  executeAutomationAddCron,
-  executeAutomationAddWebhook,
-  executeAutomationList,
-  executeAutomationRemove,
-  executeAutomationRun,
-  executeAutomationSetEnabled,
-  executeAutomationStatus,
-} from './executors';
-import { AUTOMATION_PROMPT } from './prompt';
-import { getAutomationToolContributions } from './tools';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { z } from 'zod';
+import type { JsonValue, SlashbotPlugin } from '../../core/kernel/contracts.js';
+import type { EventBus } from '../../core/kernel/event-bus.js';
 
-function buildTargetFromAction(source?: string, targetId?: string): AutomationJobTarget | undefined {
-  const normalizedSource = String(source || '')
-    .trim()
-    .toLowerCase();
-  if (!normalizedSource || normalizedSource === 'none' || normalizedSource === '-') {
-    return undefined;
+const CronTriggerSchema = z.object({
+  type: z.literal('cron'),
+  expression: z.string(),
+}).strict();
+
+const WebhookTriggerSchema = z.object({
+  type: z.literal('webhook'),
+  secret: z.string().optional(),
+}).strict();
+
+const AutomationJobSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  enabled: z.boolean(),
+  prompt: z.string(),
+  trigger: z.discriminatedUnion('type', [CronTriggerSchema, WebhookTriggerSchema]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  lastRunAt: z.string().optional(),
+  lastStatus: z.enum(['ok', 'error']).optional(),
+  lastError: z.string().optional(),
+});
+import { asObject, asString } from '../utils.js';
+
+const PLUGIN_ID = 'slashbot.automation';
+
+// ── Cron parsing ────────────────────────────────────────────────────────
+
+interface CronSchedule {
+  minute: Set<number>;
+  hour: Set<number>;
+  dayOfMonth: Set<number>;
+  month: Set<number>;
+  dayOfWeek: Set<number>;
+}
+
+function parseField(field: string, min: number, max: number): Set<number> {
+  const values = new Set<number>();
+  for (const part of field.split(',')) {
+    if (part === '*') {
+      for (let i = min; i <= max; i++) values.add(i);
+    } else if (part.includes('/')) {
+      const [range, stepStr] = part.split('/');
+      const step = Number(stepStr);
+      const start = range === '*' ? min : Number(range);
+      for (let i = start; i <= max; i += step) values.add(i);
+    } else if (part.includes('-')) {
+      const [lo, hi] = part.split('-').map(Number);
+      for (let i = lo; i <= hi; i++) values.add(i);
+    } else {
+      values.add(Number(part));
+    }
   }
-  const normalizedTargetId = String(targetId || '').trim();
+  return values;
+}
+
+function parseCronExpression(expr: string): CronSchedule {
+  const aliases: Record<string, string> = {
+    '@hourly': '0 * * * *',
+    '@daily': '0 0 * * *',
+    '@weekly': '0 0 * * 0',
+    '@monthly': '0 0 1 * *',
+  };
+  const normalized = aliases[expr.trim()] ?? expr.trim();
+  const parts = normalized.split(/\s+/);
+  if (parts.length !== 5) throw new Error(`Invalid cron: ${expr}`);
   return {
-    source: normalizedSource,
-    targetId: normalizedTargetId && normalizedTargetId !== '-' ? normalizedTargetId : undefined,
+    minute: parseField(parts[0], 0, 59),
+    hour: parseField(parts[1], 0, 23),
+    dayOfMonth: parseField(parts[2], 1, 31),
+    month: parseField(parts[3], 1, 12),
+    dayOfWeek: parseField(parts[4], 0, 6),
   };
 }
 
-type AutomationJobTarget = { source: string; targetId?: string };
+function computeNextCronRun(schedule: CronSchedule, from: Date): Date {
+  const next = new Date(from);
+  next.setSeconds(0, 0);
+  next.setMinutes(next.getMinutes() + 1);
 
-export class AutomationPlugin implements Plugin {
-  readonly metadata: PluginMetadata = {
-    id: 'feature.automation',
-    name: 'Automation',
-    version: '1.0.0',
-    category: 'feature',
-    description: 'Scheduled and webhook-triggered automation jobs',
-    contextInject: true,
-  };
+  const maxIter = 525_600; // ~1 year in minutes
+  for (let i = 0; i < maxIter; i++) {
+    if (
+      schedule.month.has(next.getMonth() + 1) &&
+      schedule.dayOfMonth.has(next.getDate()) &&
+      schedule.dayOfWeek.has(next.getDay()) &&
+      schedule.hour.has(next.getHours()) &&
+      schedule.minute.has(next.getMinutes())
+    ) {
+      return next;
+    }
+    next.setMinutes(next.getMinutes() + 1);
+  }
+  throw new Error('No next cron run found within 1 year');
+}
 
-  private context!: PluginContext;
-  private automationService!: AutomationService;
-  private commands: CommandHandler[] = [];
+// ── Job types ───────────────────────────────────────────────────────────
 
-  async init(context: PluginContext): Promise<void> {
-    this.context = context;
+interface CronTrigger {
+  type: 'cron';
+  expression: string;
+}
 
-    const { createAutomationService } = await import('./services/AutomationService');
-    if (!context.container.isBound(TYPES.AutomationService)) {
-      context.container
-        .bind(TYPES.AutomationService)
-        .toDynamicValue(() => {
-          const eventBus = context.container.get<any>(TYPES.EventBus);
-          const connectorRegistry = context.container.get<any>(TYPES.ConnectorRegistry);
-          return createAutomationService({
-            eventBus,
-            connectorRegistry,
-            workDir: context.workDir,
+interface WebhookTrigger {
+  type: 'webhook';
+  secret?: string;
+}
+
+interface AutomationJob {
+  id: string;
+  name: string;
+  enabled: boolean;
+  prompt: string;
+  trigger: CronTrigger | WebhookTrigger;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt?: string;
+  lastStatus?: 'ok' | 'error';
+  lastError?: string;
+}
+
+// ── AutomationService ───────────────────────────────────────────────────
+
+/**
+ * AutomationService — manages persistent cron and webhook automation jobs.
+ *
+ * Stores jobs in `.slashbot/automation.json`. Cron jobs are scheduled via
+ * setTimeout chains; webhook jobs are triggered by incoming HTTP requests
+ * with optional HMAC-SHA256 signature validation.
+ */
+class AutomationService {
+  private jobs: AutomationJob[] = [];
+  private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly filePath: string;
+  private readonly runningJobs = new Set<string>();
+
+  constructor(
+    private readonly workspaceRoot: string,
+    private readonly events: EventBus | undefined,
+    private readonly runTool?: (toolId: string, args: JsonValue, ctx: Record<string, unknown>) => Promise<{ ok: boolean; output?: JsonValue }>,
+  ) {
+    this.filePath = join(workspaceRoot, '.slashbot', 'automation.json');
+  }
+
+  async load(): Promise<void> {
+    try {
+      const data = await fs.readFile(this.filePath, 'utf8');
+      const result = z.array(AutomationJobSchema).safeParse(JSON.parse(data));
+      this.jobs = result.success ? (result.data as AutomationJob[]) : [];
+    } catch {
+      this.jobs = [];
+    }
+  }
+
+  private async save(): Promise<void> {
+    await fs.mkdir(join(this.workspaceRoot, '.slashbot'), { recursive: true });
+    await fs.writeFile(this.filePath, JSON.stringify(this.jobs, null, 2), 'utf8');
+  }
+
+  list(): AutomationJob[] {
+    return [...this.jobs];
+  }
+
+  async addCronJob(name: string, expression: string, prompt: string): Promise<AutomationJob> {
+    parseCronExpression(expression); // validate
+    const job: AutomationJob = {
+      id: randomUUID(),
+      name,
+      enabled: true,
+      prompt,
+      trigger: { type: 'cron', expression },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.jobs.push(job);
+    await this.save();
+    this.scheduleCron(job);
+    return job;
+  }
+
+  async addWebhookJob(name: string, prompt: string, secret?: string): Promise<AutomationJob> {
+    const job: AutomationJob = {
+      id: randomUUID(),
+      name,
+      enabled: true,
+      prompt,
+      trigger: { type: 'webhook', secret },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.jobs.push(job);
+    await this.save();
+    return job;
+  }
+
+  async removeJob(idOrName: string): Promise<boolean> {
+    const idx = this.jobs.findIndex((j) => j.id === idOrName || j.name === idOrName);
+    if (idx === -1) return false;
+    const job = this.jobs[idx];
+    this.clearTimer(job.id);
+    this.jobs.splice(idx, 1);
+    await this.save();
+    return true;
+  }
+
+  async setEnabled(idOrName: string, enabled: boolean): Promise<boolean> {
+    const job = this.jobs.find((j) => j.id === idOrName || j.name === idOrName);
+    if (!job) return false;
+    job.enabled = enabled;
+    job.updatedAt = new Date().toISOString();
+    if (enabled && job.trigger.type === 'cron') {
+      this.scheduleCron(job);
+    } else {
+      this.clearTimer(job.id);
+    }
+    await this.save();
+    return true;
+  }
+
+  async runJob(idOrName: string): Promise<{ ok: boolean; result?: string; error?: string }> {
+    const job = this.jobs.find((j) => j.id === idOrName || j.name === idOrName);
+    if (!job) return { ok: false, error: 'Job not found' };
+    if (this.runningJobs.has(job.id)) return { ok: false, error: 'Job already running' };
+
+    this.runningJobs.add(job.id);
+    this.events?.publish('automation:job:started', { jobId: job.id, name: job.name });
+
+    try {
+      // Execute via kernel tool runner if available
+      const runTool = this.runTool;
+
+      if (runTool) {
+        const result = await runTool('shell.exec', { command: 'bash', args: ['-lc', `echo "${job.prompt}"`] }, {});
+        job.lastRunAt = new Date().toISOString();
+        job.lastStatus = result.ok ? 'ok' : 'error';
+        if (!result.ok) job.lastError = String(result.output ?? 'Unknown error');
+      } else {
+        job.lastRunAt = new Date().toISOString();
+        job.lastStatus = 'ok';
+      }
+
+      await this.save();
+      this.events?.publish('automation:job:completed', { jobId: job.id, name: job.name });
+      return { ok: true, result: `Job ${job.name} executed` };
+    } catch (err) {
+      job.lastRunAt = new Date().toISOString();
+      job.lastStatus = 'error';
+      job.lastError = String(err);
+      await this.save();
+      this.events?.publish('automation:job:error', { jobId: job.id, error: String(err) });
+      return { ok: false, error: String(err) };
+    } finally {
+      this.runningJobs.delete(job.id);
+    }
+  }
+
+  async handleWebhook(name: string, headers: Record<string, string>, body: string): Promise<{ ok: boolean; error?: string }> {
+    const job = this.jobs.find((j) => j.name === name && j.trigger.type === 'webhook');
+    if (!job || !job.enabled) return { ok: false, error: 'Webhook job not found or disabled' };
+
+    const trigger = job.trigger as WebhookTrigger;
+    if (trigger.secret) {
+      const signature = headers['x-slashbot-signature'] ?? headers['x-signature'] ?? headers['x-hub-signature-256'] ?? '';
+      const expected = `sha256=${createHmac('sha256', trigger.secret).update(body).digest('hex')}`;
+      try {
+        if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+          return { ok: false, error: 'Invalid webhook signature' };
+        }
+      } catch {
+        return { ok: false, error: 'Invalid webhook signature' };
+      }
+    }
+
+    this.events?.publish('automation:webhook:received', { jobId: job.id, name: job.name });
+    return this.runJob(job.id);
+  }
+
+  resumeTimers(): void {
+    for (const job of this.jobs) {
+      if (job.enabled && job.trigger.type === 'cron') {
+        this.scheduleCron(job);
+      }
+    }
+  }
+
+  stopAll(): void {
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer);
+    }
+    this.timers.clear();
+  }
+
+  private scheduleCron(job: AutomationJob): void {
+    if (job.trigger.type !== 'cron') return;
+    this.clearTimer(job.id);
+    try {
+      const schedule = parseCronExpression(job.trigger.expression);
+      const nextRun = computeNextCronRun(schedule, new Date());
+      const delay = nextRun.getTime() - Date.now();
+      this.timers.set(
+        job.id,
+        setTimeout(() => {
+          void this.runJob(job.id).then(() => {
+            if (job.enabled) this.scheduleCron(job);
           });
-        })
-        .inSingletonScope();
+        }, Math.max(delay, 1000)),
+      );
+    } catch {
+      // Invalid cron, skip
     }
+  }
 
-    this.automationService = context.container.get<AutomationService>(TYPES.AutomationService);
-    this.automationService.setGrokClientResolver(
-      context.getGrokClient ? () => context.getGrokClient?.() as any : null,
-    );
-    await this.automationService.init();
-    this.automationService.start();
-
-    for (const config of getAutomationParserConfigs()) {
-      registerActionParser(config);
+  private clearTimer(jobId: string): void {
+    const timer = this.timers.get(jobId);
+    if (timer) {
+      clearTimeout(timer);
+      this.timers.delete(jobId);
     }
-
-    const { automationCommands } = await import('./commands');
-    this.commands = automationCommands;
-  }
-
-  async onAfterGrokInit(context: PluginContext): Promise<void> {
-    this.automationService?.setGrokClientResolver(
-      context.getGrokClient ? () => context.getGrokClient?.() as any : null,
-    );
-  }
-
-  async destroy(): Promise<void> {
-    this.automationService?.stop();
-  }
-
-  getActionContributions(): ActionContribution[] {
-    const service = this.automationService;
-
-    return [
-      {
-        type: 'automation-status',
-        tagName: 'automation-status',
-        handler: {
-          onAutomationStatus: async () => service.getSummary(),
-        },
-        execute: (action, handlers) => executeAutomationStatus(action as any, handlers),
-      },
-      {
-        type: 'automation-list',
-        tagName: 'automation-list',
-        handler: {
-          onAutomationList: async () => service.listJobs(),
-        },
-        execute: (action, handlers) => executeAutomationList(action as any, handlers),
-      },
-      {
-        type: 'automation-add-cron',
-        tagName: 'automation-add-cron',
-        handler: {
-          onAutomationAddCron: async (input: {
-            name: string;
-            expression: string;
-            prompt: string;
-            source?: string;
-            targetId?: string;
-          }) =>
-            await service.createCronJob({
-              name: input.name,
-              expression: input.expression,
-              prompt: input.prompt,
-              target: buildTargetFromAction(input.source, input.targetId),
-            }),
-        },
-        execute: (action, handlers) => executeAutomationAddCron(action as any, handlers),
-      },
-      {
-        type: 'automation-add-webhook',
-        tagName: 'automation-add-webhook',
-        handler: {
-          onAutomationAddWebhook: async (input: {
-            name: string;
-            webhookName: string;
-            prompt: string;
-            secret?: string;
-            source?: string;
-            targetId?: string;
-          }) =>
-            await service.createWebhookJob({
-              name: input.name,
-              webhookName: input.webhookName,
-              prompt: input.prompt,
-              secret: input.secret,
-              target: buildTargetFromAction(input.source, input.targetId),
-            }),
-        },
-        execute: (action, handlers) => executeAutomationAddWebhook(action as any, handlers),
-      },
-      {
-        type: 'automation-run',
-        tagName: 'automation-run',
-        handler: {
-          onAutomationRun: async (selector: string) => await service.runNow(selector),
-        },
-        execute: (action, handlers) => executeAutomationRun(action as any, handlers),
-      },
-      {
-        type: 'automation-remove',
-        tagName: 'automation-remove',
-        handler: {
-          onAutomationRemove: async (selector: string) => await service.removeJob(selector),
-        },
-        execute: (action, handlers) => executeAutomationRemove(action as any, handlers),
-      },
-      {
-        type: 'automation-set-enabled',
-        tagName: 'automation-set-enabled',
-        handler: {
-          onAutomationSetEnabled: async (selector: string, enabled: boolean) =>
-            await service.setJobEnabled(selector, enabled),
-        },
-        execute: (action, handlers) => executeAutomationSetEnabled(action as any, handlers),
-      },
-    ];
-  }
-
-  getPromptContributions(): PromptContribution[] {
-    return [
-      {
-        id: 'feature.automation.tools',
-        title: 'Automation Tools',
-        priority: 112,
-        content: AUTOMATION_PROMPT,
-      },
-    ];
-  }
-
-  getCommandContributions(): CommandHandler[] {
-    return this.commands;
-  }
-
-  getSidebarContributions(): SidebarContribution[] {
-    return [
-      {
-        id: 'automation.jobs',
-        label: 'Automation',
-        order: 95,
-        getStatus: () => {
-          const summary = this.automationService?.getSummary();
-          return !!summary && summary.enabled > 0;
-        },
-      },
-    ];
-  }
-
-  getToolContributions(): ToolContribution[] {
-    return getAutomationToolContributions();
   }
 }
 
-export type { AutomationService } from './services/AutomationService';
+// ── Plugin factory ──────────────────────────────────────────────────────
+
+/**
+ * Automation plugin — cron scheduler and webhook triggers for automated tasks.
+ *
+ * Manages persistent automation jobs that execute on cron schedules or
+ * incoming webhook requests. Supports HMAC-SHA256 signature validation for webhooks.
+ *
+ * Dependencies: providers.auth
+ *
+ * Tools:
+ *  - `automation.list`        — List all automation jobs (cron + webhook).
+ *  - `automation.add_cron`    — Add a cron-triggered job (supports @hourly/@daily/@weekly/@monthly aliases).
+ *  - `automation.add_webhook` — Add a webhook-triggered job (optional HMAC secret).
+ *  - `automation.run`         — Run a job immediately by ID or name.
+ *  - `automation.remove`      — Remove a job by ID or name.
+ *  - `automation.enable`      — Enable or disable a job.
+ *
+ * HTTP routes:
+ *  - `POST /automation/webhook/:name` — Webhook trigger endpoint (validates X-Slashbot-Signature).
+ *
+ * Services:
+ *  - `automation.service` — AutomationService instance for programmatic job management.
+ *
+ * Hooks:
+ *  - `automation.startup`  — Load persisted jobs from automation.json and resume cron timers.
+ *  - `automation.shutdown` — Stop all running cron timers.
+ */
+export function createAutomationPlugin(): SlashbotPlugin {
+  let service: AutomationService;
+
+  return {
+    manifest: {
+      id: PLUGIN_ID,
+      name: 'Slashbot Automation',
+      version: '0.1.0',
+      main: 'bundled',
+      description: 'Cron scheduler and webhook triggers for automated tasks',
+      dependencies: ['slashbot.providers.auth'],
+    },
+    setup: (context) => {
+      const workspaceRoot = context.getService<string>('kernel.workspaceRoot') ?? process.cwd();
+      const events = context.getService<EventBus>('kernel.events');
+      const runTool = context.getService<(toolId: string, args: JsonValue, ctx: Record<string, unknown>) => Promise<{ ok: boolean; output?: JsonValue }>>('kernel.runTool');
+      service = new AutomationService(workspaceRoot, events, runTool);
+
+      context.registerService({
+        id: 'automation.service',
+        pluginId: PLUGIN_ID,
+        description: 'Automation cron/webhook job service',
+        implementation: service,
+      });
+
+      context.registerTool({
+        id: 'automation.list',
+        title: 'List',
+        pluginId: PLUGIN_ID,
+        description: 'List all automation jobs. Args: {}',
+        execute: async () => {
+          const jobs = service.list();
+          return { ok: true, output: jobs as unknown as JsonValue };
+        },
+      });
+
+      context.registerTool({
+        id: 'automation.add_cron',
+        title: 'Cron',
+        pluginId: PLUGIN_ID,
+        description: 'Add a cron automation job. Args: { name: string, expression: string, prompt: string }',
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const name = asString(input.name, 'name');
+            const expression = asString(input.expression, 'expression');
+            const prompt = asString(input.prompt, 'prompt');
+            const job = await service.addCronJob(name, expression, prompt);
+            return { ok: true, output: job as unknown as JsonValue };
+          } catch (err) {
+            return { ok: false, error: { code: 'AUTOMATION_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'automation.add_webhook',
+        title: 'Webhook',
+        pluginId: PLUGIN_ID,
+        description: 'Add a webhook automation job. Args: { name: string, prompt: string, secret?: string }',
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const name = asString(input.name, 'name');
+            const prompt = asString(input.prompt, 'prompt');
+            const secret = typeof input.secret === 'string' ? input.secret : undefined;
+            const job = await service.addWebhookJob(name, prompt, secret);
+            return { ok: true, output: job as unknown as JsonValue };
+          } catch (err) {
+            return { ok: false, error: { code: 'AUTOMATION_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'automation.run',
+        title: 'Run',
+        pluginId: PLUGIN_ID,
+        description: 'Run an automation job immediately. Args: { id: string }',
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const id = asString(input.id, 'id');
+            const result = await service.runJob(id);
+            return result.ok
+              ? { ok: true, output: result.result ?? 'done' }
+              : { ok: false, error: { code: 'RUN_ERROR', message: result.error ?? 'unknown' } };
+          } catch (err) {
+            return { ok: false, error: { code: 'RUN_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'automation.remove',
+        title: 'Remove',
+        pluginId: PLUGIN_ID,
+        description: 'Remove an automation job. Args: { id: string }',
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const id = asString(input.id, 'id');
+            const removed = await service.removeJob(id);
+            return removed
+              ? { ok: true, output: 'removed' }
+              : { ok: false, error: { code: 'NOT_FOUND', message: 'Job not found' } };
+          } catch (err) {
+            return { ok: false, error: { code: 'REMOVE_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'automation.enable',
+        title: 'Toggle',
+        pluginId: PLUGIN_ID,
+        description: 'Enable or disable an automation job. Args: { id: string, enabled: boolean }',
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const id = asString(input.id, 'id');
+            const enabled = input.enabled === true;
+            const updated = await service.setEnabled(id, enabled);
+            return updated
+              ? { ok: true, output: `Job ${enabled ? 'enabled' : 'disabled'}` }
+              : { ok: false, error: { code: 'NOT_FOUND', message: 'Job not found' } };
+          } catch (err) {
+            return { ok: false, error: { code: 'ENABLE_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerHttpRoute({
+        method: 'POST',
+        path: '/automation/webhook/:name',
+        pluginId: PLUGIN_ID,
+        description: 'Webhook trigger endpoint for automation jobs',
+        handler: async (req, res) => {
+          const urlParts = (req.url ?? '').split('/');
+          const name = urlParts[urlParts.length - 1] ?? '';
+
+          let body = '';
+          for await (const chunk of req) {
+            body += String(chunk);
+          }
+
+          const headers: Record<string, string> = {};
+          for (const [key, value] of Object.entries(req.headers)) {
+            if (typeof value === 'string') headers[key] = value;
+          }
+
+          const result = await service.handleWebhook(name, headers, body);
+
+          res.statusCode = result.ok ? 200 : 400;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify(result));
+        },
+      });
+
+      // Startup hook: load jobs and resume timers
+      context.registerHook({
+        id: 'automation.startup',
+        pluginId: PLUGIN_ID,
+        domain: 'kernel',
+        event: 'startup',
+        priority: 50,
+        handler: async () => {
+          await service.load();
+          service.resumeTimers();
+          context.logger.info('Automation service started', { jobs: service.list().length });
+        },
+      });
+
+      // Shutdown hook: stop all timers
+      context.registerHook({
+        id: 'automation.shutdown',
+        pluginId: PLUGIN_ID,
+        domain: 'kernel',
+        event: 'shutdown',
+        priority: 50,
+        handler: () => {
+          service.stopAll();
+          context.logger.info('Automation service stopped');
+        },
+      });
+    },
+  };
+}
+
+export { createAutomationPlugin as createPlugin };

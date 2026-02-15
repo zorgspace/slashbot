@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Slashbot WebSocket Monitor</title>
+  <style>
+    :root {
+      --bg-1: #07111e;
+      --bg-2: #0a1e32;
+      --bg-3: #102b3b;
+      --panel: #0f1d2ce8;
+      --panel-strong: #12263adf;
+      --text: #e9f4ff;
+      --muted: #9ab1c9;
+      --accent: #45d4ff;
+      --accent-2: #ffd86b;
+      --ok: #56d59a;
+      --warn: #ffc568;
+      --err: #ff788b;
+      --thinking: #9fd2ff;
+      --border: #2a4764;
+      --mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: "Space Grotesk", "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(1200px 700px at 12% 4%, #174b77aa 0%, transparent 55%),
+        radial-gradient(1100px 600px at 88% 0%, #2d6f614d 0%, transparent 58%),
+        linear-gradient(150deg, var(--bg-1) 0%, var(--bg-2) 45%, var(--bg-3) 100%);
+      overflow: hidden;
+    }
+    .wrap {
+      width: 100vw;
+      height: 100vh;
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      grid-template-rows: auto 1fr;
+    }
+    .card {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, var(--panel), var(--panel-strong));
+      border-radius: 16px;
+      box-shadow: inset 0 1px 0 #ffffff1c, 0 20px 40px #030b16b5;
+      backdrop-filter: blur(8px);
+    }
+    .toolbar {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .title {
+      margin: 0;
+      font-size: 19px;
+      letter-spacing: 0.02em;
+    }
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+    .head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    input, button {
+      border: 1px solid var(--border);
+      color: var(--text);
+      font: inherit;
+      border-radius: 10px;
+      padding: 9px 12px;
+    }
+    input {
+      min-width: 320px;
+      flex: 1 1 440px;
+      background: #0b1626;
+    }
+    button {
+      cursor: pointer;
+      background: linear-gradient(180deg, #143857, #102a43);
+    }
+    button:hover { filter: brightness(1.12); }
+    .pill {
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #0b1626;
+    }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .err { color: var(--err); }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 8px;
+    }
+    .metric {
+      border: 1px solid #2d4966;
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #0b1626ad;
+      font-size: 12px;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+    .metric strong {
+      display: block;
+      margin-top: 4px;
+      color: var(--text);
+      font-size: 17px;
+    }
+    .log-card {
+      overflow: hidden;
+      padding: 8px;
+    }
+    .log {
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      border: 1px solid #2f4b67;
+      border-radius: 12px;
+      background:
+        linear-gradient(180deg, #071425f2, #061120f2),
+        repeating-linear-gradient(
+          0deg,
+          transparent 0,
+          transparent 25px,
+          #89b9ff08 26px
+        );
+      padding: 8px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.46;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .row {
+      padding: 7px 9px;
+      border-bottom: 1px dashed #385a7e4d;
+      border-left: 3px solid #2b4f78;
+      background: #0a1727b5;
+      margin-bottom: 6px;
+      border-radius: 8px;
+    }
+    .row:last-child { margin-bottom: 0; }
+    .meta { color: var(--muted); }
+    .thinking { border-left-color: var(--thinking); }
+    .json {
+      margin-top: 4px;
+      color: #d5e8ff;
+    }
+    @media (max-width: 860px) {
+      .wrap { padding: 10px; gap: 10px; }
+      .metrics { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+      input { min-width: 240px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card toolbar">
+      <div>
+        <h1 class="title">Slashbot WebSocket Monitor</h1>
+        <p class="subtitle">Realtime lifecycle, hook, tool, and thinking stream</p>
+      </div>
+
+      <div class="head">
+        <input id="url" placeholder="ws://127.0.0.1:7680/?token=change-me" />
+        <button id="connect">Connect</button>
+        <button id="disconnect">Disconnect</button>
+        <button id="clear">Clear</button>
+        <label class="pill"><input id="autoscroll" type="checkbox" checked /> auto-scroll</label>
+        <span id="status" class="pill warn">disconnected</span>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">Total events<strong id="total">0</strong></div>
+        <div class="metric">Thinking<strong id="thinking">0</strong></div>
+        <div class="metric">Lifecycle msgs<strong id="lifecycle">0</strong></div>
+        <div class="metric">Reconnects<strong id="retries">0</strong></div>
+      </div>
+    </div>
+
+    <div class="card log-card">
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const els = {
+      url: $("url"),
+      connect: $("connect"),
+      disconnect: $("disconnect"),
+      clear: $("clear"),
+      autoscroll: $("autoscroll"),
+      status: $("status"),
+      log: $("log"),
+      total: $("total"),
+      thinking: $("thinking"),
+      lifecycle: $("lifecycle"),
+      retries: $("retries"),
+    };
+
+    const saved = localStorage.getItem("slashbot_ws_url");
+    els.url.value = saved || "ws://127.0.0.1:7680/?token=change-me";
+
+    let ws = null;
+    let reconnectTimer = null;
+    let reconnectAttempt = 0;
+    let manualDisconnect = false;
+
+    const RECONNECT_BASE_MS = 800;
+    const RECONNECT_MAX_MS = 15000;
+    const counters = { total: 0, thinking: 0, lifecycle: 0, retries: 0 };
+
+    function setStatus(text, cls) {
+      els.status.textContent = text;
+      els.status.className = "pill " + cls;
+    }
+
+    function updateCounters() {
+      els.total.textContent = String(counters.total);
+      els.thinking.textContent = String(counters.thinking);
+      els.lifecycle.textContent = String(counters.lifecycle);
+      els.retries.textContent = String(counters.retries);
+    }
+
+    function appendRow(title, data, kind = "") {
+      const row = document.createElement("div");
+      row.className = "row " + kind;
+
+      const stamp = new Date().toISOString();
+      const head = document.createElement("div");
+      head.className = "meta";
+      head.textContent = `[${stamp}] ${title}`;
+      row.appendChild(head);
+
+      const body = document.createElement("div");
+      body.className = "json";
+      body.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+      row.appendChild(body);
+
+      els.log.appendChild(row);
+      if (els.autoscroll.checked) {
+        els.log.scrollTop = els.log.scrollHeight;
+      }
+    }
+
+    function classifyEventEnvelope(envelope) {
+      if (!envelope || envelope.type !== "event") return;
+      const eventType = envelope.event?.type || "";
+      const payload = envelope.event?.payload || {};
+      const msg = String(payload.message || "");
+
+      counters.total += 1;
+      if (eventType.startsWith("lifecycle:message_")) {
+        counters.lifecycle += 1;
+      }
+      if (/thinking/i.test(msg) || eventType.includes("llm")) {
+        counters.thinking += 1;
+      }
+      updateCounters();
+    }
+
+    function clearReconnectTimer() {
+      if (!reconnectTimer) return;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    function scheduleReconnect() {
+      if (manualDisconnect) return;
+      clearReconnectTimer();
+
+      const delay = Math.min(RECONNECT_BASE_MS * (2 ** reconnectAttempt), RECONNECT_MAX_MS);
+      setStatus(`reconnecting in ${Math.ceil(delay / 1000)}s...`, "warn");
+      appendRow("ws.reconnect_scheduled", { attempt: reconnectAttempt + 1, delayMs: delay });
+
+      reconnectTimer = setTimeout(() => {
+        reconnectAttempt += 1;
+        counters.retries += 1;
+        updateCounters();
+        connect();
+      }, delay);
+    }
+
+    function connect() {
+      const url = els.url.value.trim();
+      if (!url) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+      manualDisconnect = false;
+      clearReconnectTimer();
+      localStorage.setItem("slashbot_ws_url", url);
+      setStatus(reconnectAttempt > 0 ? `reconnecting #${reconnectAttempt}...` : "connecting...", "warn");
+
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        reconnectAttempt = 0;
+        setStatus("connected", "ok");
+        appendRow("ws.open", { url });
+        ws.send(JSON.stringify({ type: "subscribe" }));
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const parsed = JSON.parse(ev.data);
+          classifyEventEnvelope(parsed);
+          const eventType = parsed?.event?.type || parsed?.type || "message";
+          const payload = parsed?.event?.payload ?? parsed;
+          const kind = /thinking/i.test(JSON.stringify(payload)) ? "thinking" : "";
+          appendRow(eventType, payload, kind);
+        } catch {
+          appendRow("ws.raw", String(ev.data));
+        }
+      };
+
+      ws.onerror = () => {
+        appendRow("ws.error", "websocket error");
+      };
+
+      ws.onclose = (ev) => {
+        ws = null;
+        appendRow("ws.close", { code: ev.code, reason: ev.reason || "n/a" });
+        if (manualDisconnect) {
+          setStatus("disconnected (manual)", "warn");
+          return;
+        }
+        setStatus("disconnected", "warn");
+        scheduleReconnect();
+      };
+    }
+
+    function disconnect() {
+      manualDisconnect = true;
+      reconnectAttempt = 0;
+      clearReconnectTimer();
+      if (!ws) {
+        setStatus("disconnected (manual)", "warn");
+        return;
+      }
+      ws.close(1000, "client disconnect");
+      ws = null;
+    }
+
+    els.connect.addEventListener("click", () => {
+      reconnectAttempt = 0;
+      connect();
+    });
+    els.disconnect.addEventListener("click", disconnect);
+    els.clear.addEventListener("click", () => {
+      els.log.innerHTML = "";
+      counters.total = 0;
+      counters.thinking = 0;
+      counters.lifecycle = 0;
+      counters.retries = 0;
+      updateCounters();
+    });
+
+    updateCounters();
+    connect();
+  </script>
+</body>
+</html>

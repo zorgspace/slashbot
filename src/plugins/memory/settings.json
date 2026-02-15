@@ -1,5 +1,0 @@
-{
-  "module": "./index.ts",
-  "exportName": "MemoryPlugin",
-  "enabled": true
-}
