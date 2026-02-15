@@ -1,0 +1,45 @@
+export type {
+  AgentMessage,
+  AgentTextPart,
+  AgentImagePart,
+  AgentMessagePart,
+  AgentMessageContent,
+  LlmCompletionInput,
+  StreamingCallback,
+  LlmAdapter,
+  TokenModeProxyResolution,
+  TokenModeProxyAuthService,
+  TokenModeProxyResolver,
+  CompletionConfig,
+  CompletionExecution,
+  RunCompletionDeps,
+} from './types.js';
+
+export type {
+  AgentToolAction,
+  AgentLoopCallbacks,
+  AgentLoopResult,
+} from '../agent-loop.js';
+
+export { KernelLlmAdapter } from './adapter.js';
+
+export {
+  registerProvider,
+  getProviderFactory,
+  getProviderConfig,
+  registerBuiltinProviders,
+} from './provider-registry.js';
+
+export {
+  contentToText,
+  estimateTokens,
+  estimateMessageTokens,
+} from './helpers.js';
+
+export type { ContextPipelineConfig, ContextPipelineResult } from '../context/types.js';
+export {
+  defaultPipelineConfig,
+  prepareContext,
+  withOverflowRecovery,
+  truncateToolResult,
+} from '../context/index.js';

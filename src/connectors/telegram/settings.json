@@ -1,5 +1,0 @@
-{
-  "module": "./plugin.ts",
-  "exportName": "TelegramPlugin",
-  "enabled": true
-}

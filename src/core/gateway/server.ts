@@ -1,511 +1,315 @@
-import type { ServerWebSocket } from 'bun';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { WebSocketServer, type WebSocket } from 'ws';
+import { z } from 'zod';
+import type {
+  GatewayRequest,
+  GatewayResponse,
+  GatewayCallContext,
+  HealthStatus,
+  JsonValue,
+  RuntimeConfig,
+  StructuredLogger
+} from '../kernel/contracts.js';
+import { GatewayMethodRegistry, HttpRouteRegistry } from '../kernel/registries.js';
 
-import type { EventBus } from '../events/EventBus';
-import type { GatewayAuthClient, GatewayAuthManager } from './auth';
-import type { GatewayClientMessage, GatewayServerMessage, GatewayWebhookPayload } from './protocol';
+const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ])
+);
 
-type WsData = {
-  authenticated: boolean;
-  client?: GatewayAuthClient;
-  token?: string;
-};
+const GatewayRequestSchema = z.object({
+  method: z.string().min(1),
+  params: JsonValueSchema,
+  requestId: z.string().optional(),
+});
 
-export interface GatewayServerHandlers {
-  processMessage: (options: {
-    message: string;
-    sessionId: string;
-    clientId: string;
-    onChunk?: (chunk: string) => void;
-  }) => Promise<{ response: string; sessionId: string }>;
-  listSessions: () => Array<{
-    id: string;
-    messageCount: number;
-    lastActivity: number;
-    preview: string;
-  }>;
-  getStatus: () => {
-    connected: boolean;
-    model?: string;
-    provider?: string;
-    connectors: Array<{ id: string; configured: boolean; running: boolean }>;
-  };
-  handleWebhook?: (payload: GatewayWebhookPayload) => Promise<{ matchedJobs: number }>;
+interface SlashbotGatewayOptions {
+  config: RuntimeConfig;
+  methods: GatewayMethodRegistry;
+  routes: HttpRouteRegistry;
+  logger: StructuredLogger;
+  healthProvider: () => HealthStatus;
 }
 
-export interface GatewayServerOptions {
-  host: string;
-  port: number;
-  version: string;
-  auth: GatewayAuthManager;
-  eventBus: EventBus;
-  handlers: GatewayServerHandlers;
+function parseAuthorizationToken(req: IncomingMessage): string | undefined {
+  const auth = req.headers.authorization;
+  if (auth) {
+    if (!auth.startsWith('Bearer ')) {
+      return undefined;
+    }
+
+    return auth.replace('Bearer ', '').trim();
+  }
+
+  if (!req.url) return undefined;
+  const host = req.headers.host ?? '127.0.0.1';
+  const url = new URL(req.url, `http://${host}`);
+  const token = url.searchParams.get('token');
+  return token?.trim() || undefined;
 }
 
-function asJson(message: GatewayServerMessage): string {
-  return JSON.stringify(message);
+interface WsClientState {
+  subscribed: boolean;
+  authorized: boolean;
 }
 
-function sanitizeHeaderMap(headers: Headers): Record<string, string> {
-  const map: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    map[key.toLowerCase()] = value;
-  });
-  return map;
+interface WsSubscribeMessage {
+  type: 'subscribe';
 }
 
-function readTextMessage(raw: string | Buffer | ArrayBuffer | Uint8Array): string {
-  if (typeof raw === 'string') return raw;
-  if (raw instanceof Uint8Array) return Buffer.from(raw).toString('utf8');
-  if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString('utf8');
-  return Buffer.from(raw).toString('utf8');
+function isSubscribeMessage(value: unknown): value is WsSubscribeMessage {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.type === 'subscribe';
 }
 
-function normalizeCommandPayload(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+function json(res: ServerResponse, statusCode: number, payload: unknown): void {
+  res.statusCode = statusCode;
+  res.setHeader('content-type', 'application/json');
+  res.end(`${JSON.stringify(payload)}\n`);
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(chunk as Buffer);
+  }
+
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (!raw) {
     return {};
   }
-  return value as Record<string, unknown>;
-}
 
-function extractWebhookName(pathname: string): string | null {
-  const m = pathname.match(/^\/webhooks\/([^/]+)$/i);
-  if (!m) return null;
-  return decodeURIComponent(m[1]).trim() || null;
-}
-
-export class GatewayServer {
-  private readonly options: GatewayServerOptions;
-  private server: ReturnType<typeof Bun.serve<WsData>> | null = null;
-  private unsubscribeEventBus: (() => void) | null = null;
-  private readonly sockets = new Set<ServerWebSocket<WsData>>();
-
-  constructor(options: GatewayServerOptions) {
-    this.options = options;
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Request body must be a JSON object');
   }
 
-  get port(): number {
-    return this.server?.port || this.options.port;
+  return parsed as Record<string, unknown>;
+}
+
+export class SlashbotGateway {
+  private readonly server;
+  private readonly ws;
+  private readonly wsClients = new Map<WebSocket, WsClientState>();
+
+  constructor(private readonly options: SlashbotGatewayOptions) {
+    this.server = createServer((req, res) => this.handleHttp(req, res));
+    this.ws = new WebSocketServer({ noServer: true });
+
+    this.server.on('upgrade', (req, socket, head) => {
+      this.ws.handleUpgrade(req, socket, head, (webSocket) => {
+        this.ws.emit('connection', webSocket, req);
+      });
+    });
+
+    this.ws.on('connection', (socket, req) => {
+      const token = parseAuthorizationToken(req) ?? '';
+      this.wsClients.set(socket, {
+        subscribed: false,
+        authorized: token === this.options.config.gateway.authToken
+      });
+      socket.on('close', () => {
+        this.wsClients.delete(socket);
+      });
+      socket.on('message', async (message) => {
+        try {
+          const parsed = JSON.parse(String(message)) as unknown;
+          if (isSubscribeMessage(parsed)) {
+            const state = this.wsClients.get(socket);
+            if (state) {
+              state.subscribed = true;
+            }
+            socket.send(JSON.stringify({
+              type: 'subscribed',
+              ok: true,
+              at: new Date().toISOString()
+            }));
+            return;
+          }
+
+          const state = this.wsClients.get(socket);
+          if (!state?.authorized) {
+            socket.send(JSON.stringify({
+              type: 'rpc_error',
+              ok: false,
+              error: 'Unauthorized RPC call: provide gateway token',
+              at: new Date().toISOString()
+            }));
+            return;
+          }
+
+          const validated = GatewayRequestSchema.parse(parsed);
+          const request: GatewayRequest = {
+            method: validated.method,
+            params: (validated.params as JsonValue) ?? null,
+            requestId: validated.requestId ?? randomUUID(),
+          };
+          const response = await this.executeRpc(request, token);
+          socket.send(JSON.stringify(response));
+        } catch (error) {
+          socket.send(JSON.stringify({
+            type: 'rpc_error',
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            at: new Date().toISOString()
+          }));
+        }
+      });
+    });
   }
 
   async start(): Promise<void> {
-    if (this.server) {
-      return;
-    }
-
-    this.server = Bun.serve<WsData>({
-      hostname: this.options.host,
-      port: this.options.port,
-      fetch: async (request, server) => {
-        const url = new URL(request.url);
-        if (url.pathname === '/ws') {
-          const upgraded = server.upgrade(request, {
-            data: {
-              authenticated: false,
-            },
-          });
-          if (upgraded) {
-            return undefined;
-          }
-          return new Response('Upgrade failed', { status: 400 });
-        }
-
-        if (url.pathname === '/health') {
-          return Response.json({
-            ok: true,
-            host: this.options.host,
-            port: this.port,
-            now: new Date().toISOString(),
-          });
-        }
-
-        const webhookName = extractWebhookName(url.pathname);
-        if (webhookName && request.method.toUpperCase() === 'POST') {
-          const rawBody = await request.text();
-          let body: unknown = rawBody;
-          const contentType = request.headers.get('content-type') || '';
-          if (contentType.includes('application/json')) {
-            try {
-              body = rawBody ? JSON.parse(rawBody) : {};
-            } catch {
-              body = rawBody;
-            }
-          }
-          const payload: GatewayWebhookPayload = {
-            name: webhookName,
-            headers: sanitizeHeaderMap(request.headers),
-            rawBody,
-            body,
-            receivedAt: new Date().toISOString(),
-            sourceIp: request.headers.get('x-forwarded-for') || undefined,
-          };
-          let matchedJobs = 0;
-          if (this.options.handlers.handleWebhook) {
-            try {
-              const result = await this.options.handlers.handleWebhook(payload);
-              matchedJobs = Number(result?.matchedJobs || 0);
-            } catch {
-              matchedJobs = 0;
-            }
-          }
-          return Response.json(
-            {
-              accepted: true,
-              webhook: webhookName,
-              matchedJobs,
-            },
-            { status: 202 },
-          );
-        }
-
-        return new Response('Not found', { status: 404 });
-      },
-      websocket: {
-        open: ws => {
-          this.sockets.add(ws);
-          ws.send(
-            asJson({
-              type: 'hello',
-              version: this.options.version,
-              authRequired: true,
-              serverTime: new Date().toISOString(),
-            }),
-          );
-        },
-        close: ws => {
-          this.sockets.delete(ws);
-        },
-        message: async (ws, raw) => {
-          const text = readTextMessage(raw);
-          let parsed: GatewayClientMessage | null = null;
-          try {
-            parsed = JSON.parse(text) as GatewayClientMessage;
-          } catch {
-            ws.send(
-              asJson({
-                type: 'error',
-                message: 'Invalid JSON payload',
-              }),
-            );
-            return;
-          }
-
-          if (!parsed || typeof parsed !== 'object' || !('type' in parsed)) {
-            ws.send(
-              asJson({
-                type: 'error',
-                message: 'Invalid message shape',
-              }),
-            );
-            return;
-          }
-
-          if (parsed.type === 'ping') {
-            ws.send(
-              asJson({
-                type: 'pong',
-                ts: Date.now(),
-              }),
-            );
-            return;
-          }
-
-          if (!ws.data.authenticated) {
-            await this.handleUnauthenticatedMessage(ws, parsed);
-            return;
-          }
-
-          await this.handleAuthenticatedMessage(ws, parsed);
-        },
-      },
+    await new Promise<void>((resolve) => {
+      this.server.listen(this.options.config.gateway.port, this.options.config.gateway.host, () => resolve());
     });
 
-    this.unsubscribeEventBus = this.options.eventBus.onAny(event => {
-      const message = asJson({
-        type: 'event',
-        name: event.type,
-        payload: event,
-        ts: new Date().toISOString(),
-      });
-      for (const ws of this.sockets) {
-        if (!ws.data.authenticated) continue;
-        try {
-          ws.send(message);
-        } catch {
-          // Ignore send errors on stale sockets.
-        }
-      }
+    this.options.logger.info('Gateway started', {
+      host: this.options.config.gateway.host,
+      port: this.options.config.gateway.port
     });
-  }
-
-  private async handleUnauthenticatedMessage(
-    ws: ServerWebSocket<WsData>,
-    parsed: GatewayClientMessage,
-  ): Promise<void> {
-    if (parsed.type === 'authenticate') {
-      const client = await this.options.auth.authenticate(parsed.token);
-      if (!client) {
-        ws.send(
-          asJson({
-            type: 'auth_error',
-            message: 'Invalid token',
-          }),
-        );
-        return;
-      }
-      ws.data.authenticated = true;
-      ws.data.client = client;
-      ws.data.token = parsed.token;
-      ws.send(
-        asJson({
-          type: 'auth_ok',
-          clientId: client.id,
-          label: client.label,
-          tokenIssuedAt: client.tokenIssuedAt,
-        }),
-      );
-      return;
-    }
-
-    if (parsed.type === 'pair') {
-      const consumed = await this.options.auth.consumePairingCode(parsed.code, parsed.label);
-      if (!consumed) {
-        ws.send(
-          asJson({
-            type: 'auth_error',
-            message: 'Invalid or expired pairing code',
-          }),
-        );
-        return;
-      }
-      ws.data.authenticated = true;
-      ws.data.client = consumed.client;
-      ws.data.token = consumed.token;
-      ws.send(
-        asJson({
-          type: 'pairing_code',
-          code: consumed.token,
-          expiresAt: '',
-        }),
-      );
-      ws.send(
-        asJson({
-          type: 'auth_ok',
-          clientId: consumed.client.id,
-          label: consumed.client.label,
-          tokenIssuedAt: consumed.client.tokenIssuedAt,
-        }),
-      );
-      return;
-    }
-
-    ws.send(
-      asJson({
-        type: 'auth_error',
-        message: 'Authenticate first',
-      }),
-    );
-  }
-
-  private async handleAuthenticatedMessage(
-    ws: ServerWebSocket<WsData>,
-    parsed: GatewayClientMessage,
-  ): Promise<void> {
-    if (parsed.type !== 'command') {
-      ws.send(
-        asJson({
-          type: 'error',
-          message: 'Expected command message',
-        }),
-      );
-      return;
-    }
-
-    const commandId = String(parsed.id || '').trim();
-    if (!commandId) {
-      ws.send(
-        asJson({
-          type: 'error',
-          message: 'Command id is required',
-        }),
-      );
-      return;
-    }
-
-    ws.send(
-      asJson({
-        type: 'command_ack',
-        id: commandId,
-      }),
-    );
-
-    const payload = normalizeCommandPayload(parsed.payload);
-
-    if (parsed.name === 'ping') {
-      ws.send(
-        asJson({
-          type: 'command_result',
-          id: commandId,
-          ok: true,
-          result: { pong: Date.now() },
-        }),
-      );
-      return;
-    }
-
-    if (parsed.name === 'status.get') {
-      const status = this.options.handlers.getStatus();
-      ws.send(
-        asJson({
-          type: 'command_result',
-          id: commandId,
-          ok: true,
-          result: status,
-        }),
-      );
-      return;
-    }
-
-    if (parsed.name === 'sessions.list') {
-      const sessions = this.options.handlers.listSessions();
-      ws.send(
-        asJson({
-          type: 'command_result',
-          id: commandId,
-          ok: true,
-          result: sessions,
-        }),
-      );
-      return;
-    }
-
-    if (parsed.name === 'auth.rotate') {
-      const currentToken = ws.data.token || '';
-      const rotated = await this.options.auth.rotateToken(currentToken);
-      if (!rotated) {
-        ws.send(
-          asJson({
-            type: 'command_result',
-            id: commandId,
-            ok: false,
-            error: 'Unable to rotate token',
-          }),
-        );
-        return;
-      }
-      ws.data.client = rotated.client;
-      ws.data.token = rotated.token;
-      ws.send(
-        asJson({
-          type: 'command_result',
-          id: commandId,
-          ok: true,
-          result: {
-            token: rotated.token,
-            clientId: rotated.client.id,
-            label: rotated.client.label,
-          },
-        }),
-      );
-      return;
-    }
-
-    if (parsed.name !== 'message.send') {
-      ws.send(
-        asJson({
-          type: 'command_result',
-          id: commandId,
-          ok: false,
-          error: `Unsupported command: ${parsed.name}`,
-        }),
-      );
-      return;
-    }
-
-    const message = String(payload.message || '').trim();
-    if (!message) {
-      ws.send(
-        asJson({
-          type: 'command_result',
-          id: commandId,
-          ok: false,
-          error: 'payload.message is required',
-        }),
-      );
-      return;
-    }
-
-    const clientId = ws.data.client?.id || 'gateway-client';
-    const sessionId =
-      String(payload.sessionId || '').trim() || `gateway:${clientId.replace(/\s+/g, '-')}`;
-
-    ws.send(
-      asJson({
-        type: 'command_event',
-        id: commandId,
-        event: 'started',
-      }),
-    );
-
-    try {
-      const outcome = await this.options.handlers.processMessage({
-        message,
-        sessionId,
-        clientId,
-        onChunk: chunk => {
-          if (!chunk) return;
-          ws.send(
-            asJson({
-              type: 'command_event',
-              id: commandId,
-              event: 'chunk',
-              data: { chunk },
-            }),
-          );
-        },
-      });
-      ws.send(
-        asJson({
-          type: 'command_event',
-          id: commandId,
-          event: 'completed',
-          data: { sessionId: outcome.sessionId },
-        }),
-      );
-      ws.send(
-        asJson({
-          type: 'command_result',
-          id: commandId,
-          ok: true,
-          result: {
-            sessionId: outcome.sessionId,
-            response: outcome.response,
-          },
-        }),
-      );
-    } catch (error) {
-      ws.send(
-        asJson({
-          type: 'command_result',
-          id: commandId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    }
   }
 
   async stop(): Promise<void> {
-    this.unsubscribeEventBus?.();
-    this.unsubscribeEventBus = null;
-    for (const ws of this.sockets) {
+    await new Promise<void>((resolve, reject) => {
+      this.server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+
+    this.ws.close();
+    this.wsClients.clear();
+    this.options.logger.info('Gateway stopped');
+  }
+
+  publishEvent(eventType: string, payload: Record<string, JsonValue>): void {
+    if (this.wsClients.size === 0) return;
+    const message = JSON.stringify({
+      type: 'event',
+      event: {
+        type: eventType,
+        payload,
+        at: new Date().toISOString()
+      }
+    });
+
+    for (const [socket, state] of this.wsClients.entries()) {
+      if (!state.subscribed || socket.readyState !== 1) continue;
       try {
-        ws.close();
+        socket.send(message);
       } catch {
-        // Ignore close errors.
+        // best effort
       }
     }
-    this.sockets.clear();
-    this.server?.stop(true);
-    this.server = null;
+  }
+
+  private isAuthorized(req: IncomingMessage): boolean {
+    const token = parseAuthorizationToken(req);
+    return token === this.options.config.gateway.authToken;
+  }
+
+  private async executeRpc(input: GatewayRequest, authToken: string): Promise<GatewayResponse> {
+    try {
+      const method = this.options.methods.get(input.method);
+      if (!method) {
+        return {
+          requestId: input.requestId,
+          ok: false,
+          error: {
+            code: 'METHOD_NOT_FOUND',
+            message: `Gateway method not found: ${input.method}`
+          }
+        };
+      }
+
+      const context: GatewayCallContext = {
+        authToken,
+        requestId: input.requestId,
+        sessionId: undefined,
+        agentId: undefined
+      };
+
+      const result = await method.handler(input.params, context);
+      return {
+        requestId: input.requestId,
+        ok: true,
+        result
+      };
+    } catch (error) {
+      return {
+        requestId: input.requestId,
+        ok: false,
+        error: {
+          code: 'RPC_ERROR',
+          message: error instanceof Error ? error.message : String(error)
+        }
+      };
+    }
+  }
+
+  private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!req.url || !req.method) {
+      json(res, 404, { error: 'Not found' });
+      return;
+    }
+
+    if (req.url === '/health') {
+      json(res, 200, this.options.healthProvider());
+      return;
+    }
+
+    if (!this.isAuthorized(req)) {
+      json(res, 401, { error: 'Unauthorized' });
+      return;
+    }
+
+    if (req.url === '/rpc' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const validated = GatewayRequestSchema.parse(body);
+      const response = await this.executeRpc(
+        {
+          method: validated.method,
+          params: (validated.params as JsonValue) ?? null,
+          requestId: validated.requestId ?? randomUUID(),
+        },
+        parseAuthorizationToken(req) ?? ''
+      );
+      json(res, response.ok ? 200 : 400, response);
+      return;
+    }
+
+    const route = this.options.routes
+      .list()
+      .find((item) => item.method === req.method && item.path === req.url);
+
+    if (!route) {
+      json(res, 404, { error: 'Not found' });
+      return;
+    }
+
+    try {
+      const context: GatewayCallContext = {
+        authToken: parseAuthorizationToken(req) ?? '',
+        requestId: randomUUID(),
+        agentId: undefined,
+        sessionId: undefined
+      };
+      await route.handler(req, res, context);
+    } catch (error) {
+      json(res, 500, {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }

@@ -1,95 +1,150 @@
+import type { JsonValue, SlashbotPlugin } from '../../core/kernel/contracts.js';
+import { MemoryStore } from '../services/memory-store.js';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+import { z } from 'zod';
+import { asObject, asString } from '../utils.js';
+
+const PLUGIN_ID = 'slashbot.memory';
+
 /**
- * Memory Plugin - Structured memory retrieval tools
+ * Memory plugin — persistent markdown-based memory across sessions.
+ *
+ * Tools:
+ *  - `memory.search` — Full-text search across memory files.
+ *  - `memory.get`    — Read a specific memory file (with optional line range).
+ *  - `memory.upsert` — Store a fact, decision, or preference for future sessions.
+ *  - `memory.stats`  — Get memory store statistics (file count, total size).
+ *
+ * Services:
+ *  - `memory.store` — MemoryStore instance for programmatic access.
+ *
+ * Context provider:
+ *  - `memory.context` — Injects MEMORY.md content into the system prompt.
  */
+export function createMemoryPlugin(): SlashbotPlugin {
+  return {
+    manifest: {
+      id: PLUGIN_ID,
+      name: 'Slashbot Memory',
+      version: '0.1.0',
+      main: 'bundled',
+      description: 'Persistent markdown-based memory with search, read, and write',
+    },
+    setup: (context) => {
+      const workspaceRoot = context.getService<string>('kernel.workspaceRoot') ?? process.cwd();
+      const store = new MemoryStore(workspaceRoot);
 
-import type {
-  Plugin,
-  PluginMetadata,
-  PluginContext,
-  ActionContribution,
-  PromptContribution,
-  ToolContribution,
-} from '../types';
-import {
-  executeMemoryGet,
-  executeMemorySearch,
-  executeMemoryStats,
-  executeMemoryUpsert,
-} from './executors';
-import { getMemoryToolContributions } from './tools';
-import { MEMORY_PROMPT } from './prompt';
-import { MemoryStore } from './services/MemoryStore';
+      context.registerService({
+        id: 'memory.store',
+        pluginId: PLUGIN_ID,
+        description: 'Markdown-based memory store',
+        implementation: store,
+      });
 
-export class MemoryPlugin implements Plugin {
-  readonly metadata: PluginMetadata = {
-    id: 'feature.memory',
-    name: 'Memory',
-    version: '1.0.0',
-    category: 'feature',
-    description: 'Structured memory search/get tools over MEMORY.md and memory/*.md',
+      context.registerTool({
+        id: 'memory.search',
+        title: 'Search',
+        pluginId: PLUGIN_ID,
+        description: 'Search memory for past decisions, project context, or user preferences. Use when user references something from a past session. Args: { query: string, limit?: number }',
+        parameters: z.object({
+          query: z.string().describe('Search query'),
+          limit: z.number().optional().describe('Max results (default 10)'),
+        }),
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const query = asString(input.query, 'query');
+            const limit = typeof input.limit === 'number' ? input.limit : 10;
+            const hits = await store.search(query, limit);
+            return { ok: true, output: hits as unknown as JsonValue };
+          } catch (err) {
+            return { ok: false, error: { code: 'MEMORY_SEARCH_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'memory.get',
+        title: 'Recall',
+        pluginId: PLUGIN_ID,
+        description: 'Read a memory file. Args: { path: string, startLine?: number, endLine?: number }',
+        parameters: z.object({
+          path: z.string().describe('Memory file path'),
+          startLine: z.number().optional().describe('Start line number'),
+          endLine: z.number().optional().describe('End line number'),
+        }),
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const path = asString(input.path, 'path');
+            const startLine = typeof input.startLine === 'number' ? input.startLine : undefined;
+            const endLine = typeof input.endLine === 'number' ? input.endLine : undefined;
+            const content = await store.get(path, startLine, endLine);
+            return { ok: true, output: content };
+          } catch (err) {
+            return { ok: false, error: { code: 'MEMORY_GET_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'memory.upsert',
+        title: 'Remember',
+        pluginId: PLUGIN_ID,
+        description: 'Store a fact, decision, or preference for future sessions. Use when user says "remember X" or after discovering important project info. Args: { text: string, tags?: string[], file?: string }',
+        parameters: z.object({
+          text: z.string().describe('Content to remember'),
+          tags: z.array(z.string()).optional().describe('Tags for categorization'),
+          file: z.string().optional().describe('Target memory file'),
+        }),
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const text = asString(input.text, 'text');
+            const tags = Array.isArray(input.tags) ? (input.tags as string[]) : undefined;
+            const file = typeof input.file === 'string' ? input.file : undefined;
+            const result = await store.upsert({ text, tags, file });
+            return { ok: true, output: result as unknown as JsonValue };
+          } catch (err) {
+            return { ok: false, error: { code: 'MEMORY_UPSERT_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'memory.stats',
+        title: 'Stats',
+        pluginId: PLUGIN_ID,
+        description: 'Get memory store statistics. Args: {}',
+        parameters: z.object({}),
+        execute: async () => {
+          try {
+            const stats = await store.stats();
+            return { ok: true, output: stats as unknown as JsonValue };
+          } catch (err) {
+            return { ok: false, error: { code: 'MEMORY_STATS_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.contributeContextProvider({
+        id: 'memory.context',
+        pluginId: PLUGIN_ID,
+        priority: 20,
+        provide: async () => {
+          try {
+            const memPath = join(workspaceRoot, '.slashbot', 'MEMORY.md');
+            const content = await fs.readFile(memPath, 'utf8');
+            if (content.trim().length === 0) return '';
+            return `## Memory (MEMORY.md)\n${content.trim()}`;
+          } catch {
+            return '';
+          }
+        },
+      });
+    },
   };
-
-  private context!: PluginContext;
-
-  async init(context: PluginContext): Promise<void> {
-    this.context = context;
-  }
-
-  getActionContributions(): ActionContribution[] {
-    const workDir = this.context.workDir || process.cwd();
-    const memoryStore = new MemoryStore(workDir);
-
-    return [
-      {
-        type: 'memory-search',
-        tagName: 'memory-search',
-        handler: {
-          onMemorySearch: async (query: string, limit: number) =>
-            await memoryStore.search(query, limit),
-        },
-        execute: (action, handlers) => executeMemorySearch(action as any, handlers),
-      },
-      {
-        type: 'memory-get',
-        tagName: 'memory-get',
-        handler: {
-          onMemoryGet: async (relPath: string, startLine?: number, endLine?: number) =>
-            await memoryStore.get(relPath, startLine, endLine),
-        },
-        execute: (action, handlers) => executeMemoryGet(action as any, handlers),
-      },
-      {
-        type: 'memory-upsert',
-        tagName: 'memory-upsert',
-        handler: {
-          onMemoryUpsert: async (input: { text: string; tags?: string[]; file?: string }) =>
-            await memoryStore.upsert(input),
-        },
-        execute: (action, handlers) => executeMemoryUpsert(action as any, handlers),
-      },
-      {
-        type: 'memory-stats',
-        tagName: 'memory-stats',
-        handler: {
-          onMemoryStats: async () => await memoryStore.stats(),
-        },
-        execute: (action, handlers) => executeMemoryStats(action as any, handlers),
-      },
-    ];
-  }
-
-  getPromptContributions(): PromptContribution[] {
-    return [
-      {
-        id: 'feature.memory.tools',
-        title: 'Memory Tools',
-        priority: 115,
-        content: MEMORY_PROMPT,
-      },
-    ];
-  }
-
-  getToolContributions(): ToolContribution[] {
-    return getMemoryToolContributions();
-  }
 }
+
+export { createMemoryPlugin as createPlugin };
