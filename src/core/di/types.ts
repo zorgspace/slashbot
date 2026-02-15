@@ -27,6 +27,7 @@ export const TYPES = {
   // Plugin-registered services
   ProcessManager: Symbol.for('ProcessManager'),
   ImageBuffer: Symbol.for('ImageBuffer'),
+  NodeRedManager: Symbol.for('NodeRedManager'),
 
   // Plugin system
   PluginRegistry: Symbol.for('PluginRegistry'),

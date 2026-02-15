@@ -56,6 +56,7 @@ const COMPILED_FALLBACK_PLUGINS: readonly FallbackPluginSpec[] = [
   { load: () => import('./heartbeat'), exportName: 'HeartbeatPlugin' },
   { load: () => import('./mcp'), exportName: 'MCPPlugin' },
   { load: () => import('./memory'), exportName: 'MemoryPlugin' },
+  { load: () => import('./nodered'), exportName: 'NodeRedPlugin' },
   { load: () => import('./planning'), exportName: 'PlanningPlugin' },
   { load: () => import('./providers'), exportName: 'ProvidersPlugin' },
   { load: () => import('./question'), exportName: 'QuestionPlugin' },
