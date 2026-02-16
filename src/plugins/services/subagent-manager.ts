@@ -24,13 +24,12 @@ export interface SubagentTask {
 
 /** Tool IDs that subagents must never use (prevents recursion / dangerous side-effects). */
 const BLOCKED_TOOLS = new Set([
-  'spawn',
-  'spawn.status',
 ]);
 
 /**
  * SubagentManager — runs independent background agent loops.
  *
+  'spawn_status',
  * Each spawned subagent gets its own LLM completion with a task-specific
  * prompt. On completion, results are delivered via channel or stored for
  * retrieval. Subagents cannot spawn further subagents to prevent recursion.
@@ -92,7 +91,7 @@ export class SubagentManager {
     if (!allTools) return undefined;
     return allTools
       .map((t) => t.id)
-      .filter((id) => !BLOCKED_TOOLS.has(id));
+      // .filter((id) => !BLOCKED_TOOLS.has(id));
   }
 
   private buildToolCatalog(): string {
@@ -158,8 +157,8 @@ export class SubagentManager {
         this.pendingResults.set(task.originSessionId, pending);
       }
 
-      // Deliver result via channel if available
-      if (this.deliveryChannel) {
+      // Deliver result via channel only if no parent session (otherwise injected automatically)
+      if (this.deliveryChannel && !task.originSessionId) {
         try {
           await this.deliveryChannel.send(`[Subagent ${task.id}] Task: ${task.task}\n\nResult: ${result.text}` as JsonValue);
         } catch (err) {

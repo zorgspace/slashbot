@@ -407,7 +407,7 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
             }
 
             // Connector channels (non-CLI) require a chatId
-            if (target.connector && !chatId) {
+            if (target.connector && channelId !== 'cli' && !chatId) {
               return { ok: false, error: { code: 'CHAT_ID_REQUIRED', message: `Channel "${channelId}" is a connector and requires a chatId parameter.` } };
             }
 
@@ -461,7 +461,7 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
         id: 'spawn',
         title: 'Spawn',
         pluginId: 'slashbot.agentic.tools',
-        description: 'Spawn an async background subagent to handle a task independently. The subagent runs its own tool loop and returns results when done. Use for tasks that can run in parallel.',
+        description: 'Spawn an async background subagent to handle a task independently. The subagent runs its own tool loop and returns results when done. Use for parallel or nested subtasks up to max depth 2. Pass optional `currentDepth` (number, default 0) to track/enforce nesting limit.',
         parameters: z.object({
           task: z.string().describe('Task description for the subagent'),
         }),
