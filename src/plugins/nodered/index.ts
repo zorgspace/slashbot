@@ -132,6 +132,9 @@ export function createNodeRedPlugin(): SlashbotPlugin {
         description: 'Start the Node-RED instance. Args: {}',
         parameters: z.object({}),
         execute: async () => {
+          if (manager.getState() === 'disabled') {
+            await manager.init();
+          }
           const result = await manager.start();
           if (result.success) {
             return { ok: true, output: result.message ?? 'Node-RED is starting' };
@@ -163,6 +166,9 @@ export function createNodeRedPlugin(): SlashbotPlugin {
         description: 'Restart the Node-RED instance (stop then start). Args: {}',
         parameters: z.object({}),
         execute: async () => {
+          if (manager.getState() === 'disabled') {
+            await manager.init();
+          }
           await manager.restart();
           return { ok: true, output: 'Node-RED restarting' };
         },
