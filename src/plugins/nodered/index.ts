@@ -6,8 +6,10 @@
  * and commands (start, stop, restart, status, config).
  */
 
+import { z } from 'zod';
 import type {
   IndicatorStatus,
+  JsonValue,
   PathResolver,
   SlashbotPlugin,
   StructuredLogger,
@@ -98,6 +100,114 @@ export function createNodeRedPlugin(): SlashbotPlugin {
         getInitialStatus: () => STATE_TO_INDICATOR[manager.getState()] ?? 'off',
       });
       manager.setIndicatorUpdater(updateIndicatorStatus);
+
+      // ── Tools ─────────────────────────────────────────────────────────
+
+      context.registerTool({
+        id: 'nodered.status',
+        title: 'Status',
+        pluginId: PLUGIN_ID,
+        description: 'Get Node-RED runtime status (state, pid, port, uptime, recent logs). Args: {}',
+        parameters: z.object({}),
+        execute: async () => {
+          const status = manager.getStatus(20);
+          return {
+            ok: true,
+            output: {
+              state: status.state,
+              pid: status.pid,
+              port: status.port,
+              uptime: status.uptime !== null ? formatUptime(status.uptime) : null,
+              restartCount: status.restartCount,
+              recentLogs: status.recentLogs,
+            } as unknown as JsonValue,
+          };
+        },
+      });
+
+      context.registerTool({
+        id: 'nodered.start',
+        title: 'Start',
+        pluginId: PLUGIN_ID,
+        description: 'Start the Node-RED instance. Args: {}',
+        parameters: z.object({}),
+        execute: async () => {
+          const result = await manager.start();
+          if (result.success) {
+            return { ok: true, output: result.message ?? 'Node-RED is starting' };
+          }
+          return { ok: false, error: { code: 'START_ERROR', message: result.error ?? 'Failed to start' } };
+        },
+      });
+
+      context.registerTool({
+        id: 'nodered.stop',
+        title: 'Stop',
+        pluginId: PLUGIN_ID,
+        description: 'Stop the Node-RED instance. Args: {}',
+        parameters: z.object({}),
+        execute: async () => {
+          const state = manager.getState();
+          if (state === 'stopped' || state === 'disabled') {
+            return { ok: true, output: 'Node-RED is not running' };
+          }
+          await manager.stop();
+          return { ok: true, output: 'Node-RED stopped' };
+        },
+      });
+
+      context.registerTool({
+        id: 'nodered.restart',
+        title: 'Restart',
+        pluginId: PLUGIN_ID,
+        description: 'Restart the Node-RED instance (stop then start). Args: {}',
+        parameters: z.object({}),
+        execute: async () => {
+          await manager.restart();
+          return { ok: true, output: 'Node-RED restarting' };
+        },
+      });
+
+      context.registerTool({
+        id: 'nodered.config',
+        title: 'Config',
+        pluginId: PLUGIN_ID,
+        description: 'View or update Node-RED configuration. Args: { port?: number, healthCheckInterval?: number, shutdownTimeout?: number, maxRestartAttempts?: number }',
+        parameters: z.object({
+          port: z.number().int().positive().optional().describe('HTTP port for Node-RED'),
+          healthCheckInterval: z.number().int().positive().optional().describe('Health check interval in seconds'),
+          shutdownTimeout: z.number().int().positive().optional().describe('Graceful shutdown timeout in seconds'),
+          maxRestartAttempts: z.number().int().nonnegative().optional().describe('Max auto-restart attempts on crash'),
+        }),
+        execute: async (rawArgs) => {
+          const args = rawArgs as Record<string, JsonValue>;
+          const updates: Record<string, number> = {};
+          for (const key of UPDATABLE_CONFIG_KEYS) {
+            if (typeof args[key] === 'number') {
+              updates[key] = args[key] as number;
+            }
+          }
+
+          if (Object.keys(updates).length > 0) {
+            await manager.saveConfig(updates);
+            return { ok: true, output: `Config updated: ${Object.entries(updates).map(([k, v]) => `${k}=${v}`).join(', ')}. Restart Node-RED for changes to take effect.` };
+          }
+
+          const config = manager.getConfig();
+          return {
+            ok: true,
+            output: {
+              enabled: config.enabled,
+              port: config.port,
+              healthCheckInterval: config.healthCheckInterval,
+              shutdownTimeout: config.shutdownTimeout,
+              maxRestartAttempts: config.maxRestartAttempts,
+              localhostOnly: config.localhostOnly,
+              userDir: config.userDir,
+            } as unknown as JsonValue,
+          };
+        },
+      });
 
       // Prompt section
       context.contributePromptSection({
