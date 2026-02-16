@@ -1,7 +1,9 @@
-import type { AgentMessage, LlmAdapter, LlmCompletionInput, StreamingCallback } from '../../core/agentic/llm/index.js';
+import type { AgentMessage, LlmAdapter, LlmCompletionInput, RichMessage, StreamingCallback } from '../../core/agentic/llm/index.js';
+import type { AgentLoopResult } from '../../core/agentic/agent-loop.js';
 import type { ChatHistoryStore } from './chat-history-store.js';
 import { FileChatHistoryStore } from './chat-history-store.js';
 import { contentToText, estimateTokens, mimeTypeFromDataUrl, windowByTokenBudget } from './context-window.js';
+import type { SubagentManager } from './subagent-manager.js';
 
 export interface ConnectorAgentRunInput {
   prompt: string;
@@ -28,6 +30,7 @@ export class ConnectorAgentSession {
     private readonly runAgent?: ConnectorAgentRunner,
     private readonly contextBudget: number = 32000,
     private readonly maxResponseTokens?: number,
+    private readonly getSubagentManager?: () => SubagentManager | undefined,
   ) {
     this.store = typeof storeOrHomeDir === 'string'
       ? new FileChatHistoryStore(storeOrHomeDir)
@@ -47,6 +50,15 @@ export class ConnectorAgentSession {
       : text;
     const sessionId = opts?.sessionId ?? `connector-${chatId}`;
     const agentId = opts?.agentId ?? 'connector-agent';
+
+    // Inject pending subagent results into the user message
+    const pending = this.getSubagentManager?.()?.drainPendingResults(sessionId) ?? [];
+    if (pending.length > 0) {
+      const summary = pending.map(t =>
+        `[Background task "${t.task}" completed: ${t.status === 'done' ? t.result : t.error}]`
+      ).join('\n');
+      text = `${summary}\n\nUser message:\n${text}`;
+    }
 
     // Token-budget windowing: reserve 80% of context budget for history
     const historyBudget = Math.floor(this.contextBudget * 0.8);
@@ -72,26 +84,35 @@ export class ConnectorAgentSession {
       }
     }
 
+    let toolCallCount = 0;
+    let loopResult: AgentLoopResult | undefined;
     if (!response || response.trim().length === 0) {
       const systemPrompt = await this.promptAssembler();
 
+      // Flatten history into the user message (2-message format).
+      // Passing history as separate role-alternating messages causes models
+      // to follow the text-only Q&A pattern from history and skip tool calls.
+      // The 2-message format [system, user] keeps tool calling reliable.
+      const historyContext = historyWindow.length > 0
+        ? `Conversation history:\n${historyWindow}\n\nLatest message:\n`
+        : '';
+
+      const toolReminder = '[Use tools for any factual query — never fabricate output.]\n\n';
+      const userTextWithHistory = `${toolReminder}${historyContext}${text}`;
+
       const currentUserContent: AgentMessage['content'] = attachedImages.length > 0
         ? [
-          { type: 'text', text: `${text}\n\nUse the attached image context in your response.` },
+          { type: 'text', text: `${userTextWithHistory}\n\nUse the attached image context in your response.` },
           ...attachedImages.map((image) => ({
             type: 'image' as const,
             image,
             mimeType: mimeTypeFromDataUrl(image),
           })),
         ]
-        : text;
+        : userTextWithHistory;
 
-      const systemTokens = estimateTokens(systemPrompt);
-      const remainingBudget = Math.max(1000, this.contextBudget - systemTokens);
-      const llmWindowedHistory = windowByTokenBudget(history, Math.floor(remainingBudget * 0.8));
       const messages: AgentMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...llmWindowedHistory,
         { role: 'user', content: currentUserContent },
       ];
 
@@ -115,13 +136,28 @@ export class ConnectorAgentSession {
       } else {
         const result = await this.llm.complete(input);
         response = result.text;
+        toolCallCount = result.toolCalls;
+        loopResult = result;
       }
     }
 
-    await this.store.append(chatId, [
-      { role: 'user', content: historyUserContent },
-      { role: 'assistant', content: response },
-    ]);
+    // Persist rich history (with tool messages) when available
+    if (this.store.appendRich && loopResult?.messages && loopResult.messages.length > 0) {
+      const userMsg: RichMessage = { role: 'user', content: historyUserContent };
+      await this.store.appendRich(chatId, [userMsg, ...loopResult.messages]);
+    } else {
+      // Store tool usage evidence in history so the model sees its own
+      // tool-calling pattern in future conversations and doesn't drift
+      // toward fabricating answers.
+      const historyResponse = toolCallCount > 0
+        ? `[I used ${toolCallCount} tool call(s) to answer this.]\n${response}`
+        : response;
+
+      await this.store.append(chatId, [
+        { role: 'user', content: historyUserContent },
+        { role: 'assistant', content: historyResponse },
+      ]);
+    }
 
     return response;
   }

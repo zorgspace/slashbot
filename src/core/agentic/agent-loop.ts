@@ -6,7 +6,7 @@ import type { SlashbotKernel } from '../kernel/kernel.js';
 function debugLog(msg: string): void {
   try { appendFileSync('/tmp/slashbot-debug.log', `[agent-loop ${new Date().toISOString()}] ${msg}\n`); } catch {}
 }
-import type { LlmCompletionInput, RunCompletionDeps, CompletionExecution } from './llm/types.js';
+import type { LlmCompletionInput, RunCompletionDeps, CompletionExecution, RichMessage } from './llm/types.js';
 import {
   CONTEXT_WINDOW_HARD_MIN_TOKENS,
   CONTEXT_WINDOW_WARN_BELOW_TOKENS,
@@ -44,6 +44,7 @@ export interface AgentLoopCallbacks {
   onThoughts?(text: string, stepIndex: number): void;
   onToolStart?(action: AgentToolAction): void;
   onToolEnd?(action: AgentToolAction): void;
+  onToolUserOutput?(toolId: string, content: string): void;
   onSummary?(summary: string): void;
   onDone?(result: AgentLoopResult): void;
 }
@@ -53,6 +54,49 @@ export interface AgentLoopResult {
   steps: number;
   toolCalls: number;
   finishReason: string;
+  /** Full tool chain from the loop, for rich history persistence. */
+  messages?: RichMessage[];
+}
+
+// ---------------------------------------------------------------------------
+// AI SDK message → RichMessage normalizer
+// ---------------------------------------------------------------------------
+
+function normalizeAiSdkMessage(msg: Record<string, unknown>): RichMessage | null {
+  const role = msg.role as string | undefined;
+
+  if (role === 'assistant') {
+    // Check for tool calls
+    const toolCalls = msg.toolCalls as Array<{ toolCallId?: string; toolName?: string; args?: Record<string, unknown> }> | undefined;
+    if (toolCalls && toolCalls.length > 0) {
+      return {
+        role: 'assistant',
+        content: typeof msg.content === 'string' ? msg.content : '',
+        toolCalls: toolCalls.map((tc) => ({
+          id: tc.toolCallId ?? '',
+          name: tc.toolName ?? '',
+          args: (tc.args ?? {}) as Record<string, unknown>,
+        })),
+      };
+    }
+    return {
+      role: 'assistant',
+      content: typeof msg.content === 'string' ? msg.content : '',
+    };
+  }
+
+  if (role === 'tool') {
+    // AI SDK tool result messages have a toolCallId and content array
+    const toolCallId = (msg.toolCallId as string)
+      ?? (Array.isArray(msg.content) ? (msg.content[0] as Record<string, unknown>)?.toolCallId as string : undefined)
+      ?? '';
+    const content = Array.isArray(msg.content)
+      ? (msg.content as Array<Record<string, unknown>>).map((p) => typeof p.result === 'string' ? p.result : JSON.stringify(p.result ?? '')).join('\n')
+      : typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '');
+    return { role: 'tool', toolCallId, content };
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +176,12 @@ export async function runAgentLoop(
         debugLog(`onToolEnd toolId=${toolId} actionId=${actionId} status=${action.status}`);
         callbacks?.onToolEnd?.(action);
       },
+      onToolUserOutput: (toolId, content) => {
+        callbacks?.onToolUserOutput?.(toolId, content);
+      },
     }, undefined, input.toolAllowlist);
+
+    debugLog(`runAgentLoop: ${Object.keys(tools).length} tools available, noTools=${!!input.noTools}, session=${input.sessionId}`);
 
     // Resolve executions and run generateText with failover
     const executions = await resolveExecutions(input, deps);
@@ -272,11 +321,20 @@ export async function runAgentLoop(
           : responseText.trim();
         callbacks?.onSummary?.(summaryText);
 
+        // Extract rich messages from the loop (everything after initial effectiveMessages)
+        const newMessages = loopMessages.slice(effectiveMessages.length) as Array<Record<string, unknown>>;
+        const richMessages: RichMessage[] = [];
+        for (const raw of newMessages) {
+          const normalized = normalizeAiSdkMessage(raw);
+          if (normalized) richMessages.push(normalized);
+        }
+
         const loopResult: AgentLoopResult = {
           text: responseText,
           steps: stepCount,
           toolCalls: totalToolCalls,
           finishReason: finalFinishReason,
+          messages: richMessages.length > 0 ? richMessages : undefined,
         };
         callbacks?.onDone?.(loopResult);
 
@@ -371,7 +429,7 @@ async function resolveExecutions(
     const baseUrl = proxyProbe.baseUrl?.trim();
     if (!baseUrl) return [];
 
-    const modelId = deps.selectModelForProvider('xai') ?? 'grok-4.1';
+    const modelId = deps.selectModelForProvider('xai') ?? 'grok-4-1';
 
     const proxyFetch = async (request: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const liveProxy = deps.resolveTokenModeProxy();

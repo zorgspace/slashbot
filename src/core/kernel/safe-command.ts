@@ -109,9 +109,16 @@ export async function executeCommandSafely(
 
     child.on('close', (code) => {
       clearTimeout(timeout);
+      const MAX_OUTPUT = 10_000;
+      const truncatedStdout = stdout.length > MAX_OUTPUT
+        ? `${stdout.slice(0, MAX_OUTPUT)}\n... (truncated, ${stdout.length - MAX_OUTPUT} more chars)`
+        : stdout;
+      const truncatedStderr = stderr.length > MAX_OUTPUT
+        ? `${stderr.slice(0, MAX_OUTPUT)}\n... (truncated, ${stderr.length - MAX_OUTPUT} more chars)`
+        : stderr;
       resolve({
         ok: code === 0,
-        output: stdout,
+        output: truncatedStdout,
         error:
           code === 0
             ? undefined
@@ -120,8 +127,8 @@ export async function executeCommandSafely(
                 message: `Command exited with status ${code}`
               },
         metadata: {
-          stdout,
-          stderr,
+          stdout: truncatedStdout,
+          stderr: truncatedStderr,
           code: code ?? -1
         }
       });

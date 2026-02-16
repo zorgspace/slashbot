@@ -125,6 +125,27 @@ export interface ToolResult {
     hint?: string;
   };
   metadata?: Record<string, JsonValue>;
+  /** When set, the LLM sees this instead of `output`. */
+  forLlm?: JsonValue;
+  /** Sent directly to user (e.g. progress updates) without polluting LLM context. */
+  forUser?: JsonValue;
+  /** Suppress all user-facing output for this tool result. */
+  silent?: boolean;
+}
+
+/** Tool result that is silent to the user but sends `forLlm` to the model. */
+export function silentResult(forLlm: JsonValue): ToolResult {
+  return { ok: true, forLlm, silent: true };
+}
+
+/** Tool result that only shows output to the user (LLM sees a minimal ack). */
+export function userResult(content: JsonValue): ToolResult {
+  return { ok: true, forUser: content, forLlm: 'OK' };
+}
+
+/** Tool result with separate payloads for LLM and user. */
+export function dualResult(forLlm: JsonValue, forUser: JsonValue): ToolResult {
+  return { ok: true, forLlm, forUser };
 }
 
 export interface ToolDefinition<TArgs extends JsonValue = JsonValue> {

@@ -117,6 +117,16 @@ export class KernelLlmAdapter implements LlmAdapter {
           ...(action.error ? { error: action.error } : {}),
         });
       },
+      onToolUserOutput: (toolId, content) => {
+        this.kernel.events.publish('connector:agentic', {
+          connector,
+          displayLabel,
+          contextKey,
+          status: 'tool_user_output',
+          toolId,
+          text: content,
+        });
+      },
       onSummary: (summary) => {
         this.kernel.events.publish('connector:agentic', {
           connector,

@@ -127,7 +127,7 @@ export async function runCompletion(
         return fallbackChatResponse();
       }
 
-      const modelId = deps.selectModelForProvider('xai') ?? 'grok-4.1-fast-reasoning';
+      const modelId = deps.selectModelForProvider('xai') ?? 'grok-4-1-fast-reasoning';
       const proxyFetch = async (request: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const requestBody = getRequestBodyText(init?.body);
         const liveProxy = deps.resolveTokenModeProxy();

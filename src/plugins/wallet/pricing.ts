@@ -25,7 +25,7 @@ export const XAI_MODEL_PRICING: ModelPricing[] = [
     outputPricePerMillion: 0.5,
   },
   {
-    model: 'grok-4.1-fast-non-reasoning',
+    model: 'grok-4-1-fast-non-reasoning',
     inputPricePerMillion: 0.2,
     outputPricePerMillion: 0.5,
   },

@@ -17,6 +17,30 @@ export type AgentImagePart = { type: 'image'; image: string; mimeType?: string }
 export type AgentMessagePart = AgentTextPart | AgentImagePart;
 export type AgentMessageContent = string | AgentMessagePart[];
 
+// ---------------------------------------------------------------------------
+// Rich message types (tool chain history)
+// ---------------------------------------------------------------------------
+
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface ToolCallMessage {
+  role: 'assistant';
+  content: AgentMessageContent;
+  toolCalls: ToolCallInfo[];
+}
+
+export interface ToolResultMessage {
+  role: 'tool';
+  toolCallId: string;
+  content: string;
+}
+
+export type RichMessage = AgentMessage | ToolCallMessage | ToolResultMessage;
+
 export interface LlmCompletionInput {
   sessionId: string;
   agentId: string;
