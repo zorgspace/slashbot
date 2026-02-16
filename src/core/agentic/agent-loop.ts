@@ -261,6 +261,7 @@ export async function runAgentLoop(
         // Reasoning models (o3/o4, deepseek-reasoner, grok-*-reasoning, etc.) reject temperature
         const isReasoningModel = /\b(reasoning|reasoner)\b|^o[3-9](-|$)/.test(execution.modelId);
         const maxSteps = input.maxSteps ?? 25;
+      
 
         // Manual tool loop: AI SDK v6 defaults to 1 step (stopWhen: stepCountIs(1)).
         // We loop ourselves so tool results are always fed back to the model.

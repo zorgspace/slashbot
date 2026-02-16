@@ -1,10 +1,10 @@
 import type { Telegraf } from 'telegraf';
-import type { JsonValue, StructuredLogger } from '../../core/kernel/contracts.js';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { TranscriptionProvider } from '../services/transcription-service.js';
-import type { AgentRegistry } from '../agents/index.js';
-import { splitMessage } from '../utils.js';
-import type { TelegramMessageDirection, TelegramMessageModality, TelegramState } from './types.js';
+import type { JsonValue, StructuredLogger } from '../../core/kernel/contracts';
+import type { SlashbotKernel } from '../../core/kernel/kernel';
+import type { TranscriptionProvider } from '../services/transcription-service';
+import type { AgentRegistry } from '../agents/index';
+import { splitMessage } from '../utils';
+import type { TelegramMessageDirection, TelegramMessageModality, TelegramState } from './types';
 import { DEFAULT_AGENT_ID, PRIVATE_AGENTIC_TIMEOUT_MS } from './types.js';
 import { isAuthorized, authorizeChatId } from './config.js';
 import {

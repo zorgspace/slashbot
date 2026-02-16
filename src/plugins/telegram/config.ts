@@ -41,7 +41,7 @@ export async function authorizeChatId(state: TelegramState, chatId: string): Pro
 }
 
 export async function unauthorizeChatId(state: TelegramState, chatId: string): Promise<void> {
-  state.config.authorizedChatIds = state.config.authorizedChatIds.filter((id) => id !== chatId);
+  state.config.authorizedChatIds = state.config.authorizedChatIds.filter((id: string): boolean => id !== chatId);
   for (const [sessionId, mappedChatId] of state.privateChatBySessionId.entries()) {
     if (mappedChatId === chatId) {
       state.privateChatBySessionId.delete(sessionId);

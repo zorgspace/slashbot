@@ -17,6 +17,8 @@ import * as togetherai from './togetherai.js';
 import * as amazonBedrock from './amazon-bedrock.js';
 import * as azure from './azure.js';
 import * as googleVertex from './google-vertex.js';
+import * as ollama from './ollama.js';
+import * as vllm from './vllm.js';
 
 const providerModules = [
   gateway,
@@ -36,6 +38,8 @@ const providerModules = [
   amazonBedrock,
   azure,
   googleVertex,
+  ollama,
+  vllm,
 ] as const;
 
 /** Create all built-in provider definitions. */

@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import type { ConnectorAgentSession } from '../services/connector-agent.js';
+import type { ConnectorAgentSession } from '../services/connector-agent';
 
 // ── Constants ───────────────────────────────────────────────────────
 
 export const PLUGIN_ID = 'slashbot.channel.telegram';
 export const DEFAULT_AGENT_ID = 'default-agent';
-export const PRIVATE_AGENTIC_TIMEOUT_MS = 300_000;
+export const PRIVATE_AGENTIC_TIMEOUT_MS = 180_000;
 export const PRIVATE_AGENTIC_MAX_RESPONSE_TOKENS = 6144;
 
 // ── Zod schema ──────────────────────────────────────────────────────

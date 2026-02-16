@@ -143,6 +143,13 @@ function estimateWrappedRows(text: string, width: number): number {
 
 // ── SpawnRunner (invisible, manages ink-spawn lifecycle) ───────────────
 
+const SPAWN_MAX_OUTPUT = 10_000;
+
+function truncateSpawnOutput(text: string): string {
+  if (text.length <= SPAWN_MAX_OUTPUT) return text;
+  return `${text.slice(0, SPAWN_MAX_OUTPUT)}\n... (truncated, ${text.length - SPAWN_MAX_OUTPUT} more chars)`;
+}
+
 function SpawnRunner({ request, onDone }: { request: SpawnRequest; onDone: () => void }) {
   const stdoutRef = useRef('');
   const stderrRef = useRef('');
@@ -156,18 +163,20 @@ function SpawnRunner({ request, onDone }: { request: SpawnRequest; onDone: () =>
   }, [request, onDone]);
 
   const { spawn } = useSpawn((error) => {
+    const truncOut = truncateSpawnOutput(stdoutRef.current);
+    const truncErr = truncateSpawnOutput(stderrRef.current);
     if (error) {
       resolve({
         ok: false,
-        output: stdoutRef.current,
+        output: truncOut,
         error: { code: 'COMMAND_FAILED', message: `Command exited with code ${error.code ?? 'unknown'}` },
-        metadata: { stdout: stdoutRef.current, stderr: stderrRef.current, code: error.code ?? -1 },
+        metadata: { stdout: truncOut, stderr: truncErr, code: error.code ?? -1 },
       });
     } else {
       resolve({
         ok: true,
-        output: stdoutRef.current,
-        metadata: { stdout: stdoutRef.current, stderr: stderrRef.current, code: 0 },
+        output: truncOut,
+        metadata: { stdout: truncOut, stderr: truncErr, code: 0 },
       });
     }
   });
@@ -216,7 +225,7 @@ function SpawnRunner({ request, onDone }: { request: SpawnRequest; onDone: () =>
       resolve({
         ok: false,
         error: { code: 'COMMAND_TIMEOUT', message: `Timed out after ${request.timeoutMs}ms` },
-        metadata: { stdout: stdoutRef.current, stderr: stderrRef.current },
+        metadata: { stdout: truncateSpawnOutput(stdoutRef.current), stderr: truncateSpawnOutput(stderrRef.current) },
       });
     }, request.timeoutMs);
 
@@ -225,7 +234,7 @@ function SpawnRunner({ request, onDone }: { request: SpawnRequest; onDone: () =>
       resolve({
         ok: false,
         error: { code: 'COMMAND_CANCELLED', message: 'Cancelled by user' },
-        metadata: { stdout: stdoutRef.current, stderr: stderrRef.current },
+        metadata: { stdout: truncateSpawnOutput(stdoutRef.current), stderr: truncateSpawnOutput(stderrRef.current) },
       });
     };
     request.abortSignal?.addEventListener('abort', onAbort, { once: true });

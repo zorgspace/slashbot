@@ -31,6 +31,35 @@ export function createApiKeyAuthHandler(providerId: string, displayName: string)
   };
 }
 
+export function createBaseUrlAuthHandler(
+  providerId: string,
+  displayName: string,
+  defaultBaseUrl: string,
+): ProviderAuthHandler {
+  return {
+    method: 'api_key',
+    start: async (_context: AuthStartContext): Promise<AuthStartResult> => ({
+      method: 'api_key',
+      instructions: `Enter your ${displayName} base URL (default: ${defaultBaseUrl}), or paste an API key if required.`,
+    }),
+    complete: async (context: AuthStartContext, input: AuthCompleteInput): Promise<AuthProfile> => {
+      const value = input.apiKey ?? '';
+      const isUrl = value.startsWith('http://') || value.startsWith('https://');
+      return {
+        profileId: randomUUID(),
+        providerId,
+        label: `${context.profileLabel} (${isUrl ? 'base URL' : 'API key'})`,
+        method: 'api_key',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        data: isUrl
+          ? { baseUrl: value, apiKey: 'ollama' }
+          : { baseUrl: defaultBaseUrl, apiKey: value || 'ollama' },
+      };
+    },
+  };
+}
+
 export function defineProvider(
   id: string,
   displayName: string,
