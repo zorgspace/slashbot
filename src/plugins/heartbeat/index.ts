@@ -128,7 +128,7 @@ class HeartbeatService {
   ) {}
 
   private heartbeatMdPath(): string {
-    return join(this.workspaceRoot, 'HEARTBEAT.md');
+    return join(this.workspaceRoot, '.slashbot', 'HEARTBEAT.md');
   }
 
   private configPath(): string {
@@ -237,15 +237,16 @@ class HeartbeatService {
       const llmResult = await this.llm.complete({
         sessionId: 'heartbeat',
         agentId: 'default-agent',
-        noTools: true,
-        maxTokens: 500,
+        noTools: false,
+        maxTokens: 4096,
         messages: [
           {
             role: 'system',
             content:
-              'You are a heartbeat checker. Review the checklist and report status concisely. ' +
-              'Begin your response with exactly one of: [OK], [ALERT], or [WARNING]. ' +
-              'Keep it brief — one short paragraph max.',
+              'You are a heartbeat agent. You have tools available — use them to carry out ' +
+              'the tasks described in the HEARTBEAT.md checklist. Execute each item, then ' +
+              'report your final status. Begin your final response with exactly one of: ' +
+              '[OK], [ALERT], or [WARNING]. Keep the final summary brief — one short paragraph max.',
           },
           { role: 'user', content: fullPrompt },
         ],
@@ -476,7 +477,7 @@ export function createHeartbeatPlugin(): SlashbotPlugin {
         kind: 'service',
         priority: 50,
         statusEvent: 'heartbeat:status',
-        showActivity: false,
+        showActivity: true,
         connectorName: 'heartbeat',
         getInitialStatus: () => {
           const s = heartbeat.getStatus();
