@@ -265,6 +265,51 @@ export class MemoryStore {
     return { path: fileName, line: lineNumber };
   }
 
+  async appendToday(text: string): Promise<{ path: string }> {
+    const now = new Date();
+    const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const yyyymmdd = `${yyyymm}${String(now.getDate()).padStart(2, '0')}`;
+    const dirPath = join(this.baseDir, 'memory', yyyymm);
+    const filePath = join(dirPath, `${yyyymmdd}.md`);
+    const relPath = join('memory', yyyymm, `${yyyymmdd}.md`);
+
+    await fs.mkdir(dirPath, { recursive: true });
+
+    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const line = `- [${hhmm}] ${text}\n`;
+
+    try {
+      await fs.appendFile(filePath, line, 'utf8');
+    } catch {
+      await fs.writeFile(filePath, `# Daily Notes ${yyyymmdd}\n\n${line}`, 'utf8');
+    }
+
+    this.cache.delete(relPath);
+    return { path: relPath };
+  }
+
+  async getRecentNotes(days = 3): Promise<string> {
+    const results: string[] = [];
+    const now = new Date();
+
+    for (let i = 0; i < days; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const yyyymm = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const yyyymmdd = `${yyyymm}${String(d.getDate()).padStart(2, '0')}`;
+      const filePath = join(this.baseDir, 'memory', yyyymm, `${yyyymmdd}.md`);
+
+      try {
+        const content = await fs.readFile(filePath, 'utf8');
+        results.push(`## ${yyyymmdd}\n${content.trim()}`);
+      } catch {
+        // No notes for this day
+      }
+    }
+
+    return results.join('\n\n');
+  }
+
   async stats(): Promise<MemoryStats> {
     const files = await this.listFiles();
     const chunks = await this.allChunks();

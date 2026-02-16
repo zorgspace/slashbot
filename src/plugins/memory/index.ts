@@ -128,19 +128,50 @@ export function createMemoryPlugin(): SlashbotPlugin {
         },
       });
 
+      context.registerTool({
+        id: 'memory.note',
+        title: 'Note',
+        pluginId: PLUGIN_ID,
+        description: 'Add a quick timestamped daily note. Appends to today\'s daily notes file (YYYYMM/YYYYMMDD.md). Args: { text: string }',
+        parameters: z.object({
+          text: z.string().describe('Note content'),
+        }),
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const text = asString(input.text, 'text');
+            const result = await store.appendToday(text);
+            return { ok: true, output: result as unknown as JsonValue };
+          } catch (err) {
+            return { ok: false, error: { code: 'MEMORY_NOTE_ERROR', message: String(err) } };
+          }
+        },
+      });
+
       context.contributeContextProvider({
         id: 'memory.context',
         pluginId: PLUGIN_ID,
         priority: 20,
         provide: async () => {
+          const parts: string[] = [];
           try {
             const memPath = join(workspaceRoot, '.slashbot', 'MEMORY.md');
             const content = await fs.readFile(memPath, 'utf8');
-            if (content.trim().length === 0) return '';
-            return `## Memory (MEMORY.md)\n${content.trim()}`;
+            if (content.trim().length > 0) {
+              parts.push(`## Memory (MEMORY.md)\n${content.trim()}`);
+            }
           } catch {
-            return '';
+            // No MEMORY.md
           }
+          try {
+            const recentNotes = await store.getRecentNotes(3);
+            if (recentNotes.trim().length > 0) {
+              parts.push(`## Recent Daily Notes\n${recentNotes.trim()}`);
+            }
+          } catch {
+            // No daily notes
+          }
+          return parts.join('\n\n');
         },
       });
     },

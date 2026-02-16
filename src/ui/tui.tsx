@@ -17,6 +17,7 @@ import type { AuthProfileRouter } from '../core/providers/auth-router.js';
 import type { KernelLogger, LogEntry } from '../core/kernel/logger.js';
 import { SpawnBridge, type SpawnRequest } from '../core/kernel/spawn-bridge.js';
 import { ApprovalBridge, type ApprovalRequest } from '../core/kernel/approval-bridge.js';
+import type { SubagentTask } from '../plugins/services/subagent-manager.js';
 import { commandExists } from '../core/kernel/safe-command.js';
 import { SetupWizard } from './setup-wizard.js';
 import { palette, type ChatLine } from './palette.js';
@@ -293,6 +294,7 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
   const [agentState, setAgentState] = useState<AgentLoopDisplayState>(initialAgentState);
   const [connectorAgentState, setConnectorAgentState] = useState<AgentLoopDisplayState>(initialAgentState);
   const [connectorAgentBusy, setConnectorAgentBusy] = useState(false);
+  const [subagents, setSubagents] = useState<SubagentTask[]>([]);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [activeSpawns, setActiveSpawns] = useState<SpawnRequest[]>([]);
   const [activeApproval, setActiveApproval] = useState<ApprovalRequest | null>(null);
@@ -471,6 +473,7 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
       id: 'cli',
       pluginId: 'kernel',
       description: 'TUI chat channel',
+      connector: true,
       send: async (payload) => {
         const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
         pushLineRef.current?.({

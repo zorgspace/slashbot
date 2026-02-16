@@ -3,8 +3,13 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import type { JsonValue, SlashbotPlugin } from '../../core/kernel/contracts.js';
+import type { JsonValue, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
 import type { EventBus } from '../../core/kernel/event-bus.js';
+import type { ProviderRegistry } from '../../core/kernel/registries.js';
+import type { SlashbotKernel } from '../../core/kernel/kernel.js';
+import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
+import type { TokenModeProxyAuthService } from '../../core/agentic/llm/types.js';
+import { KernelLlmAdapter } from '../../core/agentic/llm/adapter.js';
 
 const CronTriggerSchema = z.object({
   type: z.literal('cron'),
@@ -16,12 +21,22 @@ const WebhookTriggerSchema = z.object({
   secret: z.string().optional(),
 }).strict();
 
+const TimerTriggerSchema = z.object({
+  type: z.literal('timer'),
+  intervalMs: z.number(),
+}).strict();
+
+const OnceTriggerSchema = z.object({
+  type: z.literal('once'),
+  runAtMs: z.number(),
+}).strict();
+
 const AutomationJobSchema = z.object({
   id: z.string(),
   name: z.string(),
   enabled: z.boolean(),
   prompt: z.string(),
-  trigger: z.discriminatedUnion('type', [CronTriggerSchema, WebhookTriggerSchema]),
+  trigger: z.discriminatedUnion('type', [CronTriggerSchema, WebhookTriggerSchema, TimerTriggerSchema, OnceTriggerSchema]),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastRunAt: z.string().optional(),
@@ -123,12 +138,22 @@ interface WebhookTrigger {
   secret?: string;
 }
 
+interface TimerTrigger {
+  type: 'timer';
+  intervalMs: number;
+}
+
+interface OnceTrigger {
+  type: 'once';
+  runAtMs: number;
+}
+
 interface AutomationJob {
   id: string;
   name: string;
   enabled: boolean;
   prompt: string;
-  trigger: CronTrigger | WebhookTrigger;
+  trigger: CronTrigger | WebhookTrigger | TimerTrigger | OnceTrigger;
   createdAt: string;
   updatedAt: string;
   lastRunAt?: string;
@@ -145,6 +170,8 @@ interface AutomationJob {
  * setTimeout chains; webhook jobs are triggered by incoming HTTP requests
  * with optional HMAC-SHA256 signature validation.
  */
+type AgentRunner = (prompt: string, sessionId: string) => Promise<{ text: string; toolCalls: number }>;
+
 class AutomationService {
   private jobs: AutomationJob[] = [];
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -155,6 +182,7 @@ class AutomationService {
     private readonly workspaceRoot: string,
     private readonly events: EventBus | undefined,
     private readonly runTool?: (toolId: string, args: JsonValue, ctx: Record<string, unknown>) => Promise<{ ok: boolean; output?: JsonValue }>,
+    private readonly runAgent?: AgentRunner,
   ) {
     this.filePath = join(workspaceRoot, '.slashbot', 'automation.json');
   }
@@ -210,6 +238,39 @@ class AutomationService {
     return job;
   }
 
+  async addTimerJob(name: string, intervalMs: number, prompt: string): Promise<AutomationJob> {
+    if (intervalMs < 1000) throw new Error('Interval must be at least 1000ms');
+    const job: AutomationJob = {
+      id: randomUUID(),
+      name,
+      enabled: true,
+      prompt,
+      trigger: { type: 'timer', intervalMs },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.jobs.push(job);
+    await this.save();
+    this.scheduleTimer(job);
+    return job;
+  }
+
+  async addOnceJob(name: string, runAtMs: number, prompt: string): Promise<AutomationJob> {
+    const job: AutomationJob = {
+      id: randomUUID(),
+      name,
+      enabled: true,
+      prompt,
+      trigger: { type: 'once', runAtMs },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.jobs.push(job);
+    await this.save();
+    this.scheduleOnce(job);
+    return job;
+  }
+
   async removeJob(idOrName: string): Promise<boolean> {
     const idx = this.jobs.findIndex((j) => j.id === idOrName || j.name === idOrName);
     if (idx === -1) return false;
@@ -225,8 +286,10 @@ class AutomationService {
     if (!job) return false;
     job.enabled = enabled;
     job.updatedAt = new Date().toISOString();
-    if (enabled && job.trigger.type === 'cron') {
-      this.scheduleCron(job);
+    if (enabled) {
+      if (job.trigger.type === 'cron') this.scheduleCron(job);
+      else if (job.trigger.type === 'timer') this.scheduleTimer(job);
+      else if (job.trigger.type === 'once') this.scheduleOnce(job);
     } else {
       this.clearTimer(job.id);
     }
@@ -242,15 +305,22 @@ class AutomationService {
     this.runningJobs.add(job.id);
     this.events?.publish('automation:job:started', { jobId: job.id, name: job.name });
 
+    let result: string | undefined;
     try {
-      // Execute via kernel tool runner if available
-      const runTool = this.runTool;
-
-      if (runTool) {
-        const result = await runTool('shell.exec', { command: 'bash', args: ['-lc', `echo "${job.prompt}"`] }, {});
+      if (this.runAgent) {
+        // Prefer agentic loop — runs the prompt through the full LLM + tools pipeline
+        const sessionId = `automation-${job.id}`;
+        const agentResult = await this.runAgent(job.prompt, sessionId);
         job.lastRunAt = new Date().toISOString();
-        job.lastStatus = result.ok ? 'ok' : 'error';
-        if (!result.ok) job.lastError = String(result.output ?? 'Unknown error');
+        job.lastStatus = 'ok';
+        result = agentResult.text;
+      } else if (this.runTool) {
+        // Fallback: execute via kernel tool runner
+        const toolResult = await this.runTool('shell.exec', { command: 'bash', args: ['-lc', `echo "${job.prompt}"`] }, {});
+        job.lastRunAt = new Date().toISOString();
+        job.lastStatus = toolResult.ok ? 'ok' : 'error';
+        if (!toolResult.ok) job.lastError = String(toolResult.output ?? 'Unknown error');
+        result = typeof toolResult.output === 'string' ? toolResult.output : JSON.stringify(toolResult.output);
       } else {
         job.lastRunAt = new Date().toISOString();
         job.lastStatus = 'ok';
@@ -258,7 +328,7 @@ class AutomationService {
 
       await this.save();
       this.events?.publish('automation:job:completed', { jobId: job.id, name: job.name });
-      return { ok: true, result: `Job ${job.name} executed` };
+      return { ok: true, result: result ?? `Job ${job.name} executed` };
     } catch (err) {
       job.lastRunAt = new Date().toISOString();
       job.lastStatus = 'error';
@@ -294,8 +364,13 @@ class AutomationService {
 
   resumeTimers(): void {
     for (const job of this.jobs) {
-      if (job.enabled && job.trigger.type === 'cron') {
+      if (!job.enabled) continue;
+      if (job.trigger.type === 'cron') {
         this.scheduleCron(job);
+      } else if (job.trigger.type === 'timer') {
+        this.scheduleTimer(job);
+      } else if (job.trigger.type === 'once') {
+        this.scheduleOnce(job);
       }
     }
   }
@@ -325,6 +400,34 @@ class AutomationService {
     } catch {
       // Invalid cron, skip
     }
+  }
+
+  private scheduleTimer(job: AutomationJob): void {
+    if (job.trigger.type !== 'timer') return;
+    this.clearTimer(job.id);
+    const intervalMs = job.trigger.intervalMs;
+    const tick = () => {
+      void this.runJob(job.id).then(() => {
+        if (job.enabled) {
+          this.timers.set(job.id, setTimeout(tick, intervalMs));
+        }
+      });
+    };
+    this.timers.set(job.id, setTimeout(tick, intervalMs));
+  }
+
+  private scheduleOnce(job: AutomationJob): void {
+    if (job.trigger.type !== 'once') return;
+    this.clearTimer(job.id);
+    const delay = Math.max(0, job.trigger.runAtMs - Date.now());
+    this.timers.set(
+      job.id,
+      setTimeout(() => {
+        void this.runJob(job.id).then(() => {
+          void this.removeJob(job.id);
+        });
+      }, delay),
+    );
   }
 
   private clearTimer(jobId: string): void {
@@ -380,7 +483,36 @@ export function createAutomationPlugin(): SlashbotPlugin {
       const workspaceRoot = context.getService<string>('kernel.workspaceRoot') ?? process.cwd();
       const events = context.getService<EventBus>('kernel.events');
       const runTool = context.getService<(toolId: string, args: JsonValue, ctx: Record<string, unknown>) => Promise<{ ok: boolean; output?: JsonValue }>>('kernel.runTool');
-      service = new AutomationService(workspaceRoot, events, runTool);
+
+      // Wire agentic runner so automation jobs run through the full LLM + tools pipeline
+      let runAgent: AgentRunner | undefined;
+      const kernel = context.getService<SlashbotKernel>('kernel.instance');
+      const authRouter = context.getService<AuthProfileRouter>('kernel.authRouter');
+      const providers = context.getService<ProviderRegistry>('kernel.providers.registry');
+      const logger = context.getService<StructuredLogger>('kernel.logger');
+      const assemblePrompt = context.getService<() => Promise<string>>('kernel.assemblePrompt');
+
+      if (kernel && authRouter && providers && logger && assemblePrompt) {
+        const llm = new KernelLlmAdapter(
+          authRouter, providers, logger, kernel,
+          () => context.getService<TokenModeProxyAuthService>('wallet.proxyAuth'),
+        );
+
+        runAgent = async (prompt, sessionId) => {
+          const systemPrompt = await assemblePrompt();
+          const result = await llm.complete({
+            sessionId,
+            agentId: 'automation',
+            messages: [
+              { role: 'system', content: `${systemPrompt}\n\nYou are executing an automation job. Complete the task using available tools. Be concise.` },
+              { role: 'user', content: prompt },
+            ],
+          });
+          return { text: result.text, toolCalls: result.toolCalls };
+        };
+      }
+
+      service = new AutomationService(workspaceRoot, events, runTool, runAgent);
 
       context.registerService({
         id: 'automation.service',
@@ -431,6 +563,51 @@ export function createAutomationPlugin(): SlashbotPlugin {
             const prompt = asString(input.prompt, 'prompt');
             const secret = typeof input.secret === 'string' ? input.secret : undefined;
             const job = await service.addWebhookJob(name, prompt, secret);
+            return { ok: true, output: job as unknown as JsonValue };
+          } catch (err) {
+            return { ok: false, error: { code: 'AUTOMATION_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'automation.add_timer',
+        title: 'Timer',
+        pluginId: PLUGIN_ID,
+        description: 'Add a recurring interval automation job. Args: { name: string, intervalSeconds: number, prompt: string }',
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const name = asString(input.name, 'name');
+            const intervalSeconds = typeof input.intervalSeconds === 'number' ? input.intervalSeconds : undefined;
+            if (!intervalSeconds || intervalSeconds < 1) {
+              return { ok: false, error: { code: 'AUTOMATION_ERROR', message: 'intervalSeconds must be >= 1' } };
+            }
+            const prompt = asString(input.prompt, 'prompt');
+            const job = await service.addTimerJob(name, intervalSeconds * 1000, prompt);
+            return { ok: true, output: job as unknown as JsonValue };
+          } catch (err) {
+            return { ok: false, error: { code: 'AUTOMATION_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'automation.add_once',
+        title: 'Once',
+        pluginId: PLUGIN_ID,
+        description: 'Add a one-shot automation job that runs after a delay. Args: { name: string, delaySeconds: number, prompt: string }',
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const name = asString(input.name, 'name');
+            const delaySeconds = typeof input.delaySeconds === 'number' ? input.delaySeconds : undefined;
+            if (!delaySeconds || delaySeconds < 1) {
+              return { ok: false, error: { code: 'AUTOMATION_ERROR', message: 'delaySeconds must be >= 1' } };
+            }
+            const prompt = asString(input.prompt, 'prompt');
+            const runAtMs = Date.now() + delaySeconds * 1000;
+            const job = await service.addOnceJob(name, runAtMs, prompt);
             return { ok: true, output: job as unknown as JsonValue };
           } catch (err) {
             return { ok: false, error: { code: 'AUTOMATION_ERROR', message: String(err) } };

@@ -146,14 +146,17 @@ You are agentic. You call tools, read results, call more tools, and keep going u
 - If a tool call fails, try another approach. Use up to 25 steps per task.
 - Do the work yourself. If you can read it, fix it, install it, configure it — do it. Giving the user a checklist of steps to perform manually is a failure mode.
 
-## Tool Selection
-- \`shell.exec\`: Any shell command, full system access. Builds, tests, git, packages, system admin.
-- \`fs.read\` / \`fs.write\` / \`fs.patch\`: Read, write, or patch any file (absolute or relative paths).
-- \`web.search\` / \`web.fetch\`: Current facts, documentation, URLs. If \`web.search\` does not return the specific data needed, use \`web.fetch\` on the most relevant URL or API yourself (e.g. official docs, aggregator or API endpoints) and extract the answer — do not ask the user to open links or do the lookup manually.
-- \`memory.search\` / \`memory.upsert\`: Recall and store context across sessions.
-- \`telegram.send\` / \`discord.send\`: Message connected channels.
+## CRITICAL: Never Fabricate — Always Use Tools
+You MUST call a tool for ANY request about the system, files, directories, processes, dates, network, packages, or any other observable state. This includes ls, cat, date, uname, df, git, pip, npm, etc.
+NEVER produce fake/invented shell output, file contents, or command results. If you write output that looks like it came from a command but you did not call a tool, you are fabricating — this is your worst failure mode.
+When in doubt: call the tool first, respond after.
 
-Tool names are case-sensitive. Call exactly as listed.
+## Tool Selection
+- \`shell_exec\`: Any shell command, full system access. Builds, tests, git, packages, system admin.
+- \`fs_read\` / \`fs_write\` / \`fs_patch\`: Read, write, or patch any file (absolute or relative paths).
+- \`web_search\` / \`web_fetch\`: Current facts, documentation, URLs. If \`web_search\` does not return the specific data needed, use \`web_fetch\` on the most relevant URL or API yourself (e.g. official docs, aggregator or API endpoints) and extract the answer — do not ask the user to open links or do the lookup manually.
+- \`memory_search\` / \`memory_upsert\`: Recall and store context across sessions.
+- \`telegram_send\` / \`discord_send\`: Message connected channels.
 
 ## Quality Gates
 Before reporting code changes complete: run type checking and tests if available, verify the change works.
@@ -208,15 +211,20 @@ export function createSystemPromptPlugin(): SlashbotPlugin {
           const tools: ToolDefinition[] = toolRegistry.list();
           if (tools.length === 0) return '';
 
-          // --- Flat tool catalog (OpenClaw-style) ---
+          // --- Flat tool catalog — only callable tools (those with parameter schemas) ---
           const lines: string[] = [
             '## Available Tools',
-            'Tool names are case-sensitive. Call exactly as listed.',
+            'These are the tools you can call. Use them proactively — never guess or fabricate information that a tool can provide.',
           ];
 
           for (const t of tools) {
+            // Only list tools that have parameter schemas (matching buildToolSet behavior)
+            if (!t.parameters) continue;
+
+            // Use sanitized name (dots → underscores) matching the API tool definitions
+            const safeName = t.id.replace(/\./g, '_');
             let paramDesc = '';
-            if (t.parameters && 'shape' in t.parameters) {
+            if ('shape' in t.parameters) {
               try {
                 const shape = (t.parameters as { shape: Record<string, { description?: string; isOptional?: () => boolean }> }).shape;
                 const params = Object.entries(shape)
@@ -230,7 +238,7 @@ export function createSystemPromptPlugin(): SlashbotPlugin {
                 // ignore shape extraction errors
               }
             }
-            lines.push(`- ${t.id}${paramDesc}: ${t.description}`);
+            lines.push(`- ${safeName}${paramDesc}: ${t.description}`);
           }
 
           return lines.join('\n');
@@ -260,7 +268,8 @@ export function createSystemPromptPlugin(): SlashbotPlugin {
             }
           }
           if (systemInfoCache) {
-            sections.push(`### System Environment\nYou are running on this system. Use this info directly — never ask the user for it.\n${systemInfoCache}`);
+            const currentDate = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+            sections.push(`### System Environment\nYou are running on this system. Use this info directly — never ask the user for it.\n- **Current date/time**: ${currentDate}\n${systemInfoCache}`);
           }
 
           // File tree of the workspace

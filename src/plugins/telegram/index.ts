@@ -6,6 +6,7 @@ import type { SlashbotKernel } from '../../core/kernel/kernel.js';
 import type { ProviderRegistry } from '../../core/kernel/registries.js';
 import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
 import { ConnectorAgentSession } from '../services/connector-agent.js';
+import type { SubagentManager } from '../services/subagent-manager.js';
 import type { TranscriptionProvider } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 import type { AgentRegistry } from '../agents/index.js';
@@ -116,6 +117,8 @@ export function createTelegramPlugin(): SlashbotPlugin {
         },
       };
 
+      const getSubagentManager = () => context.getService<SubagentManager>('agentic.subagentManager');
+
       state.agentSession = new ConnectorAgentSession(
         llm,
         () => kernel.assemblePrompt(),
@@ -123,6 +126,7 @@ export function createTelegramPlugin(): SlashbotPlugin {
         undefined,
         undefined,
         2048,
+        getSubagentManager,
       );
       state.privateAgentSession = new ConnectorAgentSession(
         privateAgenticAdapter,
@@ -131,6 +135,7 @@ export function createTelegramPlugin(): SlashbotPlugin {
         undefined,
         undefined,
         PRIVATE_AGENTIC_MAX_RESPONSE_TOKENS,
+        getSubagentManager,
       );
 
       // ── Handler setup helper (bound to deps) ─────────────────────────
@@ -174,6 +179,8 @@ export function createTelegramPlugin(): SlashbotPlugin {
         id: 'telegram',
         pluginId: PLUGIN_ID,
         description: 'Telegram channel transport',
+        connector: true,
+        sessionPrefix: 'tg-',
         send: async (payload) => {
           if (!state.bot) {
             logger.warn('Telegram: cannot send — no bot');

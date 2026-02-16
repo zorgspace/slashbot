@@ -5,7 +5,7 @@ import { MarkdownText } from './markdown-text.js';
 import type { AgentToolAction } from '../core/agentic/llm/index.js';
 
 /** Show all tool uses in the run (match agent-loop maxSteps). */
-const MAX_VISIBLE_ACTIONS = 25;
+const MAX_VISIBLE_ACTIONS = 5;
 
 export interface AgentLoopDisplayState {
   title: string;

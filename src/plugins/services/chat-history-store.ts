@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { AgentMessage } from '../../core/agentic/llm/index.js';
+import type { AgentMessage, RichMessage } from '../../core/agentic/llm/index.js';
 
 const ConnectorHistorySchema = z.record(
   z.string(),
@@ -51,6 +51,10 @@ export interface ChatHistoryStore {
   append(chatId: string, messages: AgentMessage[]): Promise<void>;
   clear(chatId: string): Promise<void>;
   length(chatId: string): Promise<number>;
+  /** Get full rich history including tool call/result messages. */
+  getRich?(chatId: string): Promise<RichMessage[]>;
+  /** Append full tool chain (also calls append() for backward compat). */
+  appendRich?(chatId: string, messages: RichMessage[]): Promise<void>;
 }
 
 /**
@@ -59,15 +63,21 @@ export interface ChatHistoryStore {
  * Default implementation used by Telegram and Discord connectors.
  * Stores all chat histories in a single file with atomic writes.
  */
+const MAX_RICH_HISTORY = MAX_HISTORY * 3; // 120 entries for tool chains
+
 export class FileChatHistoryStore implements ChatHistoryStore {
   private readonly histories = new Map<string, AgentMessage[]>();
+  private readonly richHistories = new Map<string, RichMessage[]>();
   private hydrated = false;
+  private richHydrated = false;
   private readonly filePath: string;
+  private readonly richFilePath: string;
   private readonly dirPath: string;
 
   constructor(homeDir: string, filename = 'connector-history.json') {
     this.dirPath = homeDir;
     this.filePath = join(homeDir, filename);
+    this.richFilePath = join(homeDir, 'connector-rich-history.json');
   }
 
   private async hydrate(): Promise<void> {
@@ -136,5 +146,66 @@ export class FileChatHistoryStore implements ChatHistoryStore {
   async length(chatId: string): Promise<number> {
     await this.hydrate();
     return this.histories.get(chatId)?.length ?? 0;
+  }
+
+  async getRich(chatId: string): Promise<RichMessage[]> {
+    await this.hydrateRich();
+    return this.richHistories.get(chatId) ?? [];
+  }
+
+  async appendRich(chatId: string, messages: RichMessage[]): Promise<void> {
+    await this.hydrateRich();
+    const history = this.richHistories.get(chatId) ?? [];
+    history.push(...messages);
+    if (history.length > MAX_RICH_HISTORY) {
+      history.splice(0, history.length - MAX_RICH_HISTORY);
+    }
+    this.richHistories.set(chatId, history);
+    await this.persistRich();
+
+    // Backward compat: also append user/assistant-only messages to flat history
+    const flat = messages.filter(
+      (m): m is AgentMessage => m.role === 'user' || (m.role === 'assistant' && !('toolCalls' in m)),
+    );
+    if (flat.length > 0) {
+      await this.append(chatId, flat);
+    }
+  }
+
+  private async hydrateRich(): Promise<void> {
+    if (this.richHydrated) return;
+    this.richHydrated = true;
+    try {
+      const raw = await fs.readFile(this.richFilePath, 'utf8');
+      const result = ConnectorHistorySchema.safeParse(JSON.parse(raw));
+      if (!result.success) return;
+      for (const [chatId, entry] of Object.entries(result.data)) {
+        if (!Array.isArray(entry)) continue;
+        // Store as-is (RichMessage includes tool messages)
+        const messages = (entry as RichMessage[]).slice(-MAX_RICH_HISTORY);
+        if (messages.length > 0) {
+          this.richHistories.set(chatId, messages);
+        }
+      }
+    } catch {
+      // best effort
+    }
+  }
+
+  private async persistRich(): Promise<void> {
+    try {
+      await fs.mkdir(this.dirPath, { recursive: true });
+      const tempPath = `${this.richFilePath}.tmp`;
+      const payload = Object.fromEntries(
+        Array.from(this.richHistories.entries()).map(([chatId, history]) => [
+          chatId,
+          history.slice(-MAX_RICH_HISTORY),
+        ]),
+      );
+      await fs.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+      await fs.rename(tempPath, this.richFilePath);
+    } catch {
+      // best effort
+    }
   }
 }

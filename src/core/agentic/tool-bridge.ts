@@ -17,6 +17,7 @@ export interface ToolBridgeToolMeta {
 export interface ToolBridgeCallbacks {
   onToolStart?(toolId: string, args: Record<string, unknown>, meta?: ToolBridgeToolMeta): void;
   onToolEnd?(toolId: string, args: Record<string, unknown>, result: ToolResult, meta?: ToolBridgeToolMeta): void;
+  onToolUserOutput?(toolId: string, content: string): void;
 }
 
 /**
@@ -44,9 +45,11 @@ export function buildToolSet(
   toolAllowlist?: string[],
 ): ToolSet {
   const tools: ToolSet = {};
+  const allDefs = kernel.tools.list();
+  const skippedNoParams: string[] = [];
 
-  for (const def of kernel.tools.list()) {
-    if (!def.parameters) continue;
+  for (const def of allDefs) {
+    if (!def.parameters) { skippedNoParams.push(def.id); continue; }
     if (toolAllowlist && !toolAllowlist.includes(def.id)) continue;
 
     const safeName = sanitizeToolName(def.id);
@@ -66,6 +69,14 @@ export function buildToolSet(
 
         callbacks?.onToolEnd?.(def.id, argsRecord, result, meta);
 
+        // Dual-track: send forUser content to user if present and not silent
+        if (!result.silent && result.forUser != null) {
+          const userContent = typeof result.forUser === 'string'
+            ? result.forUser
+            : JSON.stringify(result.forUser);
+          callbacks?.onToolUserOutput?.(def.id, userContent);
+        }
+
         if (!result.ok) {
           const errMsg = result.error?.message ?? 'Unknown tool error';
           const hint = result.error?.hint ? ` (hint: ${result.error.hint})` : '';
@@ -76,14 +87,17 @@ export function buildToolSet(
           return `ERROR [${result.error?.code ?? 'UNKNOWN'}]: ${errMsg}${hint}${partial}`;
         }
 
-        if (result.output === undefined || result.output === null) {
+        // Dual-track: LLM sees forLlm when set, otherwise output
+        const llmPayload = result.forLlm !== undefined ? result.forLlm : result.output;
+
+        if (llmPayload === undefined || llmPayload === null) {
           debugLog(`execute toolId=${def.id} → OK (no output)`);
           return 'OK (no output)';
         }
 
-        const raw = typeof result.output === 'string'
-          ? result.output
-          : JSON.stringify(result.output);
+        const raw = typeof llmPayload === 'string'
+          ? llmPayload
+          : JSON.stringify(llmPayload);
 
         const final = contextConfig ? truncateToolResult(raw, contextConfig) : raw;
         debugLog(`execute toolId=${def.id} → len=${final.length} preview=${JSON.stringify(final.slice(0, 200))}`);
@@ -91,6 +105,9 @@ export function buildToolSet(
       },
     });
   }
+
+  const builtNames = Object.keys(tools);
+  debugLog(`buildToolSet: ${builtNames.length} tools built [${builtNames.join(', ')}], ${skippedNoParams.length} skipped (no params) [${skippedNoParams.join(', ')}], session=${context.sessionId}`);
 
   return tools;
 }

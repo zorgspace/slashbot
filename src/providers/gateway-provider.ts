@@ -5,7 +5,7 @@ export function createProvider(pluginId: string): ProviderDefinition {
   return defineProvider('gateway', 'Vercel AI Gateway', [
     { id: 'anthropic/claude-opus-4-6', displayName: 'Claude Opus 4.6', contextWindow: 200_000, priority: 1, capabilities: ['chat', 'tools', 'reasoning', 'image', 'thinking'] },
     { id: 'openai/gpt-5.2', displayName: 'GPT-5.2', contextWindow: 128_000, priority: 2, capabilities: ['chat', 'tools', 'reasoning', 'image', 'thinking'] },
-    { id: 'xai/grok-4.1-fast-reasoning', displayName: 'Grok 4.1 Fast Reasoning', contextWindow: 131_072, priority: 3, capabilities: ['chat', 'tools', 'reasoning', 'image'] },
+    { id: 'xai/grok-4-1-fast-reasoning', displayName: 'Grok 4.1 Fast Reasoning', contextWindow: 131_072, priority: 3, capabilities: ['chat', 'tools', 'reasoning', 'image'] },
     { id: 'google/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro', contextWindow: 1_000_000, priority: 4, capabilities: ['chat', 'tools', 'reasoning', 'image', 'search', 'thinking'] },
   ], pluginId);
 }
