@@ -8,6 +8,12 @@ import { createGatewayCommands } from '../../providers/gateway-provider.js';
 import type { PickerBridge } from '../../core/kernel/picker-bridge.js';
 import type { PickerItem } from '../../ui/picker-overlay.js';
 
+declare module '../../core/kernel/event-bus.js' {
+  interface EventMap {
+    'provider:changed': { providerId: string; modelId: string };
+  }
+}
+
 const PLUGIN_ID = 'slashbot.providers.auth';
 
 function formatContextWindow(n: number): string {
