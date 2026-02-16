@@ -31,14 +31,18 @@ describe('connector agent history persistence', () => {
 
       const firstCall = secondLlm.calls[0];
       expect(firstCall).toBeDefined();
-      const messages = firstCall.messages.map((m) => ({ role: m.role, content: m.content }));
+      const messages = firstCall.messages;
 
-      expect(messages).toEqual([
-        { role: 'system', content: 'system prompt' },
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', content: 'reply-1' },
-        { role: 'user', content: 'again' },
-      ]);
+      // ConnectorAgentSession uses a 2-message format: [system, user]
+      // The user message contains conversation history + latest message
+      expect(messages).toHaveLength(2);
+      expect(messages[0].role).toBe('system');
+      expect(messages[0].content).toBe('system prompt');
+      expect(messages[1].role).toBe('user');
+      const userContent = String(messages[1].content);
+      expect(userContent).toContain('hello');
+      expect(userContent).toContain('reply-1');
+      expect(userContent).toContain('again');
     } finally {
       await rm(tempHome, { recursive: true, force: true });
     }
@@ -112,6 +116,93 @@ describe('connector agent history persistence', () => {
       expect(llm.calls).toHaveLength(0);
       expect(prompts[1]).toContain('[assistant] agentic-1');
       expect(prompts[1]).toContain('Latest user message:\nand tomorrow?');
+    } finally {
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('clearHistory resets chat state', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-connector-clear-'));
+    const homeDir = join(tempHome, '.slashbot');
+
+    try {
+      const llm = new FakeLlm();
+      const session = new ConnectorAgentSession(llm, async () => 'system prompt', homeDir);
+      await session.chat('chat1', 'before clear', { sessionId: 's', agentId: 'a' });
+      session.clearHistory('chat1');
+      await session.chat('chat1', 'after clear', { sessionId: 's', agentId: 'a' });
+
+      const lastCall = llm.calls[llm.calls.length - 1];
+      const userContent = String(lastCall.messages[lastCall.messages.length - 1].content);
+      // Should NOT contain the message from before clear
+      expect(userContent).not.toContain('before clear');
+      expect(userContent).toContain('after clear');
+    } finally {
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('getHistoryLength returns correct count', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-connector-len-'));
+    const homeDir = join(tempHome, '.slashbot');
+
+    try {
+      const llm = new FakeLlm();
+      const session = new ConnectorAgentSession(llm, async () => 'system prompt', homeDir);
+      expect(await session.getHistoryLength('chat1')).toBe(0);
+      await session.chat('chat1', 'hello', { sessionId: 's', agentId: 'a' });
+      expect(await session.getHistoryLength('chat1')).toBeGreaterThan(0);
+    } finally {
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('multiple chatIds are isolated', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-connector-iso-'));
+    const homeDir = join(tempHome, '.slashbot');
+
+    try {
+      const llm = new FakeLlm();
+      const session = new ConnectorAgentSession(llm, async () => 'system prompt', homeDir);
+      await session.chat('chat-a', 'msg for A', { sessionId: 's', agentId: 'a' });
+      await session.chat('chat-b', 'msg for B', { sessionId: 's', agentId: 'a' });
+
+      // Third call to chat-a should not include chat-b history
+      await session.chat('chat-a', 'follow up A', { sessionId: 's', agentId: 'a' });
+      const lastCall = llm.calls[llm.calls.length - 1];
+      const userContent = String(lastCall.messages[lastCall.messages.length - 1].content);
+      expect(userContent).toContain('msg for A');
+      expect(userContent).not.toContain('msg for B');
+    } finally {
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('multiple images included in parts array', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-connector-multiimg-'));
+    const homeDir = join(tempHome, '.slashbot');
+
+    try {
+      const llm = new FakeLlm();
+      const session = new ConnectorAgentSession(llm, async () => 'system prompt', homeDir);
+      const images = [
+        'data:image/png;base64,img1',
+        'data:image/jpeg;base64,img2',
+        'data:image/png;base64,img3',
+      ];
+
+      await session.chat('chat1', 'Look at these images', {
+        sessionId: 's',
+        agentId: 'a',
+        images,
+      });
+
+      const call = llm.calls[0];
+      const userMsg = call.messages[call.messages.length - 1];
+      expect(Array.isArray(userMsg.content)).toBe(true);
+      const parts = userMsg.content as Array<{ type: string }>;
+      const imageParts = parts.filter(p => p.type === 'image');
+      expect(imageParts.length).toBe(3);
     } finally {
       await rm(tempHome, { recursive: true, force: true });
     }

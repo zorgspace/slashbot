@@ -24,11 +24,11 @@ export interface ToolBridgeCallbacks {
  * Sanitize a tool ID for OpenAI-compatible APIs.
  * OpenAI requires function names to match ^[a-zA-Z0-9_-]+$ — no dots allowed.
  */
-function sanitizeToolName(id: string): string {
+export function sanitizeToolName(id: string): string {
   return id.replace(/\./g, '_');
 }
 
-function deriveToolDisplayName(id: string, title?: string): string {
+export function deriveToolDisplayName(id: string, title?: string): string {
   return title ?? id;
 }
 

@@ -318,6 +318,8 @@ export interface PluginManifest {
   description?: string;
   priority?: number;
   dependencies?: string[];
+  peerDependencies?: string[];
+  npmDependencies?: Record<string, string>;
   configSchema?: Record<string, unknown>;
 }
 

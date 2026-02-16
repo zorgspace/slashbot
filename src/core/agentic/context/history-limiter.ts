@@ -20,7 +20,7 @@ export function limitHistoryTurns(messages: AgentMessage[], maxTurns: number): A
 
   // Count user messages from the end
   let userCount = 0;
-  let cutIndex = conversation.length;
+  let cutIndex = 0;
   for (let i = conversation.length - 1; i >= 0; i--) {
     if (conversation[i].role === 'user') {
       userCount++;

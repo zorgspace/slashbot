@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import type { ChannelDefinition, JsonValue, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
+import type { ChannelDefinition, JsonValue, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
 import type { EventBus } from '../../core/kernel/event-bus.js';
 import type { ChannelRegistry, ProviderRegistry } from '../../core/kernel/registries.js';
 import type { SlashbotKernel } from '../../core/kernel/kernel.js';
@@ -801,3 +801,4 @@ export function createAutomationPlugin(): SlashbotPlugin {
 }
 
 export { createAutomationPlugin as createPlugin };
+export { parseCronExpression, parseField, computeNextCronRun };

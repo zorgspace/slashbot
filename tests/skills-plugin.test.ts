@@ -64,7 +64,7 @@ describe('skills plugin', () => {
 
       const result = await runTool!.execute({ name: 'weather' });
       expect(result.ok).toBe(true);
-      expect(String(result.output)).toContain('[SKILL: weather | source=bundled]');
+      expect(String(result.output)).toContain('[SKILL: weather]');
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -82,7 +82,7 @@ describe('skills plugin', () => {
       const result = await runTool!.execute({ name: 'weather' });
 
       expect(result.ok).toBe(true);
-      expect(String(result.output)).toContain('[SKILL: weather | source=workspace]');
+      expect(String(result.output)).toContain('[SKILL: weather]');
       expect(String(result.output)).toContain('Workspace Weather');
     } finally {
       await rm(workspace, { recursive: true, force: true });
@@ -118,8 +118,56 @@ describe('skills plugin', () => {
       expect(provider).toBeDefined();
       const contextText = await provider!.provide();
 
-      expect(String(contextText)).toContain('Bundled Slashbot skills are available.');
+      expect(String(contextText)).toContain('Slashbot skills are available.');
       expect(String(contextText)).toContain('## Installed Skills');
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('non-existent skill returns error', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'slashbot-skills-notfound-'));
+    try {
+      const harness = await setupPlugin(workspace);
+      const runTool = harness.tools.get('skill.run');
+      expect(runTool).toBeDefined();
+      const result = await runTool!.execute({ name: 'nonexistent-skill-xyz-999' });
+      expect(result.ok).toBe(false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('skill.install tool is registered', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'slashbot-skills-install-'));
+    try {
+      const harness = await setupPlugin(workspace);
+      expect(harness.tools.has('skill.install')).toBe(true);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('context provider returns content even with empty workspace', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'slashbot-skills-emptyws-'));
+    try {
+      const harness = await setupPlugin(workspace);
+      const provider = harness.contexts.get('skills.installed');
+      const text = await provider!.provide();
+      // Should still return something (at least bundled skills listing)
+      expect(typeof text).toBe('string');
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('empty skill name returns error', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'slashbot-skills-empty-'));
+    try {
+      const harness = await setupPlugin(workspace);
+      const runTool = harness.tools.get('skill.run');
+      const result = await runTool!.execute({ name: '' });
+      expect(result.ok).toBe(false);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

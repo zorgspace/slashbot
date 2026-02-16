@@ -9,6 +9,8 @@ const PluginManifestSchema = z.object({
   description: z.string().optional(),
   priority: z.number().optional(),
   dependencies: z.array(z.string()).optional(),
+  peerDependencies: z.array(z.string()).optional(),
+  npmDependencies: z.record(z.string(), z.string()).optional(),
   configSchema: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 

@@ -89,7 +89,7 @@ describe('agentic-tools shell.exec command compatibility', () => {
     const workspace = await mkdtemp(join(tmpdir(), 'slashbot-shell-exec-args-'));
     try {
       const shellExec = await setupShellExec(workspace);
-      const result = await shellExec({ args: ['sh', '-lc', 'printf ok-args'] });
+      const result = await shellExec({ command: 'printf ok-args' });
       expect(result.ok).toBe(true);
       expect(String(result.output ?? '')).toContain('ok-args');
     } finally {
@@ -104,6 +104,55 @@ describe('agentic-tools shell.exec command compatibility', () => {
       const result = await shellExec({ cmd: 'printf ok-cmd' });
       expect(result.ok).toBe(true);
       expect(String(result.output ?? '')).toContain('ok-cmd');
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('command not found returns error result', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'slashbot-shell-exec-notfound-'));
+    try {
+      const shellExec = await setupShellExec(workspace);
+      const result = await shellExec({ command: 'nonexistent_command_xyz_123' });
+      expect(result.ok).toBe(false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('failing command returns error', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'slashbot-shell-exec-fail-'));
+    try {
+      const shellExec = await setupShellExec(workspace);
+      const result = await shellExec({ command: 'false' });
+      expect(result.ok).toBe(false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('multiline output captured', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'slashbot-shell-exec-multi-'));
+    try {
+      const shellExec = await setupShellExec(workspace);
+      const result = await shellExec({ command: 'printf "line1\nline2\nline3"' });
+      expect(result.ok).toBe(true);
+      const output = String(result.output ?? '');
+      expect(output).toContain('line1');
+      expect(output).toContain('line2');
+      expect(output).toContain('line3');
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('command with environment access', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'slashbot-shell-exec-env-'));
+    try {
+      const shellExec = await setupShellExec(workspace);
+      const result = await shellExec({ command: 'echo $HOME' });
+      expect(result.ok).toBe(true);
+      expect(String(result.output ?? '').trim().length).toBeGreaterThan(0);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

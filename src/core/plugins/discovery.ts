@@ -41,12 +41,14 @@ async function discoverFromDirectory(basePath: string, source: DiscoveredPlugin[
 
 function normalizePaths(config: PluginLoadConfig, workspaceRoot: string): Record<DiscoveredPlugin['source'], string[]> {
   const workspacePath = resolve(workspaceRoot, '.slashbot/extensions');
+  const workspacePlugins = resolve(workspaceRoot, '.slashbot/plugins');
   const userPath = resolve(homedir(), '.slashbot/extensions');
+  const userPlugins = resolve(homedir(), '.slashbot/plugins');
 
   return {
     config: config.paths.map((item) => resolve(workspaceRoot, item)),
-    workspace: [workspacePath],
-    'user-global': [userPath],
+    workspace: [workspacePath, workspacePlugins],
+    'user-global': [userPath, userPlugins],
     bundled: []
   };
 }

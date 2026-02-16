@@ -1,4 +1,5 @@
-import type { RuntimeConfig, SlashbotPlugin } from '../../core/kernel/contracts.js';
+import type { SlashbotPlugin } from '@slashbot/plugin-sdk';
+import type { RuntimeConfig } from '../../core/kernel/contracts.js';
 import type { SlashbotKernel } from '../../core/kernel/kernel.js';
 import type { EventBus } from '../../core/kernel/event-bus.js';
 import type { ProviderRegistry } from '../../core/kernel/registries.js';

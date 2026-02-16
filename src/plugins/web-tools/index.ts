@@ -4,7 +4,7 @@ import type {
   ProviderDefinition,
   SlashbotPlugin,
   ToolCallContext
-} from '../../core/kernel/contracts.js';
+} from '@slashbot/plugin-sdk';
 import type { ProviderRegistry } from '../../core/kernel/registries.js';
 import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
 import { z } from 'zod';

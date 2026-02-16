@@ -136,7 +136,7 @@ function registerCustomProvider(
     const provider = createOpenAI({
       apiKey: execution.token,
       baseURL: execution.baseUrl ?? baseUrl,
-      ...(execution.customFetch ? { fetch: execution.customFetch } : {}),
+      ...(execution.customFetch ? { fetch: execution.customFetch as typeof globalThis.fetch } : {}),
     });
     return provider(execution.modelId);
   };

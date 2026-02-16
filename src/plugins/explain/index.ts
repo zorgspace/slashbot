@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ChannelDefinition, JsonValue, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
+import type { ChannelDefinition, JsonValue, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
 import type { ChannelRegistry } from '../../core/kernel/registries.js';
 
 const PLUGIN_ID = 'slashbot.explain';

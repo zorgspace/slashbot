@@ -9,7 +9,10 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "jsx": "react-jsx",
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@slashbot/plugin-sdk": ["./plugin-sdk/index.d.ts"]
+    }
   },
   "include": ["src", "tests"]
 }

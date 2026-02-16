@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import type { JsonValue, SlashbotPlugin } from '../../core/kernel/contracts.js';
+import type { JsonValue, SlashbotPlugin } from '@slashbot/plugin-sdk';
 import { asObject, asString } from '../utils.js';
 
 const PLUGIN_ID = 'slashbot.skills';

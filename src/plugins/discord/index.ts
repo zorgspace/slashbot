@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
 import type { LlmAdapter, TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
-import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
+import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
 import type { SlashbotKernel } from '../../core/kernel/kernel.js';
 import type { ProviderRegistry } from '../../core/kernel/registries.js';
 import type { AuthProfileRouter } from '../../core/providers/auth-router.js';

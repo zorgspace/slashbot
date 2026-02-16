@@ -20,10 +20,11 @@ function noopLogger() {
   };
 }
 
-async function setupHarness(): Promise<Harness> {
+async function setupHarness(tempHome?: string): Promise<Harness> {
   const plugin = createWalletPlugin();
   const commands = new Map<string, CommandDefinition>();
   const tools = new Map<string, ToolDefinition>();
+  const home = tempHome ?? process.env.HOME ?? '/tmp';
 
   await plugin.setup({
     registerTool: (tool) => {
@@ -40,8 +41,16 @@ async function setupHarness(): Promise<Harness> {
     registerChannel: () => undefined,
     contributePromptSection: () => undefined,
     contributeContextProvider: () => undefined,
-    contributeStatusIndicator: () => () => {},
-    getService: () => undefined,
+    contributeStatusIndicator: () => (() => {}) as never,
+    getService: <TService,>(serviceId: string) => {
+      if (serviceId === 'kernel.paths') {
+        return {
+          home: (...segs: string[]) => join(home, '.slashbot', ...segs),
+          workspace: (...segs: string[]) => join(home, ...segs),
+        } as TService;
+      }
+      return undefined;
+    },
     dispatchHook: async (_domain, _event, payload) => ({
       initialPayload: payload,
       finalPayload: payload,
@@ -116,7 +125,7 @@ describe('wallet plugin parity surface', () => {
     process.env.HOME = tempHome;
 
     try {
-      const harness = await setupHarness();
+      const harness = await setupHarness(tempHome);
       const solana = harness.commands.get('solana');
       expect(solana).toBeDefined();
 
@@ -139,7 +148,7 @@ describe('wallet plugin parity surface', () => {
     process.env.HOME = tempHome;
 
     try {
-      const harness = await setupHarness();
+      const harness = await setupHarness(tempHome);
       const solana = harness.commands.get('solana');
       expect(solana).toBeDefined();
 
@@ -160,7 +169,7 @@ describe('wallet plugin parity surface', () => {
     process.env.HOME = tempHome;
 
     try {
-      const harness = await setupHarness();
+      const harness = await setupHarness(tempHome);
       const solana = harness.commands.get('solana');
       expect(solana).toBeDefined();
 
@@ -192,7 +201,7 @@ describe('wallet plugin parity surface', () => {
     process.env.HOME = tempHome;
 
     try {
-      const harness = await setupHarness();
+      const harness = await setupHarness(tempHome);
       const sendTool = harness.tools.get('wallet.send');
       expect(sendTool).toBeDefined();
 
@@ -205,6 +214,105 @@ describe('wallet plugin parity surface', () => {
       expect(result.ok).toBe(false);
       expect(result.error?.code).toBe('SEND_ERROR');
       expect(result.error?.message.toLowerCase()).toContain('no wallet configured');
+    } finally {
+      process.env.HOME = originalHome;
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('wallet.status tool works without wallet', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-wallet-status-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const harness = await setupHarness(tempHome);
+      const statusTool = harness.tools.get('wallet.status');
+      expect(statusTool).toBeDefined();
+      const result = await statusTool!.execute({} as JsonValue, {});
+      expect(result.ok).toBe(true);
+    } finally {
+      process.env.HOME = originalHome;
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('wallet.redeem tool fails without wallet', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-wallet-redeem-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const harness = await setupHarness(tempHome);
+      const redeemTool = harness.tools.get('wallet.redeem');
+      expect(redeemTool).toBeDefined();
+      const result = await redeemTool!.execute({ amount: 1 } as JsonValue, {});
+      expect(result.ok).toBe(false);
+    } finally {
+      process.env.HOME = originalHome;
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('balance command fails gracefully without wallet', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-wallet-bal-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const harness = await setupHarness(tempHome);
+      const solana = harness.commands.get('solana');
+      const result = await runCommand(solana!, ['balance']);
+      expect(result.code).toBe(1);
+    } finally {
+      process.env.HOME = originalHome;
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('export without create fails', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-wallet-noexport-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const harness = await setupHarness(tempHome);
+      const solana = harness.commands.get('solana');
+      const result = await runCommand(solana!, ['export', 'password123']);
+      expect(result.code).toBe(1);
+    } finally {
+      process.env.HOME = originalHome;
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('lock command works even when not unlocked', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-wallet-lock-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const harness = await setupHarness(tempHome);
+      const solana = harness.commands.get('solana');
+      const result = await runCommand(solana!, ['lock']);
+      expect(result.code).toBe(0);
+    } finally {
+      process.env.HOME = originalHome;
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test('double create fails', async () => {
+    const tempHome = await mkdtemp(join(tmpdir(), 'slashbot-wallet-dblcreate-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const harness = await setupHarness(tempHome);
+      const solana = harness.commands.get('solana');
+      await runCommand(solana!, ['create', 'pass123']);
+      const second = await runCommand(solana!, ['create', 'pass456']);
+      expect(second.code).toBe(1);
     } finally {
       process.env.HOME = originalHome;
       await rm(tempHome, { recursive: true, force: true });

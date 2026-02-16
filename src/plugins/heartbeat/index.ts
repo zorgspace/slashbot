@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { IndicatorStatus, JsonValue, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
+import type { IndicatorStatus, JsonValue, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
 
 const HeartbeatConfigSchema = z.object({
   enabled: z.boolean().default(false),
