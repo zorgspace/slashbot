@@ -6,7 +6,6 @@ import type { SlashbotKernel } from '../../core/kernel/kernel';
 import type { ProviderRegistry } from '../../core/kernel/registries';
 import type { AuthProfileRouter } from '../../core/providers/auth-router';
 import { ConnectorAgentSession } from '../services/connector-agent';
-import type { SubagentManager } from '../services/subagent-manager';
 import type { TranscriptionProvider } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 import type { AgentRegistry } from '../agents/index';
@@ -117,8 +116,6 @@ export function createTelegramPlugin(): SlashbotPlugin {
         },
       };
 
-      const getSubagentManager = () => context.getService<SubagentManager>('agentic.subagentManager');
-
       state.agentSession = new ConnectorAgentSession(
         llm,
         () => kernel.assemblePrompt(),
@@ -126,7 +123,6 @@ export function createTelegramPlugin(): SlashbotPlugin {
         undefined,
         undefined,
         2048,
-        getSubagentManager,
       );
       state.privateAgentSession = new ConnectorAgentSession(
         privateAgenticAdapter,
@@ -135,7 +131,6 @@ export function createTelegramPlugin(): SlashbotPlugin {
         undefined,
         undefined,
         PRIVATE_AGENTIC_MAX_RESPONSE_TOKENS,
-        getSubagentManager,
       );
 
       // ── Handler setup helper (bound to deps) ─────────────────────────

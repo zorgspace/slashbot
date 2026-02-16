@@ -3,9 +3,9 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import type { JsonValue, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
+import type { ChannelDefinition, JsonValue, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
 import type { EventBus } from '../../core/kernel/event-bus.js';
-import type { ProviderRegistry } from '../../core/kernel/registries.js';
+import type { ChannelRegistry, ProviderRegistry } from '../../core/kernel/registries.js';
 import type { SlashbotKernel } from '../../core/kernel/kernel.js';
 import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
 import type { TokenModeProxyAuthService } from '../../core/agentic/llm/types.js';
@@ -31,12 +31,18 @@ const OnceTriggerSchema = z.object({
   runAtMs: z.number(),
 }).strict();
 
+const DeliverSchema = z.object({
+  channel: z.string(),
+  chatId: z.string(),
+}).strict();
+
 const AutomationJobSchema = z.object({
   id: z.string(),
   name: z.string(),
   enabled: z.boolean(),
   prompt: z.string(),
   trigger: z.discriminatedUnion('type', [CronTriggerSchema, WebhookTriggerSchema, TimerTriggerSchema, OnceTriggerSchema]),
+  deliver: DeliverSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastRunAt: z.string().optional(),
@@ -148,12 +154,18 @@ interface OnceTrigger {
   runAtMs: number;
 }
 
+interface DeliverConfig {
+  channel: string;
+  chatId: string;
+}
+
 interface AutomationJob {
   id: string;
   name: string;
   enabled: boolean;
   prompt: string;
   trigger: CronTrigger | WebhookTrigger | TimerTrigger | OnceTrigger;
+  deliver?: DeliverConfig;
   createdAt: string;
   updatedAt: string;
   lastRunAt?: string;
@@ -183,6 +195,7 @@ class AutomationService {
     private readonly events: EventBus | undefined,
     private readonly runTool?: (toolId: string, args: JsonValue, ctx: Record<string, unknown>) => Promise<{ ok: boolean; output?: JsonValue }>,
     private readonly runAgent?: AgentRunner,
+    private readonly getChannel?: (channelId: string) => ChannelDefinition | undefined,
   ) {
     this.filePath = join(workspaceRoot, '.slashbot', 'automation.json');
   }
@@ -206,7 +219,7 @@ class AutomationService {
     return [...this.jobs];
   }
 
-  async addCronJob(name: string, expression: string, prompt: string): Promise<AutomationJob> {
+  async addCronJob(name: string, expression: string, prompt: string, deliver?: DeliverConfig): Promise<AutomationJob> {
     parseCronExpression(expression); // validate
     const job: AutomationJob = {
       id: randomUUID(),
@@ -214,6 +227,7 @@ class AutomationService {
       enabled: true,
       prompt,
       trigger: { type: 'cron', expression },
+      ...(deliver ? { deliver } : {}),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -238,7 +252,7 @@ class AutomationService {
     return job;
   }
 
-  async addTimerJob(name: string, intervalMs: number, prompt: string): Promise<AutomationJob> {
+  async addTimerJob(name: string, intervalMs: number, prompt: string, deliver?: DeliverConfig): Promise<AutomationJob> {
     if (intervalMs < 1000) throw new Error('Interval must be at least 1000ms');
     const job: AutomationJob = {
       id: randomUUID(),
@@ -246,6 +260,7 @@ class AutomationService {
       enabled: true,
       prompt,
       trigger: { type: 'timer', intervalMs },
+      ...(deliver ? { deliver } : {}),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -255,13 +270,14 @@ class AutomationService {
     return job;
   }
 
-  async addOnceJob(name: string, runAtMs: number, prompt: string): Promise<AutomationJob> {
+  async addOnceJob(name: string, runAtMs: number, prompt: string, deliver?: DeliverConfig): Promise<AutomationJob> {
     const job: AutomationJob = {
       id: randomUUID(),
       name,
       enabled: true,
       prompt,
       trigger: { type: 'once', runAtMs },
+      ...(deliver ? { deliver } : {}),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -269,6 +285,15 @@ class AutomationService {
     await this.save();
     this.scheduleOnce(job);
     return job;
+  }
+
+  async setDelivery(idOrName: string, deliver: DeliverConfig | undefined): Promise<boolean> {
+    const job = this.jobs.find((j) => j.id === idOrName || j.name === idOrName);
+    if (!job) return false;
+    job.deliver = deliver;
+    job.updatedAt = new Date().toISOString();
+    await this.save();
+    return true;
   }
 
   async removeJob(idOrName: string): Promise<boolean> {
@@ -328,6 +353,19 @@ class AutomationService {
 
       await this.save();
       this.events?.publish('automation:job:completed', { jobId: job.id, name: job.name });
+
+      // Deliver result to channel if configured
+      if (job.deliver && result && this.getChannel) {
+        const channel = this.getChannel(job.deliver.channel);
+        if (channel) {
+          try {
+            await channel.send({ chatId: job.deliver.chatId, content: result } as unknown as JsonValue);
+          } catch {
+            // delivery failure is non-fatal
+          }
+        }
+      }
+
       return { ok: true, result: result ?? `Job ${job.name} executed` };
     } catch (err) {
       job.lastRunAt = new Date().toISOString();
@@ -512,7 +550,8 @@ export function createAutomationPlugin(): SlashbotPlugin {
         };
       }
 
-      service = new AutomationService(workspaceRoot, events, runTool, runAgent);
+      const channels = context.getService<ChannelRegistry>('kernel.channels.registry');
+      service = new AutomationService(workspaceRoot, events, runTool, runAgent, (id) => channels?.get(id));
 
       context.registerService({
         id: 'automation.service',
@@ -536,14 +575,17 @@ export function createAutomationPlugin(): SlashbotPlugin {
         id: 'automation.add_cron',
         title: 'Cron',
         pluginId: PLUGIN_ID,
-        description: 'Add a cron automation job. Args: { name: string, expression: string, prompt: string }',
+        description: 'Add a cron automation job. Args: { name: string, expression: string, prompt: string, deliverChannel?: string, deliverChatId?: string }',
         execute: async (args) => {
           try {
             const input = asObject(args);
             const name = asString(input.name, 'name');
             const expression = asString(input.expression, 'expression');
             const prompt = asString(input.prompt, 'prompt');
-            const job = await service.addCronJob(name, expression, prompt);
+            const deliver = typeof input.deliverChannel === 'string' && typeof input.deliverChatId === 'string'
+              ? { channel: input.deliverChannel as string, chatId: input.deliverChatId as string }
+              : undefined;
+            const job = await service.addCronJob(name, expression, prompt, deliver);
             return { ok: true, output: job as unknown as JsonValue };
           } catch (err) {
             return { ok: false, error: { code: 'AUTOMATION_ERROR', message: String(err) } };
@@ -574,7 +616,7 @@ export function createAutomationPlugin(): SlashbotPlugin {
         id: 'automation.add_timer',
         title: 'Timer',
         pluginId: PLUGIN_ID,
-        description: 'Add a recurring interval automation job. Args: { name: string, intervalSeconds: number, prompt: string }',
+        description: 'Add a recurring interval automation job. Args: { name: string, intervalSeconds: number, prompt: string, deliverChannel?: string, deliverChatId?: string }',
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -584,7 +626,10 @@ export function createAutomationPlugin(): SlashbotPlugin {
               return { ok: false, error: { code: 'AUTOMATION_ERROR', message: 'intervalSeconds must be >= 1' } };
             }
             const prompt = asString(input.prompt, 'prompt');
-            const job = await service.addTimerJob(name, intervalSeconds * 1000, prompt);
+            const deliver = typeof input.deliverChannel === 'string' && typeof input.deliverChatId === 'string'
+              ? { channel: input.deliverChannel as string, chatId: input.deliverChatId as string }
+              : undefined;
+            const job = await service.addTimerJob(name, intervalSeconds * 1000, prompt, deliver);
             return { ok: true, output: job as unknown as JsonValue };
           } catch (err) {
             return { ok: false, error: { code: 'AUTOMATION_ERROR', message: String(err) } };
@@ -596,7 +641,7 @@ export function createAutomationPlugin(): SlashbotPlugin {
         id: 'automation.add_once',
         title: 'Once',
         pluginId: PLUGIN_ID,
-        description: 'Add a one-shot automation job that runs after a delay. Args: { name: string, delaySeconds: number, prompt: string }',
+        description: 'Add a one-shot automation job that runs after a delay. Args: { name: string, delaySeconds: number, prompt: string, deliverChannel?: string, deliverChatId?: string }',
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -606,8 +651,11 @@ export function createAutomationPlugin(): SlashbotPlugin {
               return { ok: false, error: { code: 'AUTOMATION_ERROR', message: 'delaySeconds must be >= 1' } };
             }
             const prompt = asString(input.prompt, 'prompt');
+            const deliver = typeof input.deliverChannel === 'string' && typeof input.deliverChatId === 'string'
+              ? { channel: input.deliverChannel as string, chatId: input.deliverChatId as string }
+              : undefined;
             const runAtMs = Date.now() + delaySeconds * 1000;
-            const job = await service.addOnceJob(name, runAtMs, prompt);
+            const job = await service.addOnceJob(name, runAtMs, prompt, deliver);
             return { ok: true, output: job as unknown as JsonValue };
           } catch (err) {
             return { ok: false, error: { code: 'AUTOMATION_ERROR', message: String(err) } };
@@ -669,6 +717,28 @@ export function createAutomationPlugin(): SlashbotPlugin {
               : { ok: false, error: { code: 'NOT_FOUND', message: 'Job not found' } };
           } catch (err) {
             return { ok: false, error: { code: 'ENABLE_ERROR', message: String(err) } };
+          }
+        },
+      });
+
+      context.registerTool({
+        id: 'automation.add_delivery',
+        title: 'Delivery',
+        pluginId: PLUGIN_ID,
+        description: 'Set or remove channel delivery on an existing automation job. Args: { id: string, channel?: string, chatId?: string }',
+        execute: async (args) => {
+          try {
+            const input = asObject(args);
+            const id = asString(input.id, 'id');
+            const channel = typeof input.channel === 'string' ? input.channel : undefined;
+            const chatId = typeof input.chatId === 'string' ? input.chatId : undefined;
+            const deliver = channel && chatId ? { channel, chatId } : undefined;
+            const updated = await service.setDelivery(id, deliver);
+            return updated
+              ? { ok: true, output: deliver ? `Delivery set to ${channel}:${chatId}` : 'Delivery removed' }
+              : { ok: false, error: { code: 'NOT_FOUND', message: 'Job not found' } };
+          } catch (err) {
+            return { ok: false, error: { code: 'DELIVERY_ERROR', message: String(err) } };
           }
         },
       });

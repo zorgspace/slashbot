@@ -9,8 +9,8 @@ import type { TokenModeProxyAuthService } from '../../core/agentic/llm/types.js'
 import { KernelLlmAdapter } from '../../core/agentic/llm/adapter.js';
 import { SubagentManager } from '../services/subagent-manager.js';
 import { commandExists, executeCommandSafely } from '../../core/kernel/safe-command.js';
-import type { SpawnBridge } from '../../core/kernel/spawn-bridge.js';
-import type { ApprovalBridge } from '../../core/kernel/approval-bridge.js';
+
+import * as readlinePromises from 'node:readline/promises';
 import { asObject, asNonEmptyString as asString } from '../utils.js';
 
 const HARD_BLOCKED_PATTERNS = [
@@ -96,7 +96,7 @@ async function resolvePath(workspaceRoot: string, inputPath: string): Promise<st
  * Agentic Tools plugin — sandbox tools used by the agentic loop.
  *
  * Tools:
- *  - `shell.exec`  — Execute a subprocess with safety checks (risky-command gating, SpawnBridge TUI rendering).
+ *  - `shell.exec`  — Execute a subprocess with safety checks (risky-command gating, piped stdio).
  *  - `fs.read`     — Read any file on the system.
  *  - `fs.write`    — Create / overwrite any file on the system.
  *  - `fs.patch`    — Find-and-replace inside any existing file on the system.
@@ -200,39 +200,15 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
             }
 
             let approved = approvedFlag;
-            // Check risky commands and route through ApprovalBridge if needed
             if (isRiskyCommand(displayCommand, []) && !approved) {
-              const approvalBridge = context.getService<ApprovalBridge>('kernel.approvalBridge');
-              if (approvalBridge) {
-                const approvalResult = await approvalBridge.request(displayCommand, [], cwd);
-                const approvalGranted = approvalResult.ok && approvalResult.metadata?.approved === true;
-                if (!approvalGranted) {
-                  return approvalResult.ok
-                    ? {
-                        ok: false,
-                        error: {
-                          code: 'APPROVAL_DENIED',
-                          message: `Command "${displayCommand}" was not approved.`,
-                        },
-                      }
-                    : approvalResult;
-                }
-                approved = true;
-              } else {
-                return {
-                  ok: false,
-                  error: {
-                    code: 'APPROVAL_REQUIRED',
-                    message: `Command "${displayCommand}" is flagged as risky and requires approval. Re-submit with { "approved": true } or use an alternative approach.`,
-                  },
-                };
-              }
-            }
-
-            // Use SpawnBridge (TUI live rendering) when available, fallback to direct spawn
-            const bridge = context.getService<SpawnBridge>('kernel.spawnBridge');
-            if (bridge) {
-              return await bridge.request(command, resolvedArgs, cwd, timeoutMs ?? config.commandSafety.defaultTimeoutMs, callContext.abortSignal);
+              return {
+                ok: false,
+                error: {
+                  code: 'APPROVAL_REQUIRED',
+                  message: `Risky command requires explicit approval: "${displayCommand}"`,
+                  hint: `To execute, first ask the user for confirmation in your next response, then re-call shell_exec with the same parameters plus {approved: true}.`,
+                },
+              };
             }
 
             return await executeCommandSafely(
@@ -461,7 +437,7 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
         id: 'spawn',
         title: 'Spawn',
         pluginId: 'slashbot.agentic.tools',
-        description: 'Spawn an async background subagent to handle a task independently. The subagent runs its own tool loop and returns results when done. Use for parallel or nested subtasks up to max depth 2. Pass optional `currentDepth` (number, default 0) to track/enforce nesting limit.',
+        description: 'Spawn a subagent to handle a subtask. Blocks until the subagent completes and returns its result. Multiple spawn calls in the same step run in parallel.',
         parameters: z.object({
           task: z.string().describe('Task description for the subagent'),
         }),
@@ -473,39 +449,11 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
             if (!manager) {
               return { ok: false, error: { code: 'SPAWN_UNAVAILABLE', message: 'Subagent manager not available — LLM provider not configured.' } };
             }
-            const subagent = await manager.spawn(task, callContext.sessionId);
-            return { ok: true, output: { id: subagent.id, status: subagent.status, task: subagent.task } as unknown as JsonValue };
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            return { ok: false, error: { code: 'SPAWN_ERROR', message } };
-          }
-        }
-      });
-
-      context.registerTool({
-        id: 'spawn.status',
-        title: 'Status',
-        pluginId: 'slashbot.agentic.tools',
-        description: 'Check the status of spawned subagents. Pass an ID to check a specific subagent, or omit to list all.',
-        parameters: z.object({
-          id: z.string().optional().describe('Subagent ID to check (omit to list all)'),
-        }),
-        execute: async (args) => {
-          try {
-            const manager = getSubagentManager();
-            if (!manager) {
-              return { ok: false, error: { code: 'SPAWN_UNAVAILABLE', message: 'Subagent manager not available.' } };
+            const result = await manager.spawn(task, callContext.sessionId);
+            if (result.status === 'error') {
+              return { ok: false, error: { code: 'SUBAGENT_ERROR', message: result.error ?? 'Subagent failed' } };
             }
-            const input = asObject(args);
-            const id = asOptionalNonEmptyString(input.id, 'id');
-            if (id) {
-              const task = manager.get(id);
-              if (!task) {
-                return { ok: false, error: { code: 'NOT_FOUND', message: `Subagent ${id} not found` } };
-              }
-              return { ok: true, output: task as unknown as JsonValue };
-            }
-            return { ok: true, output: manager.list() as unknown as JsonValue };
+            return { ok: true, output: result.result ?? '(no output)' };
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             return { ok: false, error: { code: 'SPAWN_ERROR', message } };

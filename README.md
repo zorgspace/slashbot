@@ -1,116 +1,112 @@
 # Slashbot
 
-Local‑first AI assistant platform with:
-- A small, extensible kernel
-- Deterministic hooks
-- Plugin‑first runtime registration
-- Shared CLI/TUI and gateway surfaces
+[![Node >=20](https://img.shields.io/badge/node-%3E=20-green.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/typescript-5.7-blue.svg)](https://www.typescriptlang.org/)
+[![Ink TUI](https://img.shields.io/badge/ink-TUI-orange.svg)](https://github.com/vadimdemedes/ink)
 
-Slashbot runs agents locally and lets them plan and execute using tools like `shell.exec`, `fs.read`, `fs.write`, `fs.patch`, `web.fetch`, and `web.search` in a bounded loop (typically until build/tests pass or a goal is reached).
+Local-first AI assistant platform with a small, extensible kernel, deterministic hooks, plugin-first runtime registration, and unified CLI/TUI/gateway surfaces.
 
-The main agent is **agent‑first**: it creates a macro plan before acting and executes directly in a single bounded loop.
+Slashbot runs agents locally, letting them plan and execute using tools like `shell_exec`, `fs_read/write/patch`, `web_search/fetch`, `memory_search/upsert`, and more — in a bounded loop until goals are reached (e.g., build/tests pass).
 
----
+The main agent is **agent-first**: macro-planning before direct execution in a single bounded loop.
 
-## Features
+## 🚀 Quick Start
 
-- **Local‑first**: runs on your machine; you control configuration and providers
-- **Plugin‑based runtime**: core kept small, behavior extended via plugins
-- **Deterministic hooks**: predictable execution flow and lifecycle points
-- **Unified surfaces**: same core for CLI, TUI, and gateway/server
-- **Tool‑driven execution**: controlled toolset for safe automation
-- **Agentic planning**: macro‑planning and bounded loops
+### Prerequisites
+- Node.js >= 20
+- npm/yarn/pnpm/bun
 
----
-
-## Quick start
-
-### 1. Install dependencies
-
+### Clone & Install
 ```bash
+git clone https://github.com/zorgspace/slashbot.git  # Or your fork
+cd slashbot
 npm install
 ```
 
-### 2. Build
-
+### Build & Run TUI
 ```bash
 npm run build
+npm run dev  # Starts interactive TUI
 ```
 
-### 3. Run TUI locally
+Chat with Slashbot! Try: \"List skills\" or \"Run heartbeat\".
 
+### Global Binary
 ```bash
-npm run dev
+npm link  # Or npm i -g .
+slashbot  # Runs from anywhere
 ```
 
-This starts the interactive TUI so you can chat with Slashbot and run agents locally.
+## 📋 Commands
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Watch mode TUI/CLI |
+| `npm run build` | TypeScript build |
+| `npm test` | Run tests |
+| `npm run lint` | Type check |
+
+## ⚙️ Configuration
+
+- **Global**: `~/.slashbot/config.json` (providers, API keys)
+- **Workspace**: `<cwd>/.slashbot/config.json` (overrides)
+- **HEARTBEAT.md**: Periodic status checks/updates
+
+See [docs/architecture.md](docs/architecture.md) for hooks and layers.
+
+## 🛠️ Features
+
+- **Local-first**: Full control, no cloud required
+- **Skills**: 50+ pre-installed (weather, github, discord, slack, notion, etc.)
+  - List: `ls skills/`
+  - Run: `skill_run \"weather\" \"What's the forecast?\"`
+- **Agents**: Specialist sub-agents (`agents_list`, `agents_invoke`)
+- **Tools**: Filesystem, shell, web, memory, messaging (Discord/Telegram/Slack/WhatsApp)
+- **Connectors**: CLI, TUI (Ink), HTTP/WS gateway, chat apps
+- **Heartbeat**: Auto system/workspace health checks
+- **Memory**: Persistent context (`MEMORY.md`, daily notes)
+
+## 📁 Skills
+
+Purpose-built CLI tools orchestrated by agents:
+- **Communication**: discord, slack, telegram, whatsapp, himalaya (email)
+- **Productivity**: notion, obsidian, things-mac, apple-notes/reminders
+- **Development**: github, coding-agent, ink-cli-plugin-architecture
+- **Media**: openai-image-gen/whisper, nano-pdf/banana-pro, sonoscli/spotify-player
+- **More**: 1password, gog (Google Workspace), local-places, ordercli/food-order
+
+Install new: `skill_install https://github.com/user/skill.git`
+
+## 🏗️ Architecture
+
+[Full docs](docs/architecture.md):
+- **Kernel**: Orchestration, hooks, agent loop
+- **Plugins**: Extensible tools/skills/connectors
+- **Providers**: Multi-LLM (OpenAI, Anthropic, Grok, etc.) via ai-sdk
+
+## 🔄 Heartbeat
+
+Runs periodically:
+- System/workspace checks
+- Moltbook integration (DMs, feed)
+- Status reports to connectors
+
+Configure: `heartbeat_configure`, trigger: `heartbeat_trigger`
+
+## 🤝 Contributing
+
+1. Fork & clone
+2. `npm install && npm run dev`
+3. Add skills/plugins in `skills/`
+4. Test: `npm test`
+5. PR!
+
+New skills follow [SKILL.md](skills/skill-creator/SKILL.md) template.
+
+## 📄 License
+
+MIT (see LICENSE or add one).
 
 ---
 
-## Development
-
-- **Build**: `npm run build`
-- **Tests**: `npm test`
-- **Watch mode**: `npm run dev`
-
-Slashbot is written in TypeScript and built with a plugin‑first architecture. New connectors, tools, and skills are registered via plugins.
-
----
-
-## Architecture overview
-
-Slashbot is organized around a small kernel and an extensible plugin system:
-
-- **Kernel**: core agent loop, planning, tool execution, history, and logging
-- **Plugins**: register tools, connectors (Discord, Telegram, etc.), skills, and hooks
-- **Connectors**: bridge external surfaces (CLI/TUI, HTTP gateway, chat apps)
-- **Skills**: higher‑level automations implemented as scripts or workflows
-
-Execution is driven by deterministic hooks and a bounded agent loop:
-
-1. The agent receives a user request and current context
-2. It creates a macro plan (high‑level steps)
-3. It executes the plan using tools, updating history and state
-4. It stops when the goal is reached or a safety bound is hit
-
----
-
-## Heartbeat module
-
-The heartbeat module periodically:
-
-- Checks that Slashbot is running correctly
-- Summarizes recent activity in this workspace
-- Sends a short status message to configured connectors (e.g., Telegram)
-
-It uses the shared system prompt so it can:
-
-- Understand how to format summaries
-- Decide when to send messages
-- Trigger basic actions (like tests or health checks) if configured
-
-Configuration is stored in `HEARTBEAT.md` and related plugin settings.
-
----
-
-## Slashbin
-
-`slashbin` is the local command palette for Slashbot — a directory of small, composable scripts and skills you can trigger from the agent.
-
-- Scripts live under `skills/` and can be installed or created via the **skill‑creator** plugin
-- Each skill exposes a clear, text‑based interface so agents can call it deterministically
-- You keep everything local: code, prompts, and configuration stay on your machine
-
-### Using Slashbin
-
-1. Browse installed skills:
-   - Check the `skills/` folder in this repo
-   - Use the TUI or CLI to ask: *"What skills are available?"*
-2. Run a skill from chat:
-   - In the TUI: describe the task and mention the skill by name if you know it
-   - In connectors (Discord/Telegram): use the usual `/chat` or `/say` entrypoints
-3. Add new skills:
-   - Use the bundled **skill-creator** to scaffold a new skill
-   - Or drop your own script into `skills/` following existing examples
-
-Slashbin is how you turn Slashbot into *your* local toolbox: small, auditable utilities that the agent can orchestrate end‑to‑end.
+⭐ Star on GitHub! Questions? Ask Slashbot directly.

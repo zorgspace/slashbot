@@ -7,7 +7,6 @@ import type { ProviderRegistry } from '../../core/kernel/registries.js';
 import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
 import type { TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
 import { ConnectorAgentSession } from '../services/connector-agent.js';
-import type { SubagentManager } from '../services/subagent-manager.js';
 import type { TranscriptionService } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 import type { AgentRegistry } from '../agents/index.js';
@@ -184,15 +183,10 @@ export function createSlackPlugin(): SlashbotPlugin {
           kernel,
           () => context.getService<TokenModeProxyAuthService>('wallet.proxyAuth'),
         );
-        const getSubagentManager = () => context.getService<SubagentManager>('agentic.subagentManager');
         agentSession = new ConnectorAgentSession(
           llm,
           () => kernel.assemblePrompt(),
           homeDir,
-          undefined,
-          undefined,
-          undefined,
-          getSubagentManager,
         );
       }
 

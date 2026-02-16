@@ -167,14 +167,50 @@ export class SlashbotGateway {
   }
 
   async start(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      this.server.listen(this.options.config.gateway.port, this.options.config.gateway.host, () => resolve());
-    });
+    const { host, port } = this.options.config.gateway;
 
-    this.options.logger.info('Gateway started', {
-      host: this.options.config.gateway.host,
-      port: this.options.config.gateway.port
-    });
+    const listen = () =>
+      new Promise<void>((resolve, reject) => {
+        const onError = (err: NodeJS.ErrnoException) => {
+          this.server.removeListener('error', onError);
+          reject(err);
+        };
+        this.server.once('error', onError);
+        this.server.listen(port, host, () => {
+          this.server.removeListener('error', onError);
+          resolve();
+        });
+      });
+
+    try {
+      await listen();
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+        this.options.logger.warn(`Port ${port} in use, killing stale process…`);
+        await this.killPortHolder(port);
+        await new Promise((r) => setTimeout(r, 300));
+        await listen();
+      } else {
+        throw err;
+      }
+    }
+
+    this.options.logger.info('Gateway started', { host, port });
+  }
+
+  private async killPortHolder(port: number): Promise<void> {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const exec = promisify(execFile);
+    try {
+      const { stdout } = await exec('fuser', [`${port}/tcp`]);
+      const pids = stdout.trim().split(/\s+/).filter(Boolean);
+      for (const pid of pids) {
+        try { process.kill(Number(pid), 'SIGTERM'); } catch { /* already gone */ }
+      }
+    } catch {
+      // fuser not found or no process — ignore
+    }
   }
 
   async stop(): Promise<void> {

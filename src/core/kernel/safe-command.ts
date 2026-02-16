@@ -63,7 +63,9 @@ export async function executeCommandSafely(
   return new Promise<ToolResult>((resolve) => {
     const child = spawn(input.command, args, {
       cwd: input.cwd,
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+      env: { ...process.env, TERM: 'dumb' },
     });
 
     let stdout = '';

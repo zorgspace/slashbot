@@ -55,6 +55,10 @@ export interface ChatHistoryStore {
   getRich?(chatId: string): Promise<RichMessage[]>;
   /** Append full tool chain (also calls append() for backward compat). */
   appendRich?(chatId: string, messages: RichMessage[]): Promise<void>;
+  /** Get conversation summary for a chat. */
+  getSummary?(chatId: string): Promise<string | undefined>;
+  /** Set conversation summary for a chat. */
+  setSummary?(chatId: string, summary: string): Promise<void>;
 }
 
 /**
@@ -68,16 +72,20 @@ const MAX_RICH_HISTORY = MAX_HISTORY * 3; // 120 entries for tool chains
 export class FileChatHistoryStore implements ChatHistoryStore {
   private readonly histories = new Map<string, AgentMessage[]>();
   private readonly richHistories = new Map<string, RichMessage[]>();
+  private readonly summaries = new Map<string, string>();
   private hydrated = false;
   private richHydrated = false;
+  private summaryHydrated = false;
   private readonly filePath: string;
   private readonly richFilePath: string;
+  private readonly summaryFilePath: string;
   private readonly dirPath: string;
 
   constructor(homeDir: string, filename = 'connector-history.json') {
     this.dirPath = homeDir;
     this.filePath = join(homeDir, filename);
     this.richFilePath = join(homeDir, 'connector-rich-history.json');
+    this.summaryFilePath = join(homeDir, 'connector-summaries.json');
   }
 
   private async hydrate(): Promise<void> {
@@ -204,6 +212,47 @@ export class FileChatHistoryStore implements ChatHistoryStore {
       );
       await fs.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
       await fs.rename(tempPath, this.richFilePath);
+    } catch {
+      // best effort
+    }
+  }
+
+  async getSummary(chatId: string): Promise<string | undefined> {
+    await this.hydrateSummaries();
+    return this.summaries.get(chatId);
+  }
+
+  async setSummary(chatId: string, summary: string): Promise<void> {
+    await this.hydrateSummaries();
+    this.summaries.set(chatId, summary);
+    await this.persistSummaries();
+  }
+
+  private async hydrateSummaries(): Promise<void> {
+    if (this.summaryHydrated) return;
+    this.summaryHydrated = true;
+    try {
+      const raw = await fs.readFile(this.summaryFilePath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [chatId, summary] of Object.entries(parsed)) {
+          if (typeof summary === 'string') {
+            this.summaries.set(chatId, summary);
+          }
+        }
+      }
+    } catch {
+      // best effort
+    }
+  }
+
+  private async persistSummaries(): Promise<void> {
+    try {
+      await fs.mkdir(this.dirPath, { recursive: true });
+      const tempPath = `${this.summaryFilePath}.tmp`;
+      const payload = Object.fromEntries(this.summaries.entries());
+      await fs.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+      await fs.rename(tempPath, this.summaryFilePath);
     } catch {
       // best effort
     }

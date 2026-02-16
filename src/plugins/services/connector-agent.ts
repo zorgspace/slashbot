@@ -2,9 +2,7 @@ import type { AgentMessage, LlmAdapter, LlmCompletionInput, RichMessage, Streami
 import type { AgentLoopResult } from '../../core/agentic/agent-loop.js';
 import type { ChatHistoryStore } from './chat-history-store.js';
 import { FileChatHistoryStore } from './chat-history-store.js';
-import { contentToText, estimateTokens, mimeTypeFromDataUrl, windowByTokenBudget } from './context-window.js';
-import type { SubagentManager } from './subagent-manager.js';
-
+import { contentToText, estimateTokens, maybeSummarize, mimeTypeFromDataUrl, windowByTokenBudget } from './context-window.js';
 export interface ConnectorAgentRunInput {
   prompt: string;
   sessionId: string;
@@ -30,7 +28,6 @@ export class ConnectorAgentSession {
     private readonly runAgent?: ConnectorAgentRunner,
     private readonly contextBudget: number = 32000,
     private readonly maxResponseTokens?: number,
-    private readonly getSubagentManager?: () => SubagentManager | undefined,
   ) {
     this.store = typeof storeOrHomeDir === 'string'
       ? new FileChatHistoryStore(storeOrHomeDir)
@@ -51,21 +48,20 @@ export class ConnectorAgentSession {
     const sessionId = opts?.sessionId ?? `connector-${chatId}`;
     const agentId = opts?.agentId ?? 'connector-agent';
 
-    // Inject pending subagent results into the user message
-    const pending = this.getSubagentManager?.()?.drainPendingResults(sessionId) ?? [];
-    if (pending.length > 0) {
-      const summary = pending.map(t =>
-        `[Background task "${t.task}" completed: ${t.status === 'done' ? t.result : t.error}]`
-      ).join('\n');
-      text = `${summary}\n\nUser message:\n${text}`;
-    }
+    // Load existing summary for this chat
+    const existingSummary = await this.store.getSummary?.(chatId);
 
     // Token-budget windowing: reserve 80% of context budget for history
     const historyBudget = Math.floor(this.contextBudget * 0.8);
     const windowedHistory = windowByTokenBudget(history, historyBudget);
-    const historyWindow = windowedHistory
+    const windowedLines = windowedHistory
       .map((entry) => `[${entry.role}] ${contentToText(entry.content)}`)
       .join('\n');
+
+    // Prepend summary context if available
+    const historyWindow = existingSummary
+      ? `[Previous conversation summary: ${existingSummary}]\n\n${windowedLines}`
+      : windowedLines;
 
     let response: string | undefined;
     if (this.runAgent) {
@@ -157,6 +153,36 @@ export class ConnectorAgentSession {
         { role: 'user', content: historyUserContent },
         { role: 'assistant', content: historyResponse },
       ]);
+    }
+
+    // Trigger summarization asynchronously (non-blocking)
+    if (this.store.setSummary) {
+      const storeRef = this.store;
+      const llmRef = this.llm;
+      const budgetRef = this.contextBudget;
+      void (async () => {
+        try {
+          const currentHistory = await storeRef.get(chatId);
+          const currentSummary = await storeRef.getSummary?.(chatId);
+          const result = await maybeSummarize(
+            currentHistory,
+            budgetRef,
+            currentSummary,
+            llmRef,
+            sessionId,
+          );
+          if (result) {
+            await storeRef.setSummary!(chatId, result.summary);
+            // Replace history with just the kept messages
+            await storeRef.clear(chatId);
+            if (result.keptMessages.length > 0) {
+              await storeRef.append(chatId, result.keptMessages);
+            }
+          }
+        } catch {
+          // Summarization failure is non-fatal
+        }
+      })();
     }
 
     return response;

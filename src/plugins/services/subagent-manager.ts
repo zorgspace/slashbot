@@ -23,20 +23,24 @@ export interface SubagentTask {
 }
 
 /** Tool IDs that subagents must never use (prevents recursion / dangerous side-effects). */
-const BLOCKED_TOOLS = new Set([
+const BLOCKED_TOOLS = new Set<string>([
 ]);
 
+/** Maximum nesting depth for subagent spawns. */
+const MAX_DEPTH = 3;
+
+/** Tools removed from deep subagents to prevent further nesting. */
+const SPAWN_TOOLS = new Set(['spawn', 'spawn.status']);
+
 /**
- * SubagentManager — runs independent background agent loops.
+ * SubagentManager — runs independent agent loops as subagents.
  *
-  'spawn_status',
  * Each spawned subagent gets its own LLM completion with a task-specific
- * prompt. On completion, results are delivered via channel or stored for
- * retrieval. Subagents cannot spawn further subagents to prevent recursion.
+ * prompt. Results are returned directly to the caller (synchronous).
+ * Depth is enforced to prevent unbounded recursion.
  */
 export class SubagentManager {
   private readonly tasks = new Map<string, SubagentTask>();
-  private readonly pendingResults = new Map<string, SubagentTask[]>();
 
   constructor(
     private readonly llm: LlmAdapter,
@@ -47,7 +51,7 @@ export class SubagentManager {
     private readonly getAvailableTools?: () => SubagentToolInfo[],
   ) {}
 
-  async spawn(taskDescription: string, originSessionId?: string): Promise<SubagentTask> {
+  async spawn(taskDescription: string, originSessionId?: string, depth: number = 0): Promise<SubagentTask> {
     const id = randomUUID().slice(0, 8);
     const task: SubagentTask = {
       id,
@@ -58,8 +62,15 @@ export class SubagentManager {
     };
     this.tasks.set(id, task);
 
-    // Run in background — don't await
-    void this.runSubagent(task);
+    if (depth >= MAX_DEPTH) {
+      task.status = 'error';
+      task.error = `Maximum subagent nesting depth (${MAX_DEPTH}) exceeded.`;
+      task.completedAt = new Date().toISOString();
+      this.logger.warn('Subagent depth limit reached', { taskId: task.id, depth });
+      return task;
+    }
+
+    await this.runSubagent(task, depth);
 
     return task;
   }
@@ -72,47 +83,37 @@ export class SubagentManager {
     return this.tasks.get(id);
   }
 
-  /** Drain all pending results for a session (returns and clears). */
-  drainPendingResults(sessionId: string): SubagentTask[] {
-    const results = this.pendingResults.get(sessionId) ?? [];
-    if (results.length > 0) {
-      this.pendingResults.delete(sessionId);
-    }
-    return results;
-  }
-
-  /** Check if there are pending results for a session. */
-  hasPendingResults(sessionId: string): boolean {
-    return (this.pendingResults.get(sessionId)?.length ?? 0) > 0;
-  }
-
-  private buildToolAllowlist(): string[] | undefined {
+  private buildToolAllowlist(depth: number): string[] | undefined {
     const allTools = this.getAvailableTools?.();
     if (!allTools) return undefined;
     return allTools
       .map((t) => t.id)
-      // .filter((id) => !BLOCKED_TOOLS.has(id));
+      .filter((id) => depth >= 2 ? !SPAWN_TOOLS.has(id) : true);
   }
 
-  private buildToolCatalog(): string {
+  private buildToolCatalog(depth: number): string {
     const allTools = this.getAvailableTools?.();
     if (!allTools || allTools.length === 0) return '';
-    const allowed = allTools.filter((t) => !BLOCKED_TOOLS.has(t.id));
+    const allowed = allTools.filter((t) => {
+      if (BLOCKED_TOOLS.has(t.id)) return false;
+      if (depth >= 2 && SPAWN_TOOLS.has(t.id)) return false;
+      return true;
+    });
     const catalog = allowed
       .map((t) => `- ${t.id}${t.title ? ` (${t.title})` : ''}: ${t.description}`)
       .join('\n');
     return `\n\nAvailable tools (${allowed.length}):\n${catalog}`;
   }
 
-  private async runSubagent(task: SubagentTask): Promise<void> {
+  private async runSubagent(task: SubagentTask, depth: number): Promise<void> {
     try {
       const systemPrompt = await this.assemblePrompt();
-      const toolCatalog = this.buildToolCatalog();
+      const toolCatalog = this.buildToolCatalog(depth);
 
       const subagentDirective = [
         '## Subagent Directive',
         '',
-        'You are an autonomous background subagent with full tool access.',
+        'You are an autonomous subagent with full tool access.',
         'Your job is to complete the task below using the tools at your disposal.',
         '',
         '### Execution rules',
@@ -122,9 +123,7 @@ export class SubagentManager {
         '- If a tool call fails, try an alternative approach.',
         '',
         '### Delivery',
-        task.originSessionId
-          ? `Your results will be injected into the next message of session "${task.originSessionId}". Write a clear, actionable summary.`
-          : 'Your results will be available via spawn.status. Write a clear, actionable summary.',
+        'Your result will be returned directly to the parent agent.',
         toolCatalog,
       ].join('\n');
 
@@ -133,7 +132,7 @@ export class SubagentManager {
         { role: 'user', content: task.task },
       ];
 
-      const toolAllowlist = this.buildToolAllowlist();
+      const toolAllowlist = this.buildToolAllowlist(depth);
 
       const input: LlmCompletionInput = {
         sessionId: `subagent-${task.id}`,
@@ -149,34 +148,11 @@ export class SubagentManager {
       task.completedAt = new Date().toISOString();
 
       this.logger.info('Subagent completed', { taskId: task.id, steps: result.steps, toolCalls: result.toolCalls });
-
-      // Push to pending results for the origin session
-      if (task.originSessionId) {
-        const pending = this.pendingResults.get(task.originSessionId) ?? [];
-        pending.push(task);
-        this.pendingResults.set(task.originSessionId, pending);
-      }
-
-      // Deliver result via channel only if no parent session (otherwise injected automatically)
-      if (this.deliveryChannel && !task.originSessionId) {
-        try {
-          await this.deliveryChannel.send(`[Subagent ${task.id}] Task: ${task.task}\n\nResult: ${result.text}` as JsonValue);
-        } catch (err) {
-          this.logger.warn('Failed to deliver subagent result via channel', { taskId: task.id, error: String(err) });
-        }
-      }
     } catch (err) {
       task.status = 'error';
       task.error = err instanceof Error ? err.message : String(err);
       task.completedAt = new Date().toISOString();
       this.logger.warn('Subagent failed', { taskId: task.id, error: task.error });
-
-      // Also push errors to pending results
-      if (task.originSessionId) {
-        const pending = this.pendingResults.get(task.originSessionId) ?? [];
-        pending.push(task);
-        this.pendingResults.set(task.originSessionId, pending);
-      }
     }
   }
 }
