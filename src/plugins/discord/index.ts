@@ -1,68 +1,50 @@
-import { promises as fsPromises } from 'node:fs';
 import { z } from 'zod';
-import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
-
-const DiscordConfigSchema = z.object({
-  botToken: z.string().optional(),
-  authorizedChannelIds: z.array(z.string()).default([]),
-  primaryChannelId: z.string().optional(),
-  ownerId: z.string().optional(),
-});
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
-import type { ProviderRegistry } from '../../core/kernel/registries.js';
 import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
-import type { TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
+import type { LlmAdapter, TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
+import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
+import type { SlashbotKernel } from '../../core/kernel/kernel.js';
+import type { ProviderRegistry } from '../../core/kernel/registries.js';
+import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
 import { ConnectorAgentSession } from '../services/connector-agent.js';
 import type { SubagentManager } from '../services/subagent-manager.js';
 import type { TranscriptionService } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 import type { AgentRegistry } from '../agents/index.js';
 
+import type { DiscordState } from './types.js';
+import { PLUGIN_ID, DM_AGENTIC_MAX_RESPONSE_TOKENS, DISCORD_MESSAGE_LIMIT } from './types.js';
+import { loadConfig, saveConfig, isAuthorized, authorizeChannel, unauthorizeChannel, listAuthorizedChannelIds } from './config.js';
+import { flushRuntimeFiles } from './lock.js';
+import { setStatus, stopClientSafely, connectClient, connectIfTokenPresent } from './connection.js';
+import { setupHandlers, sendToChannel, resolveDefaultDMChannelId } from './handlers.js';
+
 declare module '../../core/kernel/event-bus.js' {
   interface EventMap {
     'connector:discord:status': { status: string };
+    'connector:discord:message': Record<string, JsonValue>;
   }
 }
-
-const PLUGIN_ID = 'slashbot.channel.discord';
-
-type ConnectorStatus = 'connected' | 'busy' | 'disconnected';
-
-interface DiscordConfig {
-  botToken?: string;
-  authorizedChannelIds: string[];
-  primaryChannelId?: string;
-  ownerId?: string;
-}
-
-function parseAgentRouting(text: string): { agentId?: string; message: string } {
-  const match = text.match(/^@([a-z0-9_-]+)\s+([\s\S]+)$/i);
-  if (match) return { agentId: match[1].toLowerCase(), message: match[2].trim() };
-  return { message: text };
-}
-
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-const VOICE_EXTENSIONS = ['.ogg', '.mp3', '.wav'];
 
 /**
  * Discord Channel plugin — full discord.js connector with context-aware agents.
  *
  * Handles text messages, image attachments, and voice file transcription
- * in authorized Discord channels. Runs an agentic LLM session per channel.
+ * in authorized Discord channels and DMs. Runs an agentic LLM session
+ * per channel with separate DM sessions featuring abort timeouts.
  *
  * Dependencies: transcription, providers.auth, agentic.tools
  *
  * Tools:
- *  - `discord.status`       — Get connector status (connected/disconnected, primary channel).
- *  - `discord.send`         — Send a message to a Discord channel.
- *  - `discord.add_channel`  — Authorize a channel for interaction.
+ *  - `discord.status`         — Get connector status.
+ *  - `discord.send`           — Send a message to a Discord channel.
+ *  - `discord.add_channel`    — Authorize a channel for interaction.
  *  - `discord.remove_channel` — Remove a channel authorization.
- *  - `discord.set_primary`  — Set the primary outbound channel.
+ *  - `discord.set_primary`    — Set the primary outbound channel.
  *
  * Commands:
  *  - `/discord status`        — Show connector status and authorized channels.
- *  - `/discord setup <token>` — Save bot token (requires restart to connect).
+ *  - `/discord setup <token>` — Save bot token and connect.
+ *  - `/discord channel`       — Manage authorized channels.
  *
  * Services:
  *  - `connector.discord.status` — Status getter for TUI.
@@ -81,58 +63,26 @@ const VOICE_EXTENSIONS = ['.ogg', '.mp3', '.wav'];
  *  - `discord.send` — Send payload to discord channel via RPC.
  */
 export function createDiscordPlugin(): SlashbotPlugin {
-  let client: import('discord.js').Client | null = null;
-  let status: ConnectorStatus = 'disconnected';
-  let updateIndicatorStatus: ((s: ConnectorStatus) => void) | null = null;
-  let agentSession: ConnectorAgentSession | null = null;
-  let discordConfig: DiscordConfig = {
-    authorizedChannelIds: [],
+  const state: DiscordState = {
+    client: null,
+    status: 'disconnected',
+    config: {
+      authorizedChannelIds: [],
+    },
+    agentSession: null,
+    dmAgentSession: null,
+    updateIndicatorStatus: null,
+    dmChannelBySessionId: new Map(),
+    pendingJobsByChannel: new Map(),
+    processingChannels: new Set(),
+    paths: {
+      configDir: '',
+      configPath: '',
+      configTmpPath: '',
+      lockPath: '',
+      locksDirPath: '',
+    },
   };
-
-  let homeDir = '';
-  let configPath = '';
-  let lockPath = '';
-
-  async function loadConfig(): Promise<void> {
-    try {
-      const data = await fsPromises.readFile(configPath, 'utf8');
-      const result = DiscordConfigSchema.safeParse(JSON.parse(data));
-      if (result.success) {
-        discordConfig = { ...discordConfig, ...result.data };
-      }
-    } catch { /* use defaults */ }
-  }
-
-  async function saveConfig(): Promise<void> {
-    await fsPromises.mkdir(homeDir, { recursive: true });
-    await fsPromises.writeFile(configPath, JSON.stringify(discordConfig, null, 2), 'utf8');
-  }
-
-  async function acquireLock(): Promise<boolean> {
-    try {
-      await fsPromises.mkdir(homeDir, { recursive: true });
-      await fsPromises.writeFile(lockPath, `${process.pid}`, { flag: 'wx' });
-      return true;
-    } catch {
-      try {
-        const pid = await fsPromises.readFile(lockPath, 'utf8');
-        try { process.kill(Number(pid), 0); return false; } catch { /* stale lock */ }
-        await fsPromises.unlink(lockPath);
-        await fsPromises.writeFile(lockPath, `${process.pid}`, { flag: 'wx' });
-        return true;
-      } catch {
-        return false;
-      }
-    }
-  }
-
-  async function releaseLock(): Promise<void> {
-    try { await fsPromises.unlink(lockPath); } catch { /* ok */ }
-  }
-
-  function isAuthorized(channelId: string): boolean {
-    return discordConfig.authorizedChannelIds.includes(channelId);
-  }
 
   return {
     manifest: {
@@ -150,53 +100,108 @@ export function createDiscordPlugin(): SlashbotPlugin {
       const logger = context.getService<StructuredLogger>('kernel.logger') ?? context.logger;
       const paths = context.getService<PathResolver>('kernel.paths')!;
 
-      homeDir = paths.home();
-      configPath = paths.home('discord.json');
-      lockPath = paths.home('discord.lock');
+      state.paths.configDir = paths.home();
+      state.paths.configPath = paths.home('discord.json');
+      state.paths.configTmpPath = `${state.paths.configPath}.tmp`;
+      state.paths.lockPath = paths.home('discord.lock');
+      state.paths.locksDirPath = paths.home('locks');
 
-      // Build agent session
-      if (authRouter && providers && kernel) {
-        const llm = new KernelLlmAdapter(
-          authRouter,
-          providers,
-          logger,
-          kernel,
-          () => context.getService<TokenModeProxyAuthService>('wallet.proxyAuth'),
-        );
-        const getSubagentManager = () => context.getService<SubagentManager>('agentic.subagentManager');
-        agentSession = new ConnectorAgentSession(
-          llm,
-          () => kernel.assemblePrompt(),
-          homeDir,
-          undefined,
-          undefined,
-          undefined,
-          getSubagentManager,
-        );
+      if (!kernel || !authRouter || !providers) {
+        throw new Error('discord plugin requires kernel.instance, kernel.authRouter, and kernel.providers.registry');
       }
 
-      // ── Status service (queryable by TUI on mount) ─────────────────
+      // ── LLM adapters & agent sessions ───────────────────────────────
+
+      const llm = new KernelLlmAdapter(
+        authRouter,
+        providers,
+        logger,
+        kernel,
+        () => context.getService<TokenModeProxyAuthService>('wallet.proxyAuth'),
+      );
+
+      const dmAgenticAdapter: LlmAdapter = {
+        complete: async (input) => {
+          let lastThought = '';
+          let lastSummary = '';
+          const autoContextKey = `discord:${input.sessionId}`;
+          const unsub = kernel.events.subscribe('connector:agentic', (event) => {
+            const p = event.payload as Record<string, unknown>;
+            if (p.contextKey !== autoContextKey) return;
+            if (p.status === 'thought' && typeof p.text === 'string') lastThought = p.text.trim();
+            if ((p.status === 'compression' || p.status === 'summary') && typeof p.text === 'string') lastSummary = p.text.trim();
+          });
+          try {
+            const result = await llm.complete({
+              ...input,
+              maxTokens: input.maxTokens ?? DM_AGENTIC_MAX_RESPONSE_TOKENS,
+            });
+            const rawText = result.text.trim();
+            if (rawText.length > 0 && rawText !== '(no response)') return result;
+            return { ...result, text: lastSummary || lastThought || 'Task completed, but no final response text was generated.' };
+          } finally {
+            unsub();
+          }
+        },
+      };
+
+      const getSubagentManager = () => context.getService<SubagentManager>('agentic.subagentManager');
+
+      state.agentSession = new ConnectorAgentSession(
+        llm,
+        () => kernel.assemblePrompt(),
+        state.paths.configDir,
+        undefined,
+        undefined,
+        2048,
+        getSubagentManager,
+      );
+      state.dmAgentSession = new ConnectorAgentSession(
+        dmAgenticAdapter,
+        () => kernel.assemblePrompt(),
+        state.paths.configDir,
+        undefined,
+        undefined,
+        DM_AGENTIC_MAX_RESPONSE_TOKENS,
+        getSubagentManager,
+      );
+
+      // ── Handler setup helper (bound to deps) ─────────────────────────
+
+      const boundSetupHandlers = (client: import('discord.js').Client) => {
+        setupHandlers(
+          client,
+          state,
+          kernel,
+          logger,
+          () => context.getService<TranscriptionService>('transcription.service'),
+          () => context.getService<AgentRegistry>('agents.registry'),
+        );
+      };
+
+      // ── Status service ────────────────────────────────────────────────
 
       context.registerService({
         id: 'connector.discord.status',
         pluginId: PLUGIN_ID,
         description: 'Discord connector status getter',
-        implementation: { getStatus: () => status },
+        implementation: { getStatus: () => state.status },
       });
 
-      updateIndicatorStatus = context.contributeStatusIndicator({
+      state.updateIndicatorStatus = context.contributeStatusIndicator({
         id: 'indicator.discord',
         pluginId: PLUGIN_ID,
         label: 'Discord',
         kind: 'connector',
         priority: 20,
         statusEvent: 'connector:discord:status',
+        messageEvent: 'connector:discord:message',
         showActivity: true,
         connectorName: 'discord',
-        getInitialStatus: () => status,
+        getInitialStatus: () => state.status,
       });
 
-      // ── Channel ─────────────────────────────────────────────────────
+      // ── Channel ───────────────────────────────────────────────────────
 
       context.registerChannel({
         id: 'discord',
@@ -205,35 +210,48 @@ export function createDiscordPlugin(): SlashbotPlugin {
         connector: true,
         sessionPrefix: 'dc-',
         send: async (payload) => {
-          if (!client || !discordConfig.primaryChannelId) {
+          if (!state.client || !state.config.primaryChannelId) {
             logger.warn('Discord: cannot send — no client or primary channel');
             return;
           }
-          const channel = await client.channels.fetch(discordConfig.primaryChannelId).catch(() => null);
+          const channel = await state.client.channels.fetch(state.config.primaryChannelId).catch(() => null);
           if (!channel || !('send' in channel)) return;
           const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
-          const parts = splitMessage(text, 2000);
+          const parts = splitMessage(text, DISCORD_MESSAGE_LIMIT);
           for (const part of parts) {
             await (channel as import('discord.js').TextChannel).send(part);
           }
+          kernel.events.publish('connector:discord:message', {
+            direction: 'out',
+            channelId: state.config.primaryChannelId,
+            modality: 'text',
+            text: text.length <= 2000 ? text : `${text.slice(0, 2000)}...[truncated]`,
+          });
         },
       });
 
-      // ── Tools ───────────────────────────────────────────────────────
+      // ── Tools ─────────────────────────────────────────────────────────
 
       context.registerTool({
         id: 'discord.status',
         title: 'Status',
         pluginId: PLUGIN_ID,
         description: 'Get Discord connector status. Args: {}',
-        execute: async () => ({
-          ok: true,
-          output: {
-            status,
-            primaryChannelId: discordConfig.primaryChannelId ?? null,
-            authorizedChannels: discordConfig.authorizedChannelIds.length,
-          } as unknown as JsonValue,
-        }),
+        execute: async () => {
+          const token = state.config.botToken ?? process.env.DISCORD_BOT_TOKEN;
+          if (token) {
+            await connectIfTokenPresent(state, kernel, logger, boundSetupHandlers);
+          }
+          return {
+            ok: true,
+            output: {
+              status: state.status,
+              primaryChannelId: state.config.primaryChannelId ?? null,
+              authorizedChannels: state.config.authorizedChannelIds.length,
+              ownerId: state.config.ownerId ?? null,
+            } as unknown as JsonValue,
+          };
+        },
       });
 
       context.registerTool({
@@ -243,21 +261,46 @@ export function createDiscordPlugin(): SlashbotPlugin {
         description: 'Send a message to a Discord channel. Args: { channelId?: string, text: string }',
         parameters: z.object({
           channelId: z.string().optional().describe('Target channel ID (defaults to primary)'),
-          text: z.string().describe('Message text to send'),
+          text: z.string().min(1, 'Message text must not be empty').describe('Message text to send'),
         }),
-        execute: async (args) => {
+        execute: async (rawArgs, toolContext) => {
           try {
-            if (!client) return { ok: false, error: { code: 'NOT_CONNECTED', message: 'Discord bot not connected' } };
-            const input = asObject(args);
-            const channelId = typeof input.channelId === 'string' ? input.channelId : discordConfig.primaryChannelId;
-            const text = asString(input.text, 'text');
-            if (!channelId) return { ok: false, error: { code: 'NO_CHANNEL', message: 'No channel ID specified' } };
-            const channel = await client.channels.fetch(channelId).catch(() => null);
+            if (!state.client) return { ok: false, error: { code: 'NOT_CONNECTED', message: 'Discord bot not connected' } };
+
+            const parseResult = z.object({
+              channelId: z.string().optional(),
+              text: z.string().min(1, 'Message text must not be empty'),
+            }).safeParse(rawArgs);
+
+            if (!parseResult.success) {
+              return {
+                ok: false,
+                error: {
+                  code: 'VALIDATION_ERROR',
+                  message: 'Invalid discord.send arguments',
+                  issues: parseResult.error.issues,
+                },
+              };
+            }
+
+            const { text } = parseResult.data;
+            const channelId = parseResult.data.channelId
+              ?? resolveDefaultDMChannelId(state, toolContext.sessionId)
+              ?? state.config.primaryChannelId;
+            if (!channelId) return { ok: false, error: { code: 'NO_CHANNEL', message: 'No channel ID specified and no primary channel set' } };
+
+            const channel = await state.client.channels.fetch(channelId).catch(() => null);
             if (!channel || !('send' in channel)) return { ok: false, error: { code: 'CHANNEL_ERROR', message: 'Channel not found or not text' } };
-            const parts = splitMessage(text, 2000);
+            const parts = splitMessage(text, DISCORD_MESSAGE_LIMIT);
             for (const part of parts) {
               await (channel as import('discord.js').TextChannel).send(part);
             }
+            kernel.events.publish('connector:discord:message', {
+              direction: 'out',
+              channelId,
+              modality: 'text',
+              text: text.length <= 2000 ? text : `${text.slice(0, 2000)}...[truncated]`,
+            });
             return { ok: true, output: 'sent' };
           } catch (err) {
             return { ok: false, error: { code: 'SEND_ERROR', message: String(err) } };
@@ -274,11 +317,7 @@ export function createDiscordPlugin(): SlashbotPlugin {
           try {
             const input = asObject(args);
             const channelId = asString(input.channelId, 'channelId');
-            if (!discordConfig.authorizedChannelIds.includes(channelId)) {
-              discordConfig.authorizedChannelIds.push(channelId);
-              if (!discordConfig.primaryChannelId) discordConfig.primaryChannelId = channelId;
-              await saveConfig();
-            }
+            await authorizeChannel(state, channelId);
             return { ok: true, output: `Channel ${channelId} authorized` };
           } catch (err) {
             return { ok: false, error: { code: 'ADD_ERROR', message: String(err) } };
@@ -295,11 +334,7 @@ export function createDiscordPlugin(): SlashbotPlugin {
           try {
             const input = asObject(args);
             const channelId = asString(input.channelId, 'channelId');
-            discordConfig.authorizedChannelIds = discordConfig.authorizedChannelIds.filter((id) => id !== channelId);
-            if (discordConfig.primaryChannelId === channelId) {
-              discordConfig.primaryChannelId = discordConfig.authorizedChannelIds[0];
-            }
-            await saveConfig();
+            await unauthorizeChannel(state, channelId);
             return { ok: true, output: `Channel ${channelId} removed` };
           } catch (err) {
             return { ok: false, error: { code: 'REMOVE_ERROR', message: String(err) } };
@@ -316,11 +351,11 @@ export function createDiscordPlugin(): SlashbotPlugin {
           try {
             const input = asObject(args);
             const channelId = asString(input.channelId, 'channelId');
-            discordConfig.primaryChannelId = channelId;
-            if (!discordConfig.authorizedChannelIds.includes(channelId)) {
-              discordConfig.authorizedChannelIds.push(channelId);
+            state.config.primaryChannelId = channelId;
+            if (!state.config.authorizedChannelIds.includes(channelId)) {
+              state.config.authorizedChannelIds.push(channelId);
             }
-            await saveConfig();
+            await saveConfig(state);
             return { ok: true, output: `Primary channel set to ${channelId}` };
           } catch (err) {
             return { ok: false, error: { code: 'SET_PRIMARY_ERROR', message: String(err) } };
@@ -328,18 +363,24 @@ export function createDiscordPlugin(): SlashbotPlugin {
         },
       });
 
-      // ── Commands ────────────────────────────────────────────────────
+      // ── Commands ──────────────────────────────────────────────────────
 
       context.registerCommand({
         id: 'discord',
         pluginId: PLUGIN_ID,
         description: 'Discord connector status and management',
-        subcommands: ['status', 'setup'],
+        subcommands: ['status', 'setup', 'channel'],
         execute: async (args, commandContext) => {
           const sub = args[0] ?? 'status';
 
           if (sub === 'status') {
-            commandContext.stdout.write(`Status: ${status}\nPrimary: ${discordConfig.primaryChannelId ?? 'none'}\nChannels: ${discordConfig.authorizedChannelIds.join(', ') || 'none'}\n`);
+            const token = state.config.botToken ?? process.env.DISCORD_BOT_TOKEN;
+            if (state.status !== 'connected' && token) {
+              await connectIfTokenPresent(state, kernel, logger, boundSetupHandlers);
+            }
+            commandContext.stdout.write(
+              `Status: ${state.status}\nPrimary: ${state.config.primaryChannelId ?? 'none'}\nOwner: ${state.config.ownerId ?? 'none'}\nChannels: ${state.config.authorizedChannelIds.join(', ') || 'none'}\nToken: ${token ? 'configured' : 'missing'}\n`,
+            );
             return 0;
           }
 
@@ -349,9 +390,47 @@ export function createDiscordPlugin(): SlashbotPlugin {
               commandContext.stderr.write('Usage: discord setup <bot-token> or set DISCORD_BOT_TOKEN env\n');
               return 1;
             }
-            discordConfig.botToken = token;
-            await saveConfig();
-            commandContext.stdout.write('Discord bot token saved. Restart to connect.\n');
+            state.config.botToken = token;
+            if (args[2]) {
+              state.config.ownerId = args[2];
+            }
+            await saveConfig(state);
+            commandContext.stdout.write('Discord bot token saved. Connecting...\n');
+            await connectClient(state, token, kernel, logger, boundSetupHandlers);
+            if (state.status === 'connected') {
+              commandContext.stdout.write('Discord bot connected.\n');
+            } else {
+              commandContext.stderr.write('Failed to connect. Check logs for details.\n');
+            }
+            return state.status === 'connected' ? 0 : 1;
+          }
+
+          if (sub === 'channel') {
+            const action = args[1];
+            const channelId = args[2];
+            if (action === 'add') {
+              if (!channelId) {
+                commandContext.stderr.write('Usage: discord channel add <channel-id>\n');
+                return 1;
+              }
+              await authorizeChannel(state, channelId);
+              await connectIfTokenPresent(state, kernel, logger, boundSetupHandlers);
+              commandContext.stdout.write(`Channel ${channelId} authorized.\n`);
+              if (state.status !== 'connected') {
+                commandContext.stdout.write('Discord is authorized but not connected. Run `discord setup <bot-token>` if needed.\n');
+              }
+              return 0;
+            }
+            if (action === 'remove') {
+              if (!channelId) {
+                commandContext.stderr.write('Usage: discord channel remove <channel-id>\n');
+                return 1;
+              }
+              await unauthorizeChannel(state, channelId);
+              commandContext.stdout.write(`Channel ${channelId} removed.\n`);
+              return 0;
+            }
+            commandContext.stdout.write(`Authorized channels: ${state.config.authorizedChannelIds.join(', ') || 'none'}\nPrimary: ${state.config.primaryChannelId ?? 'none'}\n`);
             return 0;
           }
 
@@ -360,26 +439,57 @@ export function createDiscordPlugin(): SlashbotPlugin {
         },
       });
 
-      // ── Gateway method ──────────────────────────────────────────────
+      // ── Gateway method ────────────────────────────────────────────────
 
       context.registerGatewayMethod({
         id: 'discord.send',
         pluginId: PLUGIN_ID,
         description: 'Send payload to discord channel',
         handler: async (params) => {
-          if (!client || !discordConfig.primaryChannelId) return { ok: false, error: 'not connected' } as unknown as JsonValue;
-          const channel = await client.channels.fetch(discordConfig.primaryChannelId).catch(() => null);
+          if (!state.client || !state.config.primaryChannelId) return { ok: false, error: 'not connected' } as unknown as JsonValue;
+
+          const schema = z.union([
+            z.string().min(1, 'Message text must not be empty'),
+            z.object({
+              text: z.string().min(1, 'Message text must not be empty'),
+              channelId: z.string().optional(),
+            }),
+          ]);
+
+          const result = schema.safeParse(params);
+          if (!result.success) {
+            return {
+              ok: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Invalid discord.send gateway payload',
+                issues: result.error.issues,
+              },
+            } as unknown as JsonValue;
+          }
+
+          const text = typeof result.data === 'string' ? result.data : result.data.text;
+          const targetChannelId = typeof result.data === 'object' && result.data.channelId
+            ? result.data.channelId
+            : state.config.primaryChannelId;
+
+          const channel = await state.client.channels.fetch(targetChannelId).catch(() => null);
           if (!channel || !('send' in channel)) return { ok: false, error: 'channel not found' } as unknown as JsonValue;
-          const text = typeof params === 'string' ? params : JSON.stringify(params);
-          const parts = splitMessage(text, 2000);
+          const parts = splitMessage(text, DISCORD_MESSAGE_LIMIT);
           for (const part of parts) {
             await (channel as import('discord.js').TextChannel).send(part);
           }
+          kernel.events.publish('connector:discord:message', {
+            direction: 'out',
+            channelId: targetChannelId,
+            modality: 'text',
+            text: text.length <= 2000 ? text : `${text.slice(0, 2000)}...[truncated]`,
+          });
           return { ok: true } as unknown as JsonValue;
         },
       });
 
-      // ── HTTP webhook route ──────────────────────────────────────────
+      // ── HTTP webhook route ────────────────────────────────────────────
 
       context.registerHttpRoute({
         method: 'POST',
@@ -396,7 +506,7 @@ export function createDiscordPlugin(): SlashbotPlugin {
         },
       });
 
-      // ── Startup hook ────────────────────────────────────────────────
+      // ── Startup hook ──────────────────────────────────────────────────
 
       context.registerHook({
         id: 'discord.startup',
@@ -404,144 +514,24 @@ export function createDiscordPlugin(): SlashbotPlugin {
         domain: 'kernel',
         event: 'startup',
         priority: 70,
+        timeoutMs: 5000,
         handler: async () => {
-          await loadConfig();
-          const token = discordConfig.botToken ?? process.env.DISCORD_BOT_TOKEN;
+          await loadConfig(state);
+          await flushRuntimeFiles(state);
+          const token = state.config.botToken ?? process.env.DISCORD_BOT_TOKEN;
           if (!token) {
-            status = 'disconnected';
-            updateIndicatorStatus?.('disconnected');
-            kernel?.events.publish('connector:discord:status', { status: 'disconnected' });
+            setStatus(state, 'disconnected', kernel);
+            logger.info('Discord: no token configured');
             return;
           }
-          status = 'busy';
-          updateIndicatorStatus?.('busy');
-          kernel?.events.publish('connector:discord:status', { status: 'busy' });
-
-          void (async () => {
-            const locked = await acquireLock();
-            if (!locked) {
-              status = 'busy';
-              updateIndicatorStatus?.('busy');
-              kernel?.events.publish('connector:discord:status', { status: 'busy' });
-              logger.info('Discord locked by another instance');
-              return;
-            }
-
-            try {
-              const { Client, GatewayIntentBits } = await import('discord.js');
-              client = new Client({
-                intents: [
-                  GatewayIntentBits.Guilds,
-                  GatewayIntentBits.GuildMessages,
-                  GatewayIntentBits.MessageContent,
-                  GatewayIntentBits.DirectMessages,
-                ],
-              });
-
-              const transcription = context.getService<TranscriptionService>('transcription.service');
-
-              client.on('messageCreate', async (message) => {
-                if (message.author.bot) return;
-                const channelId = message.channelId;
-                if (!isAuthorized(channelId)) return;
-                if (!agentSession) return;
-
-                // Typing indicator
-                const typingInterval = setInterval(() => {
-                  void message.channel.sendTyping().catch(() => {});
-                }, 8000);
-                void message.channel.sendTyping().catch(() => {});
-
-                try {
-                  // Check for image attachments
-                  const images: string[] = [];
-                  for (const attachment of message.attachments.values()) {
-                    const ext = (attachment.name ?? '').toLowerCase().split('.').pop() ?? '';
-                    if (IMAGE_EXTENSIONS.includes(`.${ext}`) || (attachment.contentType?.startsWith('image/') ?? false)) {
-                      try {
-                        const imgResponse = await fetch(attachment.url);
-                        const imgBuffer = Buffer.from(await imgResponse.arrayBuffer());
-                        const base64 = imgBuffer.toString('base64');
-                        const mimeType = attachment.contentType ?? 'image/png';
-                        images.push(`data:${mimeType};base64,${base64}`);
-                      } catch { /* skip image */ }
-                    }
-                  }
-
-                  // Check for voice attachments
-                  let voiceText = '';
-                  if (transcription) {
-                    for (const attachment of message.attachments.values()) {
-                      const ext = (attachment.name ?? '').toLowerCase().split('.').pop() ?? '';
-                      if (VOICE_EXTENSIONS.includes(`.${ext}`)) {
-                        try {
-                          const { text } = await transcription.transcribeFromUrl(attachment.url);
-                          voiceText += ` ${text}`;
-                        } catch { /* skip voice */ }
-                      }
-                    }
-                  }
-
-                  const userContent = (message.content + voiceText).trim() || (images.length > 0 ? 'What is in this image?' : '');
-                  if (!userContent) return;
-
-                  // Parse @agent_id routing prefix
-                  const routing = parseAgentRouting(userContent);
-                  const routedAgentId = routing.agentId;
-                  const routedMessage = routing.message;
-
-                  // Validate agent exists in registry (if specified)
-                  if (routedAgentId) {
-                    const agentRegistry = context.getService<AgentRegistry>('agents.registry');
-                    if (agentRegistry) {
-                      const agent = agentRegistry.get(routedAgentId);
-                      if (!agent) {
-                        await message.channel.send(`Unknown agent: @${routedAgentId}. Use agents.list to see available agents.`);
-                        return;
-                      }
-                    }
-                  }
-
-                  const response = await agentSession.chat(channelId, routedMessage, {
-                    sessionId: `dc-${channelId}`,
-                    agentId: routedAgentId ?? 'default-agent',
-                    images: images.length > 0 ? images : undefined,
-                  });
-
-                  const parts = splitMessage(response, 2000);
-                  for (const part of parts) {
-                    await message.channel.send(part);
-                  }
-                } catch (err) {
-                  logger.error('Discord message handler error', { error: String(err) });
-                  await message.channel.send('An error occurred processing your message.').catch(() => {});
-                } finally {
-                  clearInterval(typingInterval);
-                }
-              });
-
-              await client.login(token);
-              status = 'connected';
-              updateIndicatorStatus?.('connected');
-              kernel?.events.publish('connector:discord:status', { status: 'connected' });
-              logger.info('Discord bot connected');
-            } catch (err) {
-              status = 'disconnected';
-              updateIndicatorStatus?.('disconnected');
-              kernel?.events.publish('connector:discord:status', { status: 'disconnected' });
-              logger.error('Discord bot launch failed', { error: String(err) });
-              await releaseLock();
-            }
-          })().catch((err) => {
-            status = 'disconnected';
-            updateIndicatorStatus?.('disconnected');
-            kernel?.events.publish('connector:discord:status', { status: 'disconnected' });
+          void connectClient(state, token, kernel, logger, boundSetupHandlers).catch((err) => {
+            setStatus(state, 'disconnected', kernel);
             logger.error('Discord async startup connect failed', { error: String(err) });
           });
         },
       });
 
-      // ── Shutdown hook ───────────────────────────────────────────────
+      // ── Shutdown hook ─────────────────────────────────────────────────
 
       context.registerHook({
         id: 'discord.shutdown',
@@ -550,18 +540,14 @@ export function createDiscordPlugin(): SlashbotPlugin {
         event: 'shutdown',
         priority: 70,
         handler: async () => {
-          if (client) {
-            await client.destroy();
-            client = null;
-          }
-          status = 'disconnected';
-          updateIndicatorStatus?.('disconnected');
-          kernel?.events.publish('connector:discord:status', { status: 'disconnected' });
-          await releaseLock();
+          await stopClientSafely(state);
+          state.dmChannelBySessionId.clear();
+          state.pendingJobsByChannel.clear();
+          state.processingChannels.clear();
+          setStatus(state, 'disconnected', kernel);
+          await flushRuntimeFiles(state);
         },
       });
-
-      // Tool descriptions are self-explanatory; no extra prompt section needed.
     },
   };
 }

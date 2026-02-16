@@ -25,7 +25,7 @@ interface ProviderEntry {
 
 const registry = new Map<string, ProviderEntry>();
 
-const DEFAULT_CONFIG: CompletionConfig = { temperature: 0, maxTokens: 2048, timeoutMs: 60_000 };
+const DEFAULT_CONFIG: CompletionConfig = { temperature: 0, maxTokens: 2048, timeoutMs: 600_000 };
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -92,6 +92,19 @@ export function registerBuiltinProviders(): void {
     temperature: 0,
     maxTokens: 3072,
     contextLimit: 1_000_000,
+  });
+
+  // Local LLM providers (OpenAI-compatible API)
+  registerProvider('ollama', buildProviderModel(createOpenAI), {
+    temperature: 0,
+    maxTokens: 2048,
+    contextLimit: 128_000,
+  });
+
+  registerProvider('vllm', buildProviderModel(createOpenAI), {
+    temperature: 0,
+    maxTokens: 2048,
+    contextLimit: 32_768,
   });
 }
 

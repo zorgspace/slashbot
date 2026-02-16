@@ -40,6 +40,7 @@
     "@ai-sdk/perplexity": "^3.0.19",
     "@ai-sdk/togetherai": "^2.0.33",
     "@ai-sdk/xai": "^3.0.57",
+    "@slack/bolt": "^4.6.0",
     "@solana/spl-token": "^0.1.8",
     "@solana/web3.js": "^1.98.4",
     "ai": "^6.0.86",

@@ -65,6 +65,8 @@ const ENV_VAR_MAP: Record<string, string[]> = {
   'amazon-bedrock': ['AWS_ACCESS_KEY_ID'],
   azure: ['AZURE_API_KEY'],
   'google-vertex': ['GOOGLE_VERTEX_API_KEY'],
+  ollama: ['OLLAMA_BASE_URL', 'OLLAMA_API_KEY'],
+  vllm: ['VLLM_API_KEY', 'VLLM_BASE_URL'],
 };
 
 function synthesizeEnvProfile(providerId: string): AuthProfile | null {
@@ -74,6 +76,7 @@ function synthesizeEnvProfile(providerId: string): AuthProfile | null {
     for (const envVar of envVars) {
       const value = process.env[envVar];
       if (value && value.trim().length > 0) {
+        const isBaseUrl = envVar.endsWith('_BASE_URL');
         return {
           profileId: `env:${envVar}`,
           providerId,
@@ -81,7 +84,9 @@ function synthesizeEnvProfile(providerId: string): AuthProfile | null {
           method: 'api_key',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          data: { apiKey: value.trim() },
+          data: isBaseUrl
+            ? { baseUrl: value.trim(), apiKey: 'none' }
+            : { apiKey: value.trim() },
         };
       }
     }

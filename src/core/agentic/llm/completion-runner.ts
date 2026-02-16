@@ -240,10 +240,13 @@ export async function runCompletion(
         continue;
       }
 
+      const profileBaseUrl = typeof resolved.profile.data.baseUrl === 'string' ? resolved.profile.data.baseUrl : undefined;
+
       const execution: CompletionExecution = {
         providerId: provider.id,
         modelId: deps.selectModelForProvider(provider.id, resolved.modelId) ?? resolved.modelId,
         token,
+        ...(profileBaseUrl ? { baseUrl: profileBaseUrl } : {}),
       };
 
       try {

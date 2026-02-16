@@ -1,23 +1,23 @@
 import { z } from 'zod';
-import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
-import type { LlmAdapter, TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
-import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts.js';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { ProviderRegistry } from '../../core/kernel/registries.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
-import { ConnectorAgentSession } from '../services/connector-agent.js';
-import type { SubagentManager } from '../services/subagent-manager.js';
+import { KernelLlmAdapter } from '../../core/agentic/llm/index';
+import type { LlmAdapter, TokenModeProxyAuthService } from '../../core/agentic/llm/index';
+import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../core/kernel/contracts';
+import type { SlashbotKernel } from '../../core/kernel/kernel';
+import type { ProviderRegistry } from '../../core/kernel/registries';
+import type { AuthProfileRouter } from '../../core/providers/auth-router';
+import { ConnectorAgentSession } from '../services/connector-agent';
+import type { SubagentManager } from '../services/subagent-manager';
 import type { TranscriptionProvider } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
-import type { AgentRegistry } from '../agents/index.js';
+import type { AgentRegistry } from '../agents/index';
 
-import type { TelegramState } from './types.js';
-import { PLUGIN_ID, PRIVATE_AGENTIC_MAX_RESPONSE_TOKENS } from './types.js';
-import { loadConfig, saveConfig, isAuthorized, authorizeChatId, unauthorizeChatId, listAuthorizedPrivateChatIds } from './config.js';
-import { flushRuntimeFiles } from './lock.js';
-import { setStatus, stopBotSafely, connectBot, connectIfTokenPresent } from './connection.js';
-import { setupHandlers, sendMarkdownToChat, resolveDefaultPrivateChatId } from './handlers.js';
-import { isPrivateChatId } from './utils.js';
+import type { TelegramState } from './types';
+import { PLUGIN_ID, PRIVATE_AGENTIC_MAX_RESPONSE_TOKENS } from './types';
+import { loadConfig, saveConfig, isAuthorized, authorizeChatId, unauthorizeChatId, listAuthorizedPrivateChatIds } from './config';
+import { flushRuntimeFiles } from './lock';
+import { setStatus, stopBotSafely, connectBot, connectIfTokenPresent } from './connection';
+import { setupHandlers, sendMarkdownToChat, resolveDefaultPrivateChatId } from './handlers';
+import { isPrivateChatId } from './utils';
 
 declare module '../../core/kernel/event-bus.js' {
   interface EventMap {
@@ -493,7 +493,9 @@ export function createTelegramPlugin(): SlashbotPlugin {
           for await (const chunk of req) { body += String(chunk); }
           try {
             const update = JSON.parse(body);
-            await state.bot.handleUpdate(update);
+            state.bot.handleUpdate(update).catch(err => {
+              logger.warn('Telegram webhook handleUpdate error', { error: String(err) });
+            });
           } catch (err) {
             logger.warn('Telegram webhook parse error', { error: String(err) });
           }
