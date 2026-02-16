@@ -1,5 +1,5 @@
-import type { AgentMessage, LlmAdapter, LlmCompletionInput, RichMessage, StreamingCallback } from '../../core/agentic/llm/index.js';
-import type { AgentLoopResult } from '../../core/agentic/agent-loop.js';
+import type { AgentMessage, LlmAdapter, LlmCompletionInput, RichMessage, StreamingCallback } from '@slashbot/core/agentic/llm/index.js';
+import type { AgentLoopResult } from '@slashbot/core/agentic/agent-loop.js';
 import type { ChatHistoryStore } from './chat-history-store.js';
 import { FileChatHistoryStore } from './chat-history-store.js';
 import { contentToText, estimateTokens, maybeSummarize, mimeTypeFromDataUrl, windowByTokenBudget } from './context-window.js';

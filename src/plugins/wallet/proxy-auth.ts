@@ -5,7 +5,7 @@
  * Types: SessionKeypair, WalletSettings, PaymentMode.
  */
 import { createHash, createPrivateKey, sign } from 'node:crypto';
-import type { TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
+import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
 
 export type PaymentMode = 'apikey' | 'token';
 

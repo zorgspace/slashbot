@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
-import type { LlmAdapter, TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
+import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
 import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { ProviderRegistry } from '../../core/kernel/registries.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 import { ConnectorAgentSession } from '../services/connector-agent.js';
 import type { TranscriptionService } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
@@ -17,7 +17,7 @@ import { flushRuntimeFiles } from './lock.js';
 import { setStatus, stopClientSafely, connectClient, connectIfTokenPresent } from './connection.js';
 import { setupHandlers, sendToChannel, resolveDefaultDMChannelId } from './handlers.js';
 
-declare module '../../core/kernel/event-bus.js' {
+declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
     'connector:discord:status': { status: string };
     'connector:discord:message': Record<string, JsonValue>;

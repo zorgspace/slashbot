@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { KernelLlmAdapter } from '../../core/agentic/llm/index';
-import type { LlmAdapter, TokenModeProxyAuthService } from '../../core/agentic/llm/index';
+import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index';
+import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index';
 import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
-import type { SlashbotKernel } from '../../core/kernel/kernel';
-import type { ProviderRegistry } from '../../core/kernel/registries';
-import type { AuthProfileRouter } from '../../core/providers/auth-router';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel';
+import type { ProviderRegistry } from '@slashbot/core/kernel/registries';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router';
 import { ConnectorAgentSession } from '../services/connector-agent';
 import type { TranscriptionProvider } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
@@ -18,7 +18,7 @@ import { setStatus, stopBotSafely, connectBot, connectIfTokenPresent } from './c
 import { setupHandlers, sendMarkdownToChat, resolveDefaultPrivateChatId } from './handlers';
 import { isPrivateChatId } from './utils';
 
-declare module '../../core/kernel/event-bus.js' {
+declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
     'connector:telegram:status': { status: string };
     'connector:telegram:message': Record<string, JsonValue>;

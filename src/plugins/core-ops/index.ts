@@ -5,14 +5,14 @@ import { promisify } from 'node:util';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue, PathResolver, PluginManifest, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
-import type { EventBus } from '../../core/kernel/event-bus.js';
-import type { CommandRegistry, ToolRegistry } from '../../core/kernel/registries.js';
-import { clearHistory } from '../../core/history.js';
-import { validateManifest } from '../../core/plugins/manifest.js';
+import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
+import type { CommandRegistry, ToolRegistry } from '@slashbot/core/kernel/registries.js';
+import { clearHistory } from '@slashbot/core/history.js';
+import { validateManifest } from '@slashbot/core/plugins/manifest.js';
 
 const execFileAsync = promisify(execFile);
 
-declare module '../../core/kernel/event-bus.js' {
+declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
     'history:clear': Record<string, never>;
   }
@@ -615,7 +615,7 @@ export function createCoreOpsPlugin(): SlashbotPlugin {
                 try {
                   // Auto-build is handled by the loader on next restart,
                   // but we trigger it eagerly here for immediate feedback.
-                  const { autoBuildExternalPlugin } = await import('../../core/plugins/loader.js');
+                  const { autoBuildExternalPlugin } = await import('@slashbot/core/plugins/loader.js');
                   await autoBuildExternalPlugin(targetPath, manifest);
                   commandContext.stdout.write('Built successfully.\n');
                 } catch (buildErr) {

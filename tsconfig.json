@@ -11,7 +11,10 @@
     "jsx": "react-jsx",
     "types": ["node", "vitest/globals"],
     "paths": {
-      "@slashbot/plugin-sdk": ["./plugin-sdk/index.d.ts"]
+      "@slashbot/plugin-sdk": ["./plugin-sdk/index.d.ts"],
+      "@slashbot/core/*": ["./src/core/*"],
+      "@slashbot/providers/*": ["./src/providers/*"],
+      "@slashbot/ui/*": ["./src/ui/*"]
     }
   },
   "include": ["src", "tests"]

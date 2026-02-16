@@ -1,16 +1,16 @@
 import { promises as fsPromises } from 'node:fs';
 import { z } from 'zod';
 import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
-import type { ProviderRegistry } from '../../core/kernel/registries.js';
-import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
-import type { TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
+import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
 import { ConnectorAgentSession } from '../services/connector-agent.js';
 import type { TranscriptionService } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 
-declare module '../../core/kernel/event-bus.js' {
+declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
     'connector:whatsapp:status': { status: string };
     'connector:whatsapp:message': { chatId: string; text: string };

@@ -4,12 +4,12 @@ import { randomUUID } from 'node:crypto';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { ChannelDefinition, JsonValue, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
-import type { EventBus } from '../../core/kernel/event-bus.js';
-import type { ChannelRegistry, ProviderRegistry } from '../../core/kernel/registries.js';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
-import type { TokenModeProxyAuthService } from '../../core/agentic/llm/types.js';
-import { KernelLlmAdapter } from '../../core/agentic/llm/adapter.js';
+import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
+import type { ChannelRegistry, ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
+import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/types.js';
+import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/adapter.js';
 
 const CronTriggerSchema = z.object({
   type: z.literal('cron'),
@@ -51,7 +51,7 @@ const AutomationJobSchema = z.object({
 });
 import { asObject, asString } from '../utils.js';
 
-declare module '../../core/kernel/event-bus.js' {
+declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
     'automation:job:started': { jobId: string; name: string };
     'automation:job:completed': { jobId: string; name: string };

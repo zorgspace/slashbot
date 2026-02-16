@@ -3,15 +3,15 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { EventBus } from '../../core/kernel/event-bus.js';
-import type { ProviderRegistry } from '../../core/kernel/registries.js';
-import type { LlmAdapter, TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
-import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
+import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
+import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 import { asObject, asString } from '../utils.js';
 
-declare module '../../core/kernel/event-bus.js' {
+declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
     'agents:registered': { agentId: string; name: string; action: string };
     'agents:removed': { agentId: string; name: string };

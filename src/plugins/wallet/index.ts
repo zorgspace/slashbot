@@ -4,7 +4,7 @@ import { createCipheriv, createDecipheriv, createHash, createPrivateKey, pbkdf2S
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { JsonValue, PathResolver, SlashbotPlugin } from '@slashbot/plugin-sdk';
-import type { TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
+import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
 import { asObject, asString } from '../utils.js';
 
 const WalletDataSchema = z.object({

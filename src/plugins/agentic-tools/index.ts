@@ -1,15 +1,14 @@
 import { promises as fs } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
-import type { ChannelDefinition, JsonValue, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
-import type { RuntimeConfig } from '../../core/kernel/contracts.js';
-import type { ChannelRegistry, ProviderRegistry } from '../../core/kernel/registries.js';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
-import type { TokenModeProxyAuthService } from '../../core/agentic/llm/types.js';
-import { KernelLlmAdapter } from '../../core/agentic/llm/adapter.js';
+import type { ChannelDefinition, JsonValue, RuntimeConfig, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { ChannelRegistry, ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
+import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/types.js';
+import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/adapter.js';
 import { SubagentManager } from '../services/subagent-manager.js';
-import { commandExists, executeCommandSafely } from '../../core/kernel/safe-command.js';
+import { commandExists, executeCommandSafely } from '@slashbot/core/kernel/safe-command.js';
 
 import * as readlinePromises from 'node:readline/promises';
 import { asObject, asNonEmptyString as asString } from '../utils.js';

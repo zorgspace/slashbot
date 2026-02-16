@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { AgentMessage, RichMessage } from '../../core/agentic/llm/index.js';
+import type { AgentMessage, RichMessage } from '@slashbot/core/agentic/llm/index.js';
 
 const ConnectorHistorySchema = z.record(
   z.string(),

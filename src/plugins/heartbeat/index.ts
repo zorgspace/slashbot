@@ -17,16 +17,16 @@ const HeartbeatStateSchema = z.object({
   lastResult: z.enum(['ok', 'alert', 'error']).optional(),
   lastError: z.string().optional(),
 });
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { EventBus } from '../../core/kernel/event-bus.js';
-import type { ChannelRegistry, ProviderRegistry } from '../../core/kernel/registries.js';
-import type { LlmAdapter } from '../../core/agentic/llm/index.js';
-import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
-import type { TokenModeProxyAuthService } from '../../core/agentic/llm/index.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
+import type { ChannelRegistry, ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import type { LlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 import { asObject } from '../utils.js';
 
-declare module '../../core/kernel/event-bus.js' {
+declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
     'heartbeat:status': { status: string };
     'heartbeat:started': Record<string, never>;

@@ -1,5 +1,5 @@
-import type { StructuredLogger } from '../../core/kernel/contracts.js';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
+import type { StructuredLogger } from '@slashbot/plugin-sdk';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { ConnectorStatus, DiscordState } from './types.js';
 import { acquireLock, releaseLock } from './lock.js';
 

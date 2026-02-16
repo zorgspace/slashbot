@@ -1,15 +1,14 @@
-import type { SlashbotPlugin } from '@slashbot/plugin-sdk';
-import type { RuntimeConfig } from '../../core/kernel/contracts.js';
-import type { SlashbotKernel } from '../../core/kernel/kernel.js';
-import type { EventBus } from '../../core/kernel/event-bus.js';
-import type { ProviderRegistry } from '../../core/kernel/registries.js';
-import { saveRuntimeConfig } from '../../core/config/runtime-config.js';
-import { createAllProviders } from '../../providers/index.js';
-import { createGatewayCommands } from '../../providers/gateway-provider.js';
-import type { PickerBridge } from '../../core/kernel/picker-bridge.js';
-import type { PickerItem } from '../../ui/picker-overlay.js';
+import type { RuntimeConfig, SlashbotPlugin } from '@slashbot/plugin-sdk';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
+import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import { saveRuntimeConfig } from '@slashbot/core/config/runtime-config.js';
+import { createAllProviders } from '@slashbot/providers/index.js';
+import { createGatewayCommands } from '@slashbot/providers/gateway-provider.js';
+import type { PickerBridge } from '@slashbot/core/kernel/picker-bridge.js';
+import type { PickerItem } from '@slashbot/ui/picker-overlay.js';
 
-declare module '../../core/kernel/event-bus.js' {
+declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
     'provider:changed': { providerId: string; modelId: string };
   }
@@ -71,14 +70,14 @@ export function createProviderAuthPlugin(): SlashbotPlugin {
         pluginId: PLUGIN_ID,
         description: 'Run provider onboarding (use --provider to select)',
         execute: async (_args, commandContext) => {
-          const { runOnboarding } = await import('../../ui/onboarding.js');
+          const { runOnboarding } = await import('@slashbot/ui/onboarding.js');
           const flags = commandContext.flags ?? {};
           const providerId = typeof flags['provider'] === 'string' ? flags['provider'] : 'gateway';
           const method = typeof flags['method'] === 'string' ? flags['method'] : undefined;
           await runOnboarding(getKernel(), {
             agentId: typeof flags['agent-id'] === 'string' ? flags['agent-id'] : 'default-agent',
             providerId,
-            method: method as import('../../core/kernel/contracts.js').ProviderAuthMethod | undefined,
+            method: method as import('@slashbot/plugin-sdk').ProviderAuthMethod | undefined,
             profileLabel: typeof flags['label'] === 'string' ? flags['label'] : undefined,
             nonInteractive: commandContext.nonInteractive,
             apiKey: typeof flags['api-key'] === 'string' ? flags['api-key'] : undefined,

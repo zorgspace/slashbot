@@ -5,8 +5,8 @@ import type {
   SlashbotPlugin,
   ToolCallContext
 } from '@slashbot/plugin-sdk';
-import type { ProviderRegistry } from '../../core/kernel/registries.js';
-import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
+import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 import { z } from 'zod';
 import { asObject, asString, asOptionalStringArray, stripHtml } from '../utils.js';
 

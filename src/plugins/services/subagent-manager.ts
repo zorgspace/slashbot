@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { LlmAdapter, LlmCompletionInput, AgentMessage } from '../../core/agentic/llm/types.js';
-import type { AgentLoopResult } from '../../core/agentic/agent-loop.js';
-import type { StructuredLogger, ChannelDefinition, JsonValue } from '../../core/kernel/contracts.js';
+import type { LlmAdapter, LlmCompletionInput, AgentMessage } from '@slashbot/core/agentic/llm/types.js';
+import type { AgentLoopResult } from '@slashbot/core/agentic/agent-loop.js';
+import type { StructuredLogger, ChannelDefinition, JsonValue } from '@slashbot/plugin-sdk';
 
 /** Minimal tool info for building the subagent prompt. */
 export interface SubagentToolInfo {

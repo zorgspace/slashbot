@@ -363,6 +363,64 @@ export interface SlashbotPlugin {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Config                                                             */
+/* ------------------------------------------------------------------ */
+
+export interface ConfigHookEntry {
+  type: 'command';
+  command: string;
+  timeoutMs?: number;
+}
+
+export interface ConfigHookRule {
+  matcher?: string;
+  hooks: ConfigHookEntry[];
+}
+
+export type ConfigHookEventName =
+  | 'PreToolUse' | 'PostToolUse'
+  | 'PreCommand' | 'PostCommand'
+  | 'MessageReceived' | 'MessageSending' | 'MessageSent'
+  | 'SessionStart' | 'SessionEnd'
+  | 'Startup' | 'Shutdown'
+  | 'Notification' | 'Stop'
+  | 'PreLlmCall' | 'PostLlmCall'
+  | 'PrePromptAssemble' | 'PostPromptAssemble';
+
+export type ConfigHookMap = Partial<Record<ConfigHookEventName, ConfigHookRule[]>>;
+
+export interface PluginLoadConfig {
+  allow: string[];
+  deny: string[];
+  entries: Array<{ id: string; enabled?: boolean; config?: JsonValue }>;
+  paths: string[];
+}
+
+export interface RuntimeConfig {
+  gateway: {
+    host: string;
+    port: number;
+    authToken: string;
+  };
+  plugins: PluginLoadConfig;
+  providers: {
+    active?: { providerId: string; modelId: string; apiKey?: string };
+  };
+  hooks: {
+    defaultTimeoutMs: number;
+    rules?: ConfigHookMap;
+  };
+  commandSafety: {
+    defaultTimeoutMs: number;
+    riskyCommands: string[];
+    requireExplicitApproval: boolean;
+  };
+  logging: {
+    level: 'debug' | 'info' | 'warn' | 'error';
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
