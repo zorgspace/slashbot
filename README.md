@@ -93,24 +93,3 @@ Configuration is stored in `HEARTBEAT.md` and related plugin settings.
 
 ---
 
-## Slashbin
-
-`slashbin` is the local command palette for Slashbot — a directory of small, composable scripts and skills you can trigger from the agent.
-
-- Scripts live under `skills/` and can be installed or created via the **skill‑creator** plugin
-- Each skill exposes a clear, text‑based interface so agents can call it deterministically
-- You keep everything local: code, prompts, and configuration stay on your machine
-
-### Using Slashbin
-
-1. Browse installed skills:
-   - Check the `skills/` folder in this repo
-   - Use the TUI or CLI to ask: *"What skills are available?"*
-2. Run a skill from chat:
-   - In the TUI: describe the task and mention the skill by name if you know it
-   - In connectors (Discord/Telegram): use the usual `/chat` or `/say` entrypoints
-3. Add new skills:
-   - Use the bundled **skill-creator** to scaffold a new skill
-   - Or drop your own script into `skills/` following existing examples
-
-Slashbin is how you turn Slashbot into *your* local toolbox: small, auditable utilities that the agent can orchestrate end‑to‑end.
