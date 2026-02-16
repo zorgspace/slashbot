@@ -11,6 +11,15 @@ import { KernelLlmAdapter } from '../../core/agentic/llm/index.js';
 import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
 import { asObject, asString } from '../utils.js';
 
+declare module '../../core/kernel/event-bus.js' {
+  interface EventMap {
+    'agents:registered': { agentId: string; name: string; action: string };
+    'agents:removed': { agentId: string; name: string };
+    'agents:invoked': { agentId: string; name: string; promptLength: number };
+    'agents:completed': { agentId: string; name: string; steps: number; toolCalls: number; durationMs: number; finishReason: string };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------

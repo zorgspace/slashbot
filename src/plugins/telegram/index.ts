@@ -18,6 +18,13 @@ import { setStatus, stopBotSafely, connectBot, connectIfTokenPresent } from './c
 import { setupHandlers, sendMarkdownToChat, resolveDefaultPrivateChatId } from './handlers.js';
 import { isPrivateChatId } from './utils.js';
 
+declare module '../../core/kernel/event-bus.js' {
+  interface EventMap {
+    'connector:telegram:status': { status: string };
+    'connector:telegram:message': Record<string, JsonValue>;
+  }
+}
+
 /**
  * Telegram Channel plugin — full Telegraf-based Telegram connector with agent execution.
  */

@@ -8,6 +8,12 @@ import type { EventBus } from '../../core/kernel/event-bus.js';
 import type { CommandRegistry, ToolRegistry } from '../../core/kernel/registries.js';
 import { clearHistory } from '../../core/history.js';
 
+declare module '../../core/kernel/event-bus.js' {
+  interface EventMap {
+    'history:clear': Record<string, never>;
+  }
+}
+
 interface CommandOutput {
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;

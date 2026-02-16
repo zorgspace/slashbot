@@ -19,25 +19,7 @@ export interface EventMap {
   'lifecycle:message_received': { sessionId: string; agentId: string; message: string };
   'lifecycle:message_sending': { sessionId: string; agentId: string; message: string };
   'lifecycle:message_sent': { sessionId: string; agentId: string; message: string };
-  'history:clear': Record<string, never>;
-  'provider:changed': { providerId: string; modelId: string };
   'connector:agentic': { connector?: string; type?: string; text?: string; [key: string]: JsonValue | undefined };
-  'connector:telegram:status': { status: string };
-  'connector:telegram:message': Record<string, JsonValue>;
-  'connector:telegram:agentic': Record<string, JsonValue>;
-  'connector:discord:status': { status: string };
-  'heartbeat:status': { status: string };
-  'heartbeat:started': Record<string, never>;
-  'heartbeat:complete': { result: JsonValue; responseLength: number };
-  'heartbeat:error': { error: string };
-  'automation:job:started': { jobId: string; name: string };
-  'automation:job:completed': { jobId: string; name: string };
-  'automation:job:error': { jobId: string; error: string };
-  'automation:webhook:received': { jobId: string; name: string };
-  'agents:registered': { agentId: string; name: string; action: string };
-  'agents:removed': { agentId: string; name: string };
-  'agents:invoked': { agentId: string; name: string; promptLength: number };
-  'agents:completed': { agentId: string; name: string; steps: number; toolCalls: number; durationMs: number; finishReason: string };
 }
 
 export type KnownEventType = keyof EventMap;

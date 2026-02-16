@@ -26,6 +26,15 @@ import type { TokenModeProxyAuthService } from '../../core/agentic/llm/index.js'
 import type { AuthProfileRouter } from '../../core/providers/auth-router.js';
 import { asObject } from '../utils.js';
 
+declare module '../../core/kernel/event-bus.js' {
+  interface EventMap {
+    'heartbeat:status': { status: string };
+    'heartbeat:started': Record<string, never>;
+    'heartbeat:complete': { result: JsonValue; responseLength: number };
+    'heartbeat:error': { error: string };
+  }
+}
+
 const PLUGIN_ID = 'slashbot.heartbeat';
 
 interface HeartbeatConfig {

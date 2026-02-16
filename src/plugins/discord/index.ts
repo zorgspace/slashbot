@@ -18,6 +18,12 @@ import type { TranscriptionService } from '../services/transcription-service.js'
 import { asObject, asString, splitMessage } from '../utils.js';
 import type { AgentRegistry } from '../agents/index.js';
 
+declare module '../../core/kernel/event-bus.js' {
+  interface EventMap {
+    'connector:discord:status': { status: string };
+  }
+}
+
 const PLUGIN_ID = 'slashbot.channel.discord';
 
 type ConnectorStatus = 'connected' | 'busy' | 'disconnected';

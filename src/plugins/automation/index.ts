@@ -30,6 +30,15 @@ const AutomationJobSchema = z.object({
 });
 import { asObject, asString } from '../utils.js';
 
+declare module '../../core/kernel/event-bus.js' {
+  interface EventMap {
+    'automation:job:started': { jobId: string; name: string };
+    'automation:job:completed': { jobId: string; name: string };
+    'automation:job:error': { jobId: string; error: string };
+    'automation:webhook:received': { jobId: string; name: string };
+  }
+}
+
 const PLUGIN_ID = 'slashbot.automation';
 
 // ── Cron parsing ────────────────────────────────────────────────────────
