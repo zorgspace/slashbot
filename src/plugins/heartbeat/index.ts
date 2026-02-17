@@ -240,7 +240,7 @@ class HeartbeatService {
 
       const prompt = options?.prompt ?? this.config.prompt;
       const fullPrompt = heartbeatContent
-        ? `${prompt}\n\n## Current HEARTBEAT.md\n${heartbeatContent}`
+        ? `## Current HEARTBEAT.md\n${heartbeatContent} \n\n${prompt}`
         : prompt;
 
       const llmResult = await this.llm.complete({
@@ -248,14 +248,12 @@ class HeartbeatService {
         agentId: 'default-agent',
         noTools: false,
         maxTokens: 4096,
-        toolAllowlist: ['message', 'telegram.send', 'discord.send'],
         messages: [
           {
             role: 'system',
             content:
-              'You are a heartbeat agent. You have tools available — use them to carry out ' +
-              'the tasks. Plan, Execute and Verify each item in HEARTBEAT.md. Do' +
-              'not report unless explicityly asked.'
+              'You are a heartbeat agent. Focus only on fulfilling the tasks contained in current HEARTBEAT.md content. Execute each task in HEARTBEAT.md using your tools. ' +
+              'Do not report unless explicitly asked.'
           },
           { role: 'user', content: fullPrompt },
         ],
