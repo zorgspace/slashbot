@@ -1,3 +1,14 @@
+/**
+ * @module kernel
+ *
+ * Core orchestrator for the Slashbot plugin system. Manages plugin lifecycle,
+ * tool/command/provider registries, hook dispatching, session management,
+ * gateway lifecycle, and prompt assembly.
+ *
+ * @see {@link SlashbotKernel} - Main kernel class
+ * @see {@link KernelCreateOptions} - Options for kernel instantiation
+ */
+
 import { randomUUID } from 'node:crypto';
 import { promises as fs, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,10 +60,15 @@ import { discoverPlugins, type DiscoveredPlugin } from '../plugins/discovery.js'
 import { registerConfigHooks } from './config-hook-loader.js';
 import { attachInteractionLogger } from './interaction-logger.js';
 
+/** Options for creating a new kernel instance via {@link SlashbotKernel.create}. */
 export interface KernelCreateOptions {
+  /** Root directory of the current workspace. */
   workspaceRoot: string;
+  /** Optional CLI / runtime flags (e.g. non-interactive mode). */
   flags?: RuntimeFlags;
+  /** Map of bundled plugin factory functions keyed by plugin ID. */
   bundledPlugins?: Record<string, BundledPluginFactory>;
+  /** Pre-discovered bundled plugin manifests. */
   bundledDiscovered?: DiscoveredPlugin[];
 }
 
@@ -127,22 +143,45 @@ function sortPlugins(plugins: DiscoveredPlugin[]): DiscoveredPlugin[] {
   return result;
 }
 
+/**
+ * Main kernel class that orchestrates the entire Slashbot runtime.
+ *
+ * Manages plugin registration, tool execution, hook dispatching, session
+ * persistence, gateway lifecycle, prompt assembly, and authentication routing.
+ * Created exclusively via the static {@link SlashbotKernel.create} factory.
+ */
 export class SlashbotKernel {
+  /** Resolved runtime configuration for the current workspace. */
   readonly config: RuntimeConfig;
+  /** Structured logger scoped to the configured log level. */
   readonly logger;
+  /** Registry of all registered tools. */
   readonly tools = new ToolRegistry();
+  /** Registry of all registered CLI commands. */
   readonly commands = new CommandRegistry();
+  /** Registry of all registered LLM providers. */
   readonly providers = new ProviderRegistry();
+  /** Registry of gateway JSON-RPC methods. */
   readonly gatewayMethods = new GatewayMethodRegistry();
+  /** Registry of gateway HTTP routes. */
   readonly httpRoutes = new HttpRouteRegistry();
+  /** Registry of inter-plugin services. */
   readonly services = new ServiceRegistry();
+  /** Registry of messaging channels (connectors). */
   readonly channels = new ChannelRegistry();
+  /** Registry of TUI status indicators. */
   readonly statusIndicators = new StatusIndicatorRegistry();
+  /** Pub-sub event bus for cross-plugin communication. */
   readonly events = new EventBus();
+  /** Assembles the full system prompt from all contributor sections. */
   readonly promptAssembler = new PromptAssembler();
+  /** Dispatcher for kernel, lifecycle, and custom hooks. */
   readonly hooks: HookDispatcher;
+  /** Persistent store for authentication profiles. */
   readonly authStore: AuthProfileStore;
+  /** Routes auth requests to the correct provider/profile. */
   readonly authRouter: AuthProfileRouter;
+  /** Resolves home and workspace directory paths. */
   readonly paths: PathResolver;
 
   private readonly loadedPlugins: LoadedPlugin[] = [];
@@ -299,6 +338,15 @@ export class SlashbotKernel {
     });
   }
 
+  /**
+   * Create and fully initialise a kernel instance.
+   *
+   * Loads runtime config, discovers and registers plugins (in dependency order),
+   * applies provider overrides, and fetches the gateway model catalog.
+   *
+   * @param options - Kernel creation options
+   * @returns A fully initialised kernel ready for startup
+   */
   static async create(options: KernelCreateOptions): Promise<SlashbotKernel> {
     const config = await loadRuntimeConfig(options.workspaceRoot, options.flags);
     const kernel = new SlashbotKernel(options.workspaceRoot, options.flags ?? {}, config);
@@ -446,6 +494,10 @@ export class SlashbotKernel {
     };
   }
 
+  /**
+   * Start the HTTP/WebSocket gateway server.
+   * Dispatches the `gateway_start` lifecycle hook before binding.
+   */
   async startGateway(): Promise<void> {
     if (this.gateway) {
       return;
@@ -479,6 +531,10 @@ export class SlashbotKernel {
     });
   }
 
+  /**
+   * Stop the HTTP/WebSocket gateway server and clean up event forwarding.
+   * Dispatches the `gateway_stop` lifecycle hook after shutdown.
+   */
   async stopGateway(): Promise<void> {
     if (!this.gateway) {
       return;
@@ -498,6 +554,7 @@ export class SlashbotKernel {
     }
   }
 
+  /** Dispatch the kernel `startup` hook to all registered listeners. */
   async startup(): Promise<void> {
     const report = await this.hooks.dispatchKernel('startup', { ready: true }, {});
     if (report.failures.length > 0) {
@@ -505,6 +562,7 @@ export class SlashbotKernel {
     }
   }
 
+  /** Dispatch the kernel `shutdown` hook and deactivate all loaded plugins. */
   async shutdown(): Promise<void> {
     const report = await this.hooks.dispatchKernel('shutdown', { done: true }, {});
     if (report.failures.length > 0) {
@@ -523,6 +581,16 @@ export class SlashbotKernel {
     }
   }
 
+  /**
+   * Execute a registered CLI command by ID.
+   *
+   * Dispatches `before_command` / `after_command` lifecycle hooks around execution.
+   *
+   * @param commandId - The unique command identifier
+   * @param args - Positional arguments passed to the command
+   * @param context - Execution context (cwd, streams, env, flags)
+   * @returns The command exit code (0 = success)
+   */
   async runCommand(commandId: string, args: string[], context: CommandExecutionContext): Promise<number> {
     const command = this.commands.get(commandId);
     if (!command) {
@@ -547,6 +615,17 @@ export class SlashbotKernel {
     return exitCode;
   }
 
+  /**
+   * Execute a registered tool by ID.
+   *
+   * Dispatches `before_tool_call`, `after_tool_call`, and `tool_result_persist`
+   * lifecycle hooks and publishes a `tool:result` event.
+   *
+   * @param toolId - The unique tool identifier
+   * @param args - Arguments to pass to the tool handler
+   * @param context - Optional execution context (session, agent, abort signal)
+   * @returns Tool execution result
+   */
   async runTool(toolId: string, args: JsonValue, context: ToolCallContext = {}): Promise<ToolResult> {
     const tool = this.tools.get(toolId);
     if (!tool) {
@@ -614,10 +693,12 @@ export class SlashbotKernel {
     return result;
   }
 
+  /** Return a snapshot of all plugin load diagnostics. */
   diagnosticsReport(): PluginDiagnostic[] {
     return [...this.diagnostics];
   }
 
+  /** Compute the current kernel health status based on plugin diagnostics. */
   health(): HealthStatus {
     const failed = this.diagnostics.filter((item) => item.status === 'failed').length;
     const status: HealthStatus['status'] = failed > 0 ? 'degraded' : 'ok';
@@ -635,10 +716,16 @@ export class SlashbotKernel {
     };
   }
 
+  /** Return the IDs of all successfully loaded plugins. */
   listLoadedPlugins(): string[] {
     return this.loadedPlugins.map((item) => item.manifest.id);
   }
 
+  /**
+   * Assemble the full system prompt from all registered sections and context providers.
+   * Dispatches `before_prompt_assemble` / `after_prompt_assemble` lifecycle hooks.
+   * @returns The concatenated system prompt string
+   */
   async assemblePrompt(): Promise<string> {
     await this.hooks.dispatchLifecycle('before_prompt_assemble', {}, {});
 
@@ -649,6 +736,11 @@ export class SlashbotKernel {
     return result;
   }
 
+  /**
+   * Start a new session, persisting metadata to disk and dispatching lifecycle hooks.
+   * @param sessionId - Unique session identifier
+   * @param agentId - ID of the agent owning the session
+   */
   async startSession(sessionId: string, agentId: string): Promise<void> {
     const sessionPath = this.sessionFilePath(agentId, sessionId);
     await fs.mkdir(this.paths.home('agents', agentId, 'sessions'), { recursive: true });
@@ -683,6 +775,11 @@ export class SlashbotKernel {
     );
   }
 
+  /**
+   * End an active session, updating its persisted metadata and dispatching lifecycle hooks.
+   * @param sessionId - Unique session identifier
+   * @param agentId - ID of the agent owning the session
+   */
   async endSession(sessionId: string, agentId: string): Promise<void> {
     const sessionPath = this.sessionFilePath(agentId, sessionId);
     try {
@@ -721,6 +818,16 @@ export class SlashbotKernel {
     );
   }
 
+  /**
+   * Publish a message lifecycle event and dispatch the corresponding hook.
+   *
+   * Enforces a 250 ms timeout budget so slow hooks do not block message flow.
+   *
+   * @param event - The lifecycle phase (`message_received`, `message_sending`, or `message_sent`)
+   * @param sessionId - Session the message belongs to
+   * @param agentId - Agent handling the message
+   * @param message - The message content
+   */
   async sendMessageLifecycle(
     event: 'message_received' | 'message_sending' | 'message_sent',
     sessionId: string,

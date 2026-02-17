@@ -1,3 +1,16 @@
+/**
+ * @module llm/helpers
+ *
+ * Utility functions for LLM completion handling: token estimation,
+ * context window budgeting, message trimming, error classification,
+ * and message format conversion. Follows openclaw-style context
+ * management patterns for budget resolution and pruning.
+ *
+ * @see {@link estimateTokens} — Rough token count estimation
+ * @see {@link trimMessagesToFit} — Context-budget-aware message trimming
+ * @see {@link isContextOverflowError} — Detect context overflow errors
+ * @see {@link isRateLimitError} — Detect rate limit errors
+ */
 import type { AuthProfile } from '../../kernel/contracts.js';
 import type { AgentMessageContent } from './types.js';
 
@@ -6,6 +19,13 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Converts message content (string or multimodal parts) to plain text.
+ * Image parts are replaced with '[Image attached]' placeholders.
+ *
+ * @param content - String or array of text/image content parts
+ * @returns Plain text representation
+ */
 export function contentToText(content: AgentMessageContent): string {
   if (typeof content === 'string') return content;
   return content
@@ -104,6 +124,12 @@ export function extractToken(profile: AuthProfile): string | undefined {
   return undefined;
 }
 
+/**
+ * Checks if an error represents an abort/cancellation.
+ *
+ * @param error - The error to check
+ * @returns True if the error indicates an abort
+ */
 export function isAbortError(error: unknown): boolean {
   if (error instanceof Error) {
     return error.name === 'AbortError' || error.message.includes('aborted');
@@ -149,10 +175,17 @@ export function isRateLimitError(error: unknown): boolean {
   return false;
 }
 
+/** Returns a fallback message when no valid AI auth profile is available. */
 export function fallbackChatResponse(): string {
   return 'I cannot answer right now because no valid AI auth profile is configured. Configure a provider/API key, then try again.';
 }
 
+/**
+ * Casts loosely-typed message roles to the strict union expected by the AI SDK.
+ *
+ * @param messages - Messages with string-typed roles
+ * @returns Messages with roles narrowed to 'system' | 'user' | 'assistant'
+ */
 export function mapMessages(messages: Array<{ role: string; content: AgentMessageContent }>): Array<{ role: 'system' | 'user' | 'assistant'; content: AgentMessageContent }> {
   return messages.map((message) => ({
     role: message.role as 'system' | 'user' | 'assistant',
@@ -160,12 +193,25 @@ export function mapMessages(messages: Array<{ role: string; content: AgentMessag
   }));
 }
 
+/**
+ * Checks whether any message in the array contains image content parts.
+ *
+ * @param messages - The messages to inspect
+ * @returns True if at least one message contains an image part
+ */
 export function hasImageContent(messages: Array<{ role: string; content: AgentMessageContent }>): boolean {
   return messages.some((message) =>
     Array.isArray(message.content) && message.content.some((part) => part.type === 'image')
   );
 }
 
+/**
+ * Extracts text from a fetch request body, handling string, URLSearchParams,
+ * ArrayBuffer, and typed array formats.
+ *
+ * @param body - The request body to extract text from
+ * @returns The body as a UTF-8 string, or empty string if unsupported type
+ */
 export function getRequestBodyText(body: unknown): string {
   if (typeof body === 'string') return body;
   if (body instanceof URLSearchParams) return body.toString();
@@ -176,6 +222,14 @@ export function getRequestBodyText(body: unknown): string {
   return '';
 }
 
+/**
+ * Converts multimodal messages to text-only by replacing image parts
+ * with '[Image attached]' placeholders. Used as a fallback when a model
+ * rejects image input.
+ *
+ * @param messages - Messages potentially containing image content parts
+ * @returns Messages with all content converted to plain strings
+ */
 export function asTextOnly(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: AgentMessageContent }>
 ): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {

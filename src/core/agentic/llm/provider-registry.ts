@@ -1,3 +1,17 @@
+/**
+ * @module llm/provider-registry
+ *
+ * Global registry mapping provider IDs to AI SDK model factories and
+ * completion configurations. Registers built-in providers (OpenAI, Anthropic,
+ * xAI, Google, Ollama, vLLM) at module load time and supports dynamic
+ * registration of gateway vendors.
+ *
+ * @see {@link registerProvider} — Register a custom provider factory
+ * @see {@link getProviderFactory} — Retrieve a provider's model factory
+ * @see {@link getProviderConfig} — Retrieve a provider's completion config
+ * @see {@link registerBuiltinProviders} — Re-register all built-in providers
+ * @see {@link registerGatewayVendor} — Dynamically register an OpenAI-compatible gateway vendor
+ */
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createXai } from '@ai-sdk/xai';
@@ -31,6 +45,13 @@ const DEFAULT_CONFIG: CompletionConfig = { temperature: 0, maxTokens: 2048, time
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Registers a provider in the global registry with its model factory and config.
+ *
+ * @param providerId - Unique identifier for the provider (e.g. 'openai', 'anthropic')
+ * @param factory - Function that creates an AI SDK model from an execution object
+ * @param config - Optional partial config merged with defaults (temperature, maxTokens, timeoutMs)
+ */
 export function registerProvider(
   providerId: string,
   factory: ProviderModelFactory,
@@ -42,10 +63,23 @@ export function registerProvider(
   });
 }
 
+/**
+ * Retrieves the model factory for a registered provider.
+ *
+ * @param providerId - The provider identifier to look up
+ * @returns The provider's model factory, or undefined if not registered
+ */
 export function getProviderFactory(providerId: string): ProviderModelFactory | undefined {
   return registry.get(providerId)?.factory;
 }
 
+/**
+ * Retrieves the completion config for a registered provider.
+ * Falls back to DEFAULT_CONFIG if the provider is not registered.
+ *
+ * @param providerId - The provider identifier to look up
+ * @returns The provider's completion config
+ */
 export function getProviderConfig(providerId: string): CompletionConfig {
   return registry.get(providerId)?.config ?? DEFAULT_CONFIG;
 }
@@ -69,6 +103,11 @@ function buildProviderModel(sdkFactory: Function) {
 // Register built-in providers
 // ---------------------------------------------------------------------------
 
+/**
+ * Registers all built-in LLM providers (OpenAI, Anthropic, xAI, Google,
+ * Ollama, vLLM) with their default configurations. Called automatically
+ * at module load time as a side effect.
+ */
 export function registerBuiltinProviders(): void {
   registerProvider('openai', buildProviderModel(createOpenAI), {
     temperature: 0.6,

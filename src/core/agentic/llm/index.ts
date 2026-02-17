@@ -1,3 +1,10 @@
+/**
+ * @module llm
+ *
+ * Public barrel export for the LLM subsystem. Re-exports all types,
+ * the kernel adapter, provider registry functions, helper utilities,
+ * and context pipeline components used by the agentic layer.
+ */
 export type {
   AgentMessage,
   AgentTextPart,

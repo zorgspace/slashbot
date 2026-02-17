@@ -1,4 +1,0 @@
-interface:
-  display_name: "Ink CLI Architect"
-  short_description: "Build extensible Ink CLIs with plugin and tool architecture."
-  default_prompt: "Design and implement an Ink-based CLI with a modular plugin system, tool adapters, and clear extension points."

@@ -1,6 +1,21 @@
+/**
+ * @module providers/xai
+ *
+ * xAI LLM provider implementation. Registers the Grok model family including
+ * Grok 4.1, Grok 4, Grok 3, and Grok 2 variants with API-key authentication.
+ *
+ * @see {@link createProvider} -- Provider factory function
+ */
+
 import { defineProvider } from './shared.js';
 import type { ProviderDefinition } from '../core/kernel/contracts.js';
 
+/**
+ * Creates the xAI provider definition with all supported Grok models.
+ *
+ * @param pluginId - The plugin identifier that owns this provider
+ * @returns A {@link ProviderDefinition} for xAI
+ */
 export function createProvider(pluginId: string): ProviderDefinition {
   return defineProvider('xai', 'xAI', [
     { id: 'grok-4.1-fast-reasoning', displayName: 'Grok 4.1 Fast Reasoning', contextWindow: 131_072, priority: 1, capabilities: ['chat', 'tools', 'reasoning', 'image'] },

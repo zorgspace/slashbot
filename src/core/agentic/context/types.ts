@@ -1,5 +1,17 @@
+/**
+ * @module context/types
+ *
+ * Type definitions for the context preparation pipeline. Defines the
+ * configuration interface controlling all pipeline stages (history limiting,
+ * pruning, trimming, sanitization) and the result interface returned
+ * after processing.
+ *
+ * @see {@link ContextPipelineConfig} — Full pipeline configuration
+ * @see {@link ContextPipelineResult} — Pipeline output with metadata
+ */
 import type { AgentMessage } from '../llm/types.js';
 
+/** Configuration controlling all stages of the context preparation pipeline. */
 export interface ContextPipelineConfig {
   /** Total model context window in tokens. */
   contextLimit: number;
@@ -27,9 +39,14 @@ export interface ContextPipelineConfig {
   providerId?: string;
 }
 
+/** Result returned by the context preparation pipeline. */
 export interface ContextPipelineResult {
+  /** The processed messages ready for LLM submission. */
   messages: AgentMessage[];
+  /** Whether messages were trimmed to fit the token budget. */
   trimmed: boolean;
+  /** Whether old tool results were pruned (soft-trim or hard-clear). */
   pruned: boolean;
+  /** Estimated token count of the processed messages. */
   estimatedTokens: number;
 }

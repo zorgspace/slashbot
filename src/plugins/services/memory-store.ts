@@ -1,3 +1,15 @@
+/**
+ * @module plugins/services/memory-store
+ *
+ * Persistent markdown-based memory store with BM25 full-text search.
+ * Stores facts, decisions, and preferences in `.slashbot/MEMORY.md` and
+ * `.slashbot/memory/*.md` files. Supports daily notes, timestamped upserts,
+ * and file-level mtime caching for efficient re-indexing.
+ *
+ * @see {@link MemoryStore} — Main store class
+ * @see {@link MemoryHit} — Search result type
+ * @see {@link MemoryUpsertInput} — Upsert input type
+ */
 import { promises as fs } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
@@ -9,22 +21,35 @@ interface MemoryChunk {
   fingerprint: string;
 }
 
+/** A single search result returned by {@link MemoryStore.search}. */
 export interface MemoryHit {
+  /** Relative path of the memory file containing this hit. */
   path: string;
+  /** Line number (1-based) within the file. */
   line: number;
+  /** The matched line text. */
   text: string;
+  /** BM25 relevance score (higher is better). */
   score: number;
 }
 
+/** Input for appending a new entry to a memory file via {@link MemoryStore.upsert}. */
 export interface MemoryUpsertInput {
+  /** The text content to store. */
   text: string;
+  /** Optional tags for categorization. */
   tags?: string[];
+  /** Target memory file path (defaults to `memory/notes.md`). */
   file?: string;
 }
 
+/** Statistics about the memory store returned by {@link MemoryStore.stats}. */
 export interface MemoryStats {
+  /** Number of memory files discovered. */
   files: number;
+  /** Total number of indexed text chunks across all files. */
   chunks: number;
+  /** ISO timestamp of when the stats were computed. */
   indexedAt: string;
 }
 
@@ -153,6 +178,12 @@ export class MemoryStore {
     return allChunks;
   }
 
+  /**
+   * Full-text BM25 search across all memory files.
+   * @param query - The search query string.
+   * @param limit - Maximum number of results to return (default 10).
+   * @returns Scored search results sorted by relevance.
+   */
   async search(query: string, limit = 10): Promise<MemoryHit[]> {
     const chunks = await this.allChunks();
     if (chunks.length === 0) return [];
@@ -224,6 +255,14 @@ export class MemoryStore {
     }));
   }
 
+  /**
+   * Read a specific memory file with optional line range.
+   * @param pathRel - Relative path within the memory directory.
+   * @param startLine - Start line number (1-based, inclusive).
+   * @param endLine - End line number (inclusive).
+   * @returns Numbered lines of the file content.
+   * @throws If the path escapes the memory directory.
+   */
   async get(pathRel: string, startLine?: number, endLine?: number): Promise<string> {
     const safePath = resolve(this.memoryRoot(), pathRel);
     const rel = relative(this.memoryRoot(), safePath);
@@ -242,6 +281,11 @@ export class MemoryStore {
       .join('\n');
   }
 
+  /**
+   * Append a timestamped entry to a memory file.
+   * @param entry - The text, tags, and optional target file.
+   * @returns The file path and line number where the entry was written.
+   */
   async upsert(entry: MemoryUpsertInput): Promise<{ path: string; line: number }> {
     const fileName = entry.file ?? join('memory', 'notes.md');
     const fullPath = join(this.memoryRoot(), fileName);
@@ -265,6 +309,11 @@ export class MemoryStore {
     return { path: fileName, line: lineNumber };
   }
 
+  /**
+   * Add a quick timestamped note to today's daily notes file (YYYYMM/YYYYMMDD.md).
+   * @param text - The note content.
+   * @returns The relative path of the daily notes file.
+   */
   async appendToday(text: string): Promise<{ path: string }> {
     const now = new Date();
     const yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -288,6 +337,11 @@ export class MemoryStore {
     return { path: relPath };
   }
 
+  /**
+   * Get concatenated daily notes from the last N days.
+   * @param days - Number of days to look back (default 3).
+   * @returns Formatted markdown string of recent daily notes.
+   */
   async getRecentNotes(days = 3): Promise<string> {
     const results: string[] = [];
     const now = new Date();
@@ -310,6 +364,10 @@ export class MemoryStore {
     return results.join('\n\n');
   }
 
+  /**
+   * Get memory store statistics: file count, chunk count, and index timestamp.
+   * @returns Memory store statistics.
+   */
   async stats(): Promise<MemoryStats> {
     const files = await this.listFiles();
     const chunks = await this.allChunks();

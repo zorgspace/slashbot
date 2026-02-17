@@ -1,3 +1,16 @@
+/**
+ * @module discovery
+ *
+ * Discovers available plugins from multiple sources: config-specified paths,
+ * workspace extensions, user-global extensions, and bundled plugins. Applies
+ * allow/deny/entries policy from the runtime config to determine which plugins
+ * are enabled.
+ *
+ * Key exports:
+ * - {@link discoverPlugins} - Scans directories and applies policy to yield enabled plugins
+ * - {@link DiscoveredPlugin} - Interface for a discovered plugin with its manifest, path, and source
+ * - {@link DiscoveryResult} - Interface for the full discovery result including diagnostics
+ */
 import { promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';

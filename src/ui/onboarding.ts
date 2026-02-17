@@ -1,3 +1,15 @@
+/**
+ * @module ui/onboarding
+ *
+ * CLI-based onboarding flow for provider authentication. Supports
+ * API key, setup token, and OAuth PKCE flows. Used by the `slashbot setup`
+ * command and the first-run setup wizard. Includes an embedded HTTP server
+ * for receiving OAuth callbacks.
+ *
+ * @see {@link runOnboarding} -- Main onboarding entry point
+ * @see {@link ensureBaseConfig} -- Creates default config if missing
+ * @see {@link OnboardingOptions} -- Onboarding configuration options
+ */
 import { createServer } from 'node:http';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -6,20 +18,36 @@ import { createInterface } from 'node:readline/promises';
 import type { ProviderAuthMethod } from '../core/kernel/contracts.js';
 import type { SlashbotKernel } from '../core/kernel/kernel.js';
 
+/** Configuration options for the onboarding flow. */
 export interface OnboardingOptions {
+  /** Agent identifier for profile association. */
   agentId: string;
+  /** Provider to authenticate against (e.g. 'anthropic', 'openai'). */
   providerId: string;
+  /** Auth method override; defaults to the provider's preferred method. */
   method?: ProviderAuthMethod;
+  /** Human-readable label for the saved auth profile. */
   profileLabel?: string;
+  /** When true, disables interactive prompts (requires all credentials upfront). */
   nonInteractive: boolean;
+  /** Pre-supplied API key for api_key auth method. */
   apiKey?: string;
+  /** Pre-supplied setup token for setup_token auth method. */
   setupToken?: string;
+  /** Pre-supplied OAuth authorization code. */
   code?: string;
+  /** Pre-supplied OAuth state parameter. */
   state?: string;
+  /** Pre-supplied PKCE verifier. */
   verifier?: string;
+  /** Writable stream for status output; defaults to process.stdout. */
   stdout?: NodeJS.WritableStream;
 }
 
+/**
+ * Ensures the ~/.slashbot directory and a default config.json exist.
+ * Creates them if missing; does nothing if they already exist.
+ */
 export async function ensureBaseConfig(): Promise<void> {
   const base = join(homedir(), '.slashbot');
   await fs.mkdir(base, { recursive: true });
@@ -117,6 +145,15 @@ async function promptInteractive(question: string): Promise<string> {
   }
 }
 
+/**
+ * Runs the full provider onboarding flow: ensures base config, starts the
+ * chosen auth method, collects credentials (interactively or from options),
+ * and saves the resulting auth profile to the kernel's auth store.
+ *
+ * @param kernel - The initialized Slashbot kernel.
+ * @param options - Onboarding configuration and pre-supplied credentials.
+ * @throws If the provider or auth method is not found, or if credentials are invalid.
+ */
 export async function runOnboarding(kernel: SlashbotKernel, options: OnboardingOptions): Promise<void> {
   await ensureBaseConfig();
 

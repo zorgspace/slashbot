@@ -1,18 +1,33 @@
+/**
+ * @module context/context-pruner
+ *
+ * Two-tier pruning of old tool results to reduce token usage within the
+ * context window. Applies soft-trim (head+tail snippets) when budget
+ * usage exceeds the soft threshold, and hard-clear (placeholder replacement)
+ * when it exceeds the hard threshold. Recent assistant messages are always
+ * protected from pruning.
+ *
+ * @see {@link pruneContextMessages} — Main pruning function
+ */
 import type { AgentMessage } from '../llm/types.js';
 import type { ContextPipelineConfig } from './types.js';
 import { estimateTokens, estimateMessageTokens, contentToText } from '../llm/helpers.js';
 import { resolveContextBudget } from '../llm/helpers.js';
 
 /**
- * Two-tier pruning of old tool results to reduce token usage.
+ * Prunes old tool results from messages using a two-tier strategy based
+ * on context budget usage ratio.
  *
- * Soft-trim (at softTrimThreshold): large tool results (> softTrimMinChars) are
- * reduced to head + tail snippets.
- *
- * Hard-clear (at hardClearThreshold): old tool results are replaced with a
- * placeholder message.
+ * - Soft-trim (at softTrimThreshold): large tool results (> softTrimMinChars)
+ *   are reduced to head + tail snippets.
+ * - Hard-clear (at hardClearThreshold): old tool results are replaced with
+ *   a placeholder message.
  *
  * The last `protectedRecentMessages` assistant messages are never pruned.
+ *
+ * @param messages - The conversation messages to prune
+ * @param config - Pipeline configuration with pruning thresholds
+ * @returns The pruned messages and whether any pruning was applied
  */
 export function pruneContextMessages(
   messages: AgentMessage[],

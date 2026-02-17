@@ -1,15 +1,31 @@
+/**
+ * @module plugins/services/connector-agent
+ *
+ * Per-chat LLM agent session manager for channel connectors (Telegram, Discord, WhatsApp).
+ * Handles conversation history, token-budget windowing, context summarization,
+ * image attachments, and optional agentic tool-calling loops.
+ *
+ * @see {@link ConnectorAgentSession} — Main session class
+ * @see {@link ConnectorAgentRunInput} — Input for the optional agent runner callback
+ */
 import type { AgentMessage, LlmAdapter, LlmCompletionInput, RichMessage, StreamingCallback } from '@slashbot/core/agentic/llm/index.js';
 import type { AgentLoopResult } from '@slashbot/core/agentic/agent-loop.js';
 import type { ChatHistoryStore } from './chat-history-store.js';
 import { FileChatHistoryStore } from './chat-history-store.js';
 import { contentToText, estimateTokens, maybeSummarize, mimeTypeFromDataUrl, windowByTokenBudget } from './context-window.js';
+/** Input passed to the optional agent runner callback for agentic completions. */
 export interface ConnectorAgentRunInput {
+  /** The assembled prompt including conversation history and latest user message. */
   prompt: string;
+  /** Unique session identifier for this chat. */
   sessionId: string;
+  /** Identifier for the agent handling this request. */
   agentId: string;
+  /** Optional base64-encoded data-URL images attached to the message. */
   images?: string[];
 }
 
+/** Callback type for the optional agentic runner that handles full agent loops. */
 type ConnectorAgentRunner = (input: ConnectorAgentRunInput) => Promise<string>;
 
 /**
@@ -34,6 +50,16 @@ export class ConnectorAgentSession {
       : storeOrHomeDir;
   }
 
+  /**
+   * Send a user message and get an assistant response for the given chat.
+   * Manages history persistence, token-budget windowing, summarization,
+   * and optional streaming / agentic tool calling.
+   *
+   * @param chatId - Unique identifier for the conversation (e.g. Telegram chat ID).
+   * @param text - The user's message text.
+   * @param opts - Optional session metadata, images, streaming callback, and abort signal.
+   * @returns The assistant's response text.
+   */
   async chat(
     chatId: string,
     text: string,
@@ -188,10 +214,19 @@ export class ConnectorAgentSession {
     return response;
   }
 
+  /**
+   * Clear all conversation history for a given chat.
+   * @param chatId - The chat whose history should be cleared.
+   */
   clearHistory(chatId: string): void {
     void this.store.clear(chatId);
   }
 
+  /**
+   * Get the number of messages in history for a given chat.
+   * @param chatId - The chat to query.
+   * @returns The number of stored history messages.
+   */
   async getHistoryLength(chatId: string): Promise<number> {
     return this.store.length(chatId);
   }

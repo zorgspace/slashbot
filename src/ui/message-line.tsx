@@ -1,3 +1,12 @@
+/**
+ * @module ui/message-line
+ *
+ * Chat message rendering component for the Slashbot TUI. Renders a single
+ * chat line with a colored role badge, Markdown formatting, diff syntax
+ * highlighting, and code block detection.
+ *
+ * @see {@link MessageLine} -- Main memoized component
+ */
 import React from 'react';
 import { Box, Text } from 'ink';
 import { type ChatLine, palette, badgeFor } from './palette.js';
@@ -41,6 +50,14 @@ function tagCodeBlocks(parts: string[]): Array<{ text: string; codeBlock: boolea
   return result;
 }
 
+/**
+ * Renders a single chat message with a role badge, inline Markdown formatting,
+ * and optional diff syntax highlighting. Memoized to avoid unnecessary re-renders.
+ *
+ * @param props.line - The chat line data to render.
+ * @param props.cols - Available terminal width.
+ * @param props.paddingLeft - Optional left padding in columns.
+ */
 export const MessageLine = React.memo(function MessageLine({ line, cols, paddingLeft = 0 }: { line: ChatLine; cols: number; paddingLeft?: number }) {
   const badge = badgeFor(line);
   const label = line.label ?? badge.label;

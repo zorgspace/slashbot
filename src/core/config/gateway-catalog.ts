@@ -1,3 +1,14 @@
+/**
+ * @module gateway-catalog
+ *
+ * Fetches and caches the remote AI Gateway model catalog. The catalog provides
+ * a list of available language models with their capabilities, context windows,
+ * and metadata. Results are cached locally for 24 hours to minimize network
+ * requests.
+ *
+ * Key exports:
+ * - {@link fetchGatewayCatalog} - Fetches the model catalog (with local cache)
+ */
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import type { ProviderModel, StructuredLogger } from '../kernel/contracts.js';
@@ -66,6 +77,13 @@ async function writeCache(models: ProviderModel[]): Promise<void> {
   await fs.writeFile(cachePath(), JSON.stringify(cache), 'utf8');
 }
 
+/**
+ * Fetches the AI Gateway model catalog, returning cached results when available
+ * and fresh (within {@link CACHE_TTL_MS}). Only language-type models are included.
+ *
+ * @param logger - Structured logger for cache hits, fetch results, and warnings.
+ * @returns An array of {@link ProviderModel} entries, or an empty array on failure.
+ */
 export async function fetchGatewayCatalog(logger: StructuredLogger): Promise<ProviderModel[]> {
   // Return cached catalog if fresh enough
   const cached = await readCache(logger);

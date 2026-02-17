@@ -1,3 +1,16 @@
+/**
+ * @module plugins/discord/handlers
+ *
+ * Discord message handling and event wiring. Registers the `messageCreate`
+ * handler on a discord.js Client, processing text, image attachments, and
+ * voice files (via transcription). Enqueues inbound messages into a
+ * preemptive queue for serialized, abort-aware agent execution per channel.
+ *
+ * @see {@link setupHandlers} - Wire all Discord event listeners
+ * @see {@link sendToChannel} - Send a split message to a Discord channel
+ * @see {@link enqueueMessageTask} - Enqueue a message for agent processing
+ * @see {@link resolveDefaultDMChannelId} - Map a session to its DM channel
+ */
 import type { Client, Message } from 'discord.js';
 import type { JsonValue, StructuredLogger } from '../../plugin-sdk/index.js';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
@@ -43,6 +56,12 @@ function publishDiscordMessage(
 
 // ── Send to channel ─────────────────────────────────────────────────
 
+/**
+ * Send a text response to the channel of the originating message,
+ * splitting the text into parts that fit within the Discord message limit.
+ * @param message - The originating Discord message (used to resolve the channel)
+ * @param text - The full response text to send
+ */
 export async function sendToChannel(
   message: Message,
   text: string,
@@ -56,6 +75,17 @@ export async function sendToChannel(
 
 // ── Message task enqueue ────────────────────────────────────────────
 
+/**
+ * Enqueue an inbound Discord message for agentic processing.
+ * The task runs inside a preemptive queue scoped by channel, so newer
+ * messages in the same channel abort older in-flight tasks. While
+ * processing, a typing indicator is sent at regular intervals.
+ * @param state - Mutable Discord plugin state
+ * @param queue - Preemptive queue instance for serialized execution
+ * @param kernel - Kernel instance for lifecycle events
+ * @param logger - Structured logger for error reporting
+ * @param args - Message context and content details
+ */
 export function enqueueMessageTask(
   state: DiscordState,
   queue: PreemptiveQueue,
@@ -131,6 +161,13 @@ export function enqueueMessageTask(
 
 // ── Resolve default DM channel for tool calls ───────────────────────
 
+/**
+ * Resolve the DM channel ID associated with a given session ID.
+ * Returns `undefined` if no mapping exists or the channel is not authorized.
+ * @param state - Discord plugin state containing the DM channel map
+ * @param sessionId - The agent session identifier
+ * @returns The DM channel ID, or `undefined`
+ */
 export function resolveDefaultDMChannelId(state: DiscordState, sessionId?: string): string | undefined {
   if (!sessionId) return undefined;
   const mappedChannelId = state.dmChannelBySessionId.get(sessionId);
@@ -155,6 +192,19 @@ function buildMessageMetadata(message: Message): Record<string, string> {
 
 // ── Setup Discord handlers ──────────────────────────────────────────
 
+/**
+ * Register all Discord event handlers on the given client.
+ * Currently wires the `messageCreate` event to handle text, image
+ * attachments, and voice/audio file transcription in authorized channels.
+ * Owner DMs are auto-authorized on first contact.
+ * @param client - The discord.js Client instance
+ * @param state - Mutable Discord plugin state
+ * @param queue - Preemptive queue for serialized message processing
+ * @param kernel - Kernel instance for events and lifecycle
+ * @param logger - Structured logger
+ * @param getTranscription - Lazy getter for the transcription service
+ * @param getAgentRegistry - Lazy getter for the agent registry
+ */
 export function setupHandlers(
   client: Client,
   state: DiscordState,

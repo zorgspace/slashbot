@@ -1,3 +1,15 @@
+/**
+ * @module llm/completion-runner
+ *
+ * Unified completion logic for both streaming and non-streaming LLM calls.
+ * Provides an abstraction layer ({@link SdkCaller}) over the AI SDK's
+ * generateText/streamText, with multi-provider failover, rate-limit handling,
+ * image content fallback, and token-mode proxy support.
+ *
+ * @see {@link runCompletion} — Main entry point for running a completion
+ * @see {@link makeStreamCaller} — Factory for streaming callers
+ * @see {@link generateCaller} — Non-streaming caller
+ */
 import { generateText, streamText } from 'ai';
 import type {
   AgentMessageContent,
@@ -22,6 +34,10 @@ import { getProviderConfig, getProviderFactory } from './provider-registry.js';
 // SdkCaller — abstraction over generateText / streamText
 // ---------------------------------------------------------------------------
 
+/**
+ * Abstraction over generateText/streamText. Takes a model, messages, config,
+ * and abort signal, returning the full response text as a promise.
+ */
 export type SdkCaller = (
   model: unknown,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: AgentMessageContent | string }>,
@@ -92,6 +108,15 @@ async function callWithExecution(
   return caller(model, messages, effectiveConfig, abortSignal);
 }
 
+/**
+ * Runs a text completion with multi-provider failover, token-mode proxy support,
+ * rate-limit tracking, and image content fallback. Does not support tool use.
+ *
+ * @param input - Completion input with messages, session info, and options
+ * @param deps - Runtime dependencies (auth router, providers, logger)
+ * @param caller - SDK caller implementation (streaming or non-streaming)
+ * @returns The full response text, or a fallback message on failure
+ */
 export async function runCompletion(
   input: LlmCompletionInput,
   deps: RunCompletionDeps,

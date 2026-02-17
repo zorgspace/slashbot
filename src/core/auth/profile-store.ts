@@ -1,3 +1,17 @@
+/**
+ * @module profile-store
+ *
+ * Manages persistent storage of authentication profiles (API keys, OAuth tokens)
+ * for LLM providers. Profiles are stored in a multi-agent-aware credentials.json
+ * file with backward compatibility for legacy per-agent profile files.
+ *
+ * Supports reading from multiple credential sources (user-global, cwd-local,
+ * workspace-local) with file-level locking for safe concurrent access during
+ * token refresh operations.
+ *
+ * Key exports:
+ * - {@link AuthProfileStore} - Main class for listing, upserting, and locking auth profiles
+ */
 import { promises as fs } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -151,12 +165,23 @@ async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
   throw new Error(`Timed out waiting for auth profile lock: ${lockPath}`);
 }
 
+/**
+ * Manages reading and writing authentication profiles from/to the credentials
+ * store. Supports multiple credential file locations, legacy format migration,
+ * and file-level locking for concurrent access safety.
+ */
 export class AuthProfileStore {
   private readonly userRootPath: string;
   private readonly cwdPath: string;
   private readonly workspaceRoot: string;
   private readonly includeExternalCredentialSources: boolean;
 
+  /**
+   * @param rootPath - Root directory for user-global credentials (default: ~/.slashbot).
+   * @param cwdPath - Current working directory for cwd-scoped credential lookups.
+   * @param workspaceRoot - Workspace root for workspace-scoped credential lookups.
+   * @param includeExternalCredentialSources - Whether to include cwd and workspace credential files.
+   */
   constructor(
     rootPath = join(homedir(), '.slashbot'),
     cwdPath = process.cwd(),
@@ -182,6 +207,12 @@ export class AuthProfileStore {
     return resolve(this.workspaceRoot, '.slashbot', 'credentials.json');
   }
 
+  /**
+   * Returns the legacy per-agent auth profiles file path.
+   *
+   * @param agentId - The agent identifier.
+   * @returns Absolute path to the agent's legacy auth-profiles.json file.
+   */
   pathForAgent(agentId: string): string {
     return join(this.userRootPath, 'agents', agentId, 'agent', 'auth-profiles.json');
   }
@@ -216,6 +247,13 @@ export class AuthProfileStore {
     return [...merged.values()];
   }
 
+  /**
+   * Lists all authentication profiles for a given agent, optionally filtered by provider.
+   *
+   * @param agentId - The agent identifier.
+   * @param providerId - Optional provider filter; when set, only profiles for that provider are returned.
+   * @returns Array of matching auth profiles.
+   */
   async listProfiles(agentId: string, providerId?: string): Promise<AuthProfile[]> {
     const profiles = await this.listFromSources(agentId);
     if (!providerId) {
@@ -224,6 +262,12 @@ export class AuthProfileStore {
     return profiles.filter((item) => item.providerId === providerId);
   }
 
+  /**
+   * Inserts or updates an authentication profile in the user-global credentials file.
+   *
+   * @param agentId - The agent identifier to scope the profile under.
+   * @param profile - The auth profile to upsert.
+   */
   async upsertProfile(agentId: string, profile: AuthProfile): Promise<void> {
     const credentialsPath = this.credentialsPathForUserRoot();
     const credentials = await readCredentialsFile(credentialsPath);
@@ -256,6 +300,16 @@ export class AuthProfileStore {
     await writeCredentialsFile(credentialsPath, credentials);
   }
 
+  /**
+   * Executes a callback while holding an exclusive file lock for a specific
+   * agent/provider combination. Used to prevent concurrent token refresh races.
+   *
+   * @param agentId - The agent identifier.
+   * @param providerId - The provider identifier.
+   * @param fn - The async function to execute under the lock.
+   * @returns The result of the callback.
+   * @throws If the lock cannot be acquired within the timeout.
+   */
   async withProfileLock<T>(agentId: string, providerId: string, fn: () => Promise<T>): Promise<T> {
     const lockPath = join(this.userRootPath, 'agents', agentId, 'agent', `${providerId}.auth.lock`);
     await ensureDir(dirname(lockPath));

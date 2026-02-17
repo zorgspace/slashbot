@@ -1,3 +1,13 @@
+/**
+ * @module context/pipeline
+ *
+ * Unified context preparation pipeline that processes messages through
+ * four sequential stages before they are sent to the LLM: history turn
+ * limiting, context pruning (soft-trim/hard-clear), token budget trimming,
+ * and message sanitization for provider compatibility.
+ *
+ * @see {@link prepareContext} — Main entry point for the pipeline
+ */
 import type { AgentMessage } from '../llm/types.js';
 import type { ContextPipelineConfig, ContextPipelineResult } from './types.js';
 import { estimateMessageTokens, trimMessagesToFit } from '../llm/helpers.js';
@@ -6,13 +16,17 @@ import { pruneContextMessages } from './context-pruner.js';
 import { sanitizeMessages } from './message-sanitizer.js';
 
 /**
- * Unified context preparation pipeline.
+ * Runs the unified context preparation pipeline on a message array.
  *
  * Flow:
  *   1. limitHistoryTurns (if maxHistoryTurns > 0)
  *   2. pruneContextMessages (soft-trim / hard-clear old tool results)
  *   3. trimMessagesToFit (system 50% cap + recent conversation backfill)
  *   4. sanitizeMessages (repair orphaned tool pairs, provider rules)
+ *
+ * @param messages - The raw conversation messages to prepare
+ * @param config - Pipeline configuration controlling each stage
+ * @returns The processed messages with metadata (trimmed, pruned, token estimate)
  */
 export function prepareContext(
   messages: AgentMessage[],

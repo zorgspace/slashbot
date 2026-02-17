@@ -1,3 +1,12 @@
+/**
+ * @module ui/non-interactive
+ *
+ * Headless (non-interactive) execution mode for Slashbot. Accepts a single
+ * prompt string, runs it through the LLM agent loop without a TUI, and
+ * writes the response to stdout. Used by the `slashbot run` CLI command.
+ *
+ * @see {@link runSinglePromptNonInteractive} -- Main entry point
+ */
 import type { SlashbotKernel } from '../core/kernel/kernel.js';
 import { KernelLlmAdapter } from '../core/agentic/llm/index.js';
 import type { TokenModeProxyAuthService } from '../core/agentic/llm/index.js';
@@ -5,6 +14,16 @@ import type { StructuredLogger } from '../core/kernel/contracts.js';
 import type { ProviderRegistry } from '../core/kernel/registries.js';
 import type { AuthProfileRouter } from '../core/providers/auth-router.js';
 
+/**
+ * Runs a single prompt through the LLM agent loop without a TUI.
+ * Tool progress is written to stderr; the final response is written to stdout.
+ *
+ * @param kernel - The initialized Slashbot kernel instance.
+ * @param input - The raw user prompt string.
+ * @param sessionId - The session identifier for context tracking.
+ * @param agentId - The agent identifier for routing.
+ * @returns Exit code: 0 on success, 1 for configuration errors, 2 for LLM errors.
+ */
 export async function runSinglePromptNonInteractive(
   kernel: SlashbotKernel,
   input: string,

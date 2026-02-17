@@ -1,3 +1,14 @@
+/**
+ * @module providers-merge
+ *
+ * Applies user-defined provider configurations from `providers.json` to the
+ * running kernel. Handles two cases: overriding models and settings on existing
+ * (built-in) providers, and registering entirely new OpenAI-compatible custom
+ * providers with auto-generated auth handlers and SDK factory functions.
+ *
+ * Key exports:
+ * - {@link applyProvidersConfig} - Merges user provider config into the provider registry
+ */
 import { randomUUID } from 'node:crypto';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { ProviderDefinition, ProviderModel, StructuredLogger } from '../kernel/contracts.js';
@@ -9,6 +20,20 @@ import type { ProvidersFileConfig, ProviderConfigEntry } from './providers-confi
 // Apply user providers config to the running kernel
 // ---------------------------------------------------------------------------
 
+/**
+ * Applies user-defined provider configurations to the running kernel registries.
+ *
+ * For each provider entry in the config:
+ * - If the provider already exists, its models, display name, and completion
+ *   config are merged/overridden.
+ * - If the provider is new and typed as `openai-compatible`, it is registered
+ *   with an auto-generated auth handler and SDK factory.
+ * - Unknown providers without a type are skipped with a warning.
+ *
+ * @param config - The parsed providers.json configuration.
+ * @param providerRegistry - The kernel-level provider registry to mutate.
+ * @param logger - Structured logger for diagnostics.
+ */
 export function applyProvidersConfig(
   config: ProvidersFileConfig,
   providerRegistry: ProviderRegistry,

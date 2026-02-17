@@ -1,3 +1,17 @@
+/**
+ * @module plugins/hooks-discovery
+ *
+ * Hooks Discovery plugin that scans `.slashbot/hooks/` for shell scripts and
+ * registers them as kernel hooks. Scripts follow the naming convention
+ * `{event}.{name}.sh` and receive the hook event name and JSON payload
+ * via environment variables.
+ *
+ * Convention:
+ *  - File: `.slashbot/hooks/{event}.{name}.sh`
+ *  - Env vars: `SLASHBOT_HOOK_EVENT`, `SLASHBOT_HOOK_PAYLOAD` (JSON)
+ *
+ * @see {@link createHooksDiscoveryPlugin} -- Plugin factory function
+ */
 import { promises as fs } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -47,18 +61,17 @@ async function discoverHookScripts(hooksDir: string): Promise<DiscoveredHook[]> 
 }
 
 /**
- * Hooks Discovery plugin — discovers and registers shell-exec hooks from the filesystem.
+ * Create the Hooks Discovery plugin.
  *
- * Scans `.slashbot/hooks/` for shell scripts following the naming convention
- * `{event}.{name}.sh` and registers them as kernel hooks. Each script receives
- * the hook event name and JSON payload via environment variables.
- *
- * Convention:
- *  - File: `.slashbot/hooks/{event}.{name}.sh`
- *  - Env vars passed to script: SLASHBOT_HOOK_EVENT, SLASHBOT_HOOK_PAYLOAD (JSON)
+ * On kernel startup, scans `.slashbot/hooks/` for shell scripts matching
+ * `{event}.{name}.sh` and registers each as a kernel hook. Scripts are
+ * executed with `bash` and receive `SLASHBOT_HOOK_EVENT` and
+ * `SLASHBOT_HOOK_PAYLOAD` (JSON) environment variables.
  *
  * Hooks:
- *  - `hooks.discovery.startup` — Scans hooks directory on startup and registers discovered scripts.
+ *  - `hooks.discovery.startup` -- Scans hooks directory and registers discovered scripts.
+ *
+ * @returns A SlashbotPlugin instance that discovers and registers filesystem-based hooks.
  */
 export function createHooksDiscoveryPlugin(): SlashbotPlugin {
   return {
@@ -127,4 +140,5 @@ export function createHooksDiscoveryPlugin(): SlashbotPlugin {
   };
 }
 
+/** Alias for {@link createHooksDiscoveryPlugin} conforming to the bundled plugin loader convention. */
 export { createHooksDiscoveryPlugin as createPlugin };

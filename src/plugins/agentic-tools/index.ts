@@ -1,3 +1,16 @@
+/**
+ * @module plugins/agentic-tools
+ *
+ * Agentic Tools plugin providing sandboxed shell execution and filesystem tools
+ * for the agentic loop. Registers tools that allow the LLM to interact with the
+ * host system (execute commands, read/write/patch files, list directories, send
+ * messages, and spawn subagents).
+ *
+ * Safety features include hard-blocked command patterns (fork bombs, shutdown),
+ * risky-command gating requiring explicit approval, and command-existence checks.
+ *
+ * @see {@link createAgenticToolsPlugin} -- Plugin factory function
+ */
 import { promises as fs } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
@@ -93,13 +106,19 @@ async function resolvePath(workspaceRoot: string, inputPath: string): Promise<st
 }
 
 /**
- * Agentic Tools plugin — sandbox tools used by the agentic loop.
+ * Create the Agentic Tools plugin.
  *
- * Tools:
- *  - `shell.exec`  — Execute a subprocess with safety checks (risky-command gating, piped stdio).
- *  - `fs.read`     — Read any file on the system.
- *  - `fs.write`    — Create / overwrite any file on the system.
- *  - `fs.patch`    — Find-and-replace inside any existing file on the system.
+ * Registers the following tools for use by the agentic loop:
+ *  - `shell.exec`  -- Execute a subprocess with safety checks (risky-command gating, piped stdio).
+ *  - `fs.read`     -- Read any file on the system.
+ *  - `fs.write`    -- Create / overwrite any file on the system.
+ *  - `fs.patch`    -- Find-and-replace inside any existing file on the system.
+ *  - `fs.append`   -- Append content to a file (creates if missing).
+ *  - `fs.list`     -- List directory contents.
+ *  - `message`     -- Send a message to a registered channel.
+ *  - `spawn`       -- Spawn a subagent for background subtasks.
+ *
+ * @returns A SlashbotPlugin instance with agentic tool registrations.
  */
 export function createAgenticToolsPlugin(): SlashbotPlugin {
   return {
@@ -461,4 +480,5 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
   };
 }
 
+/** Alias for {@link createAgenticToolsPlugin} conforming to the bundled plugin loader convention. */
 export { createAgenticToolsPlugin as createPlugin };

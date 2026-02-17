@@ -1,6 +1,24 @@
+/**
+ * @module providers/gateway-provider
+ *
+ * Vercel AI Gateway provider implementation. Routes requests through the
+ * Vercel AI Gateway to access models from multiple providers (Anthropic,
+ * OpenAI, xAI, Google) via a single API key. Also exposes a `setup:gateway`
+ * command for interactive onboarding.
+ *
+ * @see {@link createProvider} -- Provider factory function
+ * @see {@link createGatewayCommands} -- CLI command factory for gateway setup
+ */
+
 import { defineProvider } from './shared.js';
 import type { ProviderDefinition, CommandDefinition } from '../core/kernel/contracts.js';
 
+/**
+ * Creates the Vercel AI Gateway provider definition with multi-provider models.
+ *
+ * @param pluginId - The plugin identifier that owns this provider
+ * @returns A {@link ProviderDefinition} for the Vercel AI Gateway
+ */
 export function createProvider(pluginId: string): ProviderDefinition {
   return defineProvider('gateway', 'Vercel AI Gateway', [
     { id: 'anthropic/claude-opus-4-6', displayName: 'Claude Opus 4.6', contextWindow: 200_000, priority: 1, capabilities: ['chat', 'tools', 'reasoning', 'image', 'thinking'] },
@@ -10,6 +28,14 @@ export function createProvider(pluginId: string): ProviderDefinition {
   ], pluginId);
 }
 
+/**
+ * Creates the `setup:gateway` CLI command for configuring the Vercel AI Gateway
+ * provider. Launches the onboarding flow to collect an API key.
+ *
+ * @param pluginId - The plugin identifier that owns the command
+ * @param getKernel - Lazy accessor for the kernel instance
+ * @returns An array of {@link CommandDefinition} containing the gateway setup command
+ */
 export function createGatewayCommands(pluginId: string, getKernel: () => import('../core/kernel/kernel.js').SlashbotKernel): CommandDefinition[] {
   return [
     {

@@ -1,8 +1,22 @@
+/**
+ * @module context/history-limiter
+ *
+ * Limits conversation history to the most recent N user turns while
+ * always preserving system messages. Used as the first stage of the
+ * context preparation pipeline.
+ *
+ * @see {@link limitHistoryTurns} — Main entry point
+ */
 import type { AgentMessage } from '../llm/types.js';
 
 /**
- * Limit conversation to the last N user turns, always keeping system messages.
- * A "turn" is counted per user message.
+ * Limits conversation to the last N user turns, always keeping system messages.
+ * A "turn" is counted per user message. All messages between kept user messages
+ * (including assistant responses) are preserved.
+ *
+ * @param messages - The full conversation message array
+ * @param maxTurns - Maximum number of user turns to retain (0 = unlimited)
+ * @returns Messages trimmed to the specified turn count
  */
 export function limitHistoryTurns(messages: AgentMessage[], maxTurns: number): AgentMessage[] {
   if (maxTurns <= 0) return messages;

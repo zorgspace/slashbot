@@ -1,3 +1,19 @@
+/**
+ * @module plugins/automation
+ *
+ * Automation plugin providing a cron scheduler, repeating timers, one-shot delayed
+ * jobs, and webhook triggers for automated task execution. Jobs are persisted to
+ * `.slashbot/automation.json` and execute prompts through the full LLM + tools
+ * agentic pipeline. Webhook endpoints support HMAC-SHA256 signature validation.
+ *
+ * Tools: automation.list, automation.add_cron, automation.add_webhook,
+ *        automation.add_timer, automation.add_once, automation.run,
+ *        automation.remove, automation.enable, automation.add_delivery
+ *
+ * @see {@link createAutomationPlugin} -- Plugin factory function
+ * @see {@link parseCronExpression} -- Cron expression parser
+ * @see {@link computeNextCronRun} -- Next cron run calculator
+ */
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -480,30 +496,36 @@ class AutomationService {
 // ── Plugin factory ──────────────────────────────────────────────────────
 
 /**
- * Automation plugin — cron scheduler and webhook triggers for automated tasks.
+ * Create the Automation plugin.
  *
- * Manages persistent automation jobs that execute on cron schedules or
- * incoming webhook requests. Supports HMAC-SHA256 signature validation for webhooks.
+ * Manages persistent automation jobs that execute on cron schedules, repeating
+ * timers, one-shot delays, or incoming webhook requests. Supports HMAC-SHA256
+ * signature validation for webhooks.
  *
  * Dependencies: providers.auth
  *
  * Tools:
- *  - `automation.list`        — List all automation jobs (cron + webhook).
- *  - `automation.add_cron`    — Add a cron-triggered job (supports @hourly/@daily/@weekly/@monthly aliases).
- *  - `automation.add_webhook` — Add a webhook-triggered job (optional HMAC secret).
- *  - `automation.run`         — Run a job immediately by ID or name.
- *  - `automation.remove`      — Remove a job by ID or name.
- *  - `automation.enable`      — Enable or disable a job.
+ *  - `automation.list`         -- List all automation jobs.
+ *  - `automation.add_cron`     -- Add a cron-triggered job.
+ *  - `automation.add_webhook`  -- Add a webhook-triggered job.
+ *  - `automation.add_timer`    -- Add a repeating timer job.
+ *  - `automation.add_once`     -- Add a one-shot delayed job.
+ *  - `automation.run`          -- Run a job immediately by ID or name.
+ *  - `automation.remove`       -- Remove a job by ID or name.
+ *  - `automation.enable`       -- Enable or disable a job.
+ *  - `automation.add_delivery` -- Set or remove channel delivery on a job.
  *
  * HTTP routes:
- *  - `POST /automation/webhook/:name` — Webhook trigger endpoint (validates X-Slashbot-Signature).
+ *  - `POST /automation/webhook/:name` -- Webhook trigger endpoint.
  *
  * Services:
- *  - `automation.service` — AutomationService instance for programmatic job management.
+ *  - `automation.service` -- AutomationService instance for programmatic job management.
  *
  * Hooks:
- *  - `automation.startup`  — Load persisted jobs from automation.json and resume cron timers.
- *  - `automation.shutdown` — Stop all running cron timers.
+ *  - `automation.startup`  -- Load persisted jobs and resume timers.
+ *  - `automation.shutdown` -- Stop all running timers.
+ *
+ * @returns A SlashbotPlugin instance with automation tools, routes, services, and lifecycle hooks.
  */
 export function createAutomationPlugin(): SlashbotPlugin {
   let service: AutomationService;
@@ -842,5 +864,14 @@ export function createAutomationPlugin(): SlashbotPlugin {
   };
 }
 
+/** Alias for {@link createAutomationPlugin} conforming to the bundled plugin loader convention. */
 export { createAutomationPlugin as createPlugin };
+
+/**
+ * Re-exported cron utilities for use by other modules and tests.
+ *
+ * - {@link parseCronExpression} -- Parse a 5-field cron expression (or alias) into a CronSchedule.
+ * - {@link parseField} -- Parse a single cron field into a set of matching values.
+ * - {@link computeNextCronRun} -- Compute the next matching Date from a CronSchedule.
+ */
 export { parseCronExpression, parseField, computeNextCronRun };

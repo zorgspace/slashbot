@@ -1,3 +1,13 @@
+/**
+ * @module llm/adapter
+ *
+ * Kernel-integrated LLM adapter that implements the {@link LlmAdapter} interface.
+ * Bridges the kernel's auth system, provider registry, and event bus with the
+ * agent loop and completion runner. Automatically publishes connector:agentic
+ * events for TUI display when no explicit callbacks are provided.
+ *
+ * @see {@link KernelLlmAdapter} — Primary adapter class
+ */
 import type { StructuredLogger } from '../../kernel/contracts.js';
 import type { ProviderRegistry } from '../../kernel/registries.js';
 import type { AuthProfileRouter } from '../../providers/auth-router.js';
@@ -30,10 +40,22 @@ function deriveConnectorInfo(sessionId: string): { name: string; label: string }
   return { name: 'agent', label: 'Agent' };
 }
 
+/**
+ * LLM adapter that connects the kernel's auth routing, provider registry,
+ * and event system with the agent loop. When callbacks are not supplied,
+ * it automatically emits connector:agentic events for TUI observation.
+ */
 export class KernelLlmAdapter implements LlmAdapter {
   private readonly deps: RunCompletionDeps;
   private readonly kernel: SlashbotKernel;
 
+  /**
+   * @param authRouter - Routes auth resolution requests to available provider profiles
+   * @param providers - Registry of available LLM providers and their models
+   * @param logger - Structured logger for diagnostics
+   * @param kernel - The Slashbot kernel for tool access and event publishing
+   * @param tokenModeProxy - Optional wallet-based proxy resolver for token mode
+   */
   constructor(
     authRouter: AuthProfileRouter,
     providers: ProviderRegistry,
@@ -52,6 +74,15 @@ export class KernelLlmAdapter implements LlmAdapter {
     };
   }
 
+  /**
+   * Runs a full agentic completion with tool use. If callbacks are provided,
+   * they are passed directly to the agent loop. Otherwise, auto-publishes
+   * connector:agentic kernel events for each lifecycle stage.
+   *
+   * @param input - Completion input with messages, session, and options
+   * @param callbacks - Optional callbacks; when omitted, kernel events are auto-emitted
+   * @returns The agent loop result
+   */
   async complete(input: LlmCompletionInput, callbacks?: AgentLoopCallbacks): Promise<AgentLoopResult> {
     if (callbacks) {
       return runAgentLoop(input, this.deps, this.kernel, callbacks);
@@ -170,6 +201,13 @@ export class KernelLlmAdapter implements LlmAdapter {
     }
   }
 
+  /**
+   * Runs a streaming completion that pipes tokens through a callback.
+   * Does not support tool use (uses the legacy completion runner).
+   *
+   * @param input - Completion input with messages and options
+   * @param callback - Streaming callback receiving token deltas, completion, and errors
+   */
   async streamComplete(input: LlmCompletionInput, callback: StreamingCallback): Promise<void> {
     try {
       const result = await runCompletion(input, this.deps, makeStreamCaller(callback));

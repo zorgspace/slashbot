@@ -1,3 +1,17 @@
+/**
+ * @module plugins/discord
+ *
+ * Discord integration plugin that connects Slashbot to Discord servers via discord.js.
+ * Registers a channel connector, message handlers, agentic LLM sessions, tools,
+ * commands, gateway methods, and HTTP webhook routes for Discord interaction.
+ *
+ * Supports text messages, image attachments, and voice file transcription
+ * in authorized Discord channels and DMs, with separate agent sessions
+ * for guild channels and DMs (DMs include abort-aware agentic execution).
+ *
+ * @see {@link createDiscordPlugin} - Plugin factory function
+ * @see {@link createPlugin} - Re-exported alias for createDiscordPlugin
+ */
 import { z } from 'zod';
 import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
 import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
@@ -550,4 +564,5 @@ export function createDiscordPlugin(): SlashbotPlugin {
   };
 }
 
+/** Re-export of {@link createDiscordPlugin} as the standard plugin entry point. */
 export { createDiscordPlugin as createPlugin };

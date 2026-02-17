@@ -1,3 +1,13 @@
+/**
+ * @module ui/markdown-text
+ *
+ * Lightweight inline Markdown renderer for the Slashbot TUI.
+ * Parses and renders inline tokens (bold, italic, strikethrough,
+ * code spans, and links) as styled Ink Text elements. Also handles
+ * block-level markers: headings, quotes, and list items.
+ *
+ * @see {@link MarkdownText} -- Main component
+ */
 import React from 'react';
 import { Text } from 'ink';
 import { palette } from './palette.js';
@@ -138,6 +148,18 @@ interface MarkdownTextProps {
   markdown?: boolean;
 }
 
+/**
+ * Renders text with lightweight Markdown formatting support.
+ * Supports inline bold, italic, strikethrough, code, and links,
+ * as well as block-level headings, quotes, and list items.
+ *
+ * @param props.text - The raw Markdown text to render.
+ * @param props.color - Base text color.
+ * @param props.bold - Whether to render all text as bold.
+ * @param props.wrap - Ink wrap mode for text overflow.
+ * @param props.markdown - When false, renders plain text without parsing.
+ * @param props.dim - Whether to render text dimmed.
+ */
 export function MarkdownText({
   text,
   color,

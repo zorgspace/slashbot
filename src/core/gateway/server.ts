@@ -1,3 +1,20 @@
+/**
+ * @module server
+ *
+ * Implements the Slashbot Gateway server, which exposes both an HTTP/JSON-RPC
+ * API and a WebSocket event stream. The gateway is the primary interface for
+ * external tools, integrations, and the TUI to communicate with the kernel.
+ *
+ * Features:
+ * - Bearer-token authentication on all endpoints (except /health)
+ * - JSON-RPC via POST /rpc and WebSocket messages
+ * - WebSocket event subscription for real-time updates
+ * - Pluggable HTTP route registry for custom endpoints
+ * - Automatic port conflict resolution (kills stale processes)
+ *
+ * Key exports:
+ * - {@link SlashbotGateway} - The main gateway server class
+ */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -95,11 +112,22 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   return parsed as Record<string, unknown>;
 }
 
+/**
+ * The Slashbot Gateway server providing HTTP JSON-RPC and WebSocket event
+ * streaming. Authenticates requests via bearer token and dispatches to
+ * registered gateway methods and HTTP routes.
+ */
 export class SlashbotGateway {
   private readonly server;
   private readonly ws;
   private readonly wsClients = new Map<WebSocket, WsClientState>();
 
+  /**
+   * Creates a new gateway server with the given options. Does not start
+   * listening until {@link start} is called.
+   *
+   * @param options - Gateway configuration including config, registries, logger, and health provider.
+   */
   constructor(private readonly options: SlashbotGatewayOptions) {
     this.server = createServer((req, res) => this.handleHttp(req, res));
     this.ws = new WebSocketServer({ noServer: true });
@@ -166,6 +194,12 @@ export class SlashbotGateway {
     });
   }
 
+  /**
+   * Starts the HTTP server and begins listening on the configured host and port.
+   * If the port is already in use, attempts to kill the stale process and retry.
+   *
+   * @throws If the port remains unavailable after retry.
+   */
   async start(): Promise<void> {
     const { host, port } = this.options.config.gateway;
 
@@ -213,6 +247,10 @@ export class SlashbotGateway {
     }
   }
 
+  /**
+   * Gracefully stops the HTTP server, closes all WebSocket connections,
+   * and releases resources.
+   */
   async stop(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       this.server.close((error) => {
@@ -229,6 +267,13 @@ export class SlashbotGateway {
     this.options.logger.info('Gateway stopped');
   }
 
+  /**
+   * Broadcasts an event to all subscribed WebSocket clients. Delivery is
+   * best-effort; send failures on individual sockets are silently ignored.
+   *
+   * @param eventType - The event type identifier (e.g. "message", "status").
+   * @param payload - The event payload as a JSON-serializable record.
+   */
   publishEvent(eventType: string, payload: Record<string, JsonValue>): void {
     if (this.wsClients.size === 0) return;
     const message = JSON.stringify({

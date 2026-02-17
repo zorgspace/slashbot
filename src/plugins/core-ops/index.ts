@@ -1,3 +1,15 @@
+/**
+ * @module plugins/core-ops
+ *
+ * Core operations plugin providing essential control-plane commands for system
+ * health, diagnostics, help display, history management, plugin management,
+ * and self-update capabilities. Also includes a startup hook for automatic
+ * update checking on bundled installs.
+ *
+ * Commands: /health, /doctor, /help, /clear, /history, /plugins, /update
+ *
+ * @see {@link createCoreOpsPlugin} -- Plugin factory function
+ */
 import { execFile, spawn } from 'node:child_process';
 import { promises as fsPromises } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -401,22 +413,24 @@ function restartCurrentProcess(
 }
 
 /**
- * Core Ops plugin — essential control-plane commands.
+ * Create the Core Ops plugin.
  *
- * Commands:
- *  - `/health`  — Print runtime health summary.
- *  - `/doctor`  — Print plugin diagnostics and failures.
- *  - `/help`    — List all registered commands and tools with usage hints.
- *  - `/clear`   — Clear conversation history.
- *  - `/history` — Show session history guidance.
- *  - `/plugins` — List all loaded plugins.
- *  - `/update`  — Self-update from git checkout or npm bundled install.
+ * Registers essential control-plane commands:
+ *  - `/health`  -- Print runtime health summary.
+ *  - `/doctor`  -- Print plugin diagnostics and failures.
+ *  - `/help`    -- List all registered commands and tools with usage hints.
+ *  - `/clear`   -- Clear conversation history.
+ *  - `/history` -- Show session history guidance.
+ *  - `/plugins` -- List, install, or remove external plugins.
+ *  - `/update`  -- Self-update from git checkout or npm bundled install.
  *
  * Hooks:
- *  - `core.auto-update.startup` — Background update check on startup (bundled installs only).
+ *  - `core.auto-update.startup` -- Background update check on startup (bundled installs only).
  *
  * Gateway methods:
- *  - `core.health` — Returns kernel health via RPC.
+ *  - `core.health` -- Returns kernel health via RPC.
+ *
+ * @returns A SlashbotPlugin instance with core operations commands, hooks, and gateway methods.
  */
 export function createCoreOpsPlugin(): SlashbotPlugin {
   return {
@@ -788,4 +802,5 @@ export function createCoreOpsPlugin(): SlashbotPlugin {
   };
 }
 
+/** Alias for {@link createCoreOpsPlugin} conforming to the bundled plugin loader convention. */
 export { createCoreOpsPlugin as createPlugin };

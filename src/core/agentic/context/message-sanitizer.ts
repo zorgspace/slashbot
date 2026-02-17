@@ -1,9 +1,22 @@
+/**
+ * @module context/message-sanitizer
+ *
+ * Post-truncation message repair and provider-specific rule enforcement.
+ * Removes orphaned or empty messages that may result from context trimming,
+ * and enforces alternating turn rules for providers like Google Gemini.
+ *
+ * @see {@link sanitizeMessages} — Main entry point
+ */
 import type { AgentMessage } from '../llm/types.js';
 
 /**
- * Repair messages after truncation:
- * - Remove orphaned tool-call / tool-result pairs
- * - Enforce provider-specific rules (e.g. Gemini alternating turns)
+ * Repairs messages after truncation and enforces provider-specific rules.
+ * Removes orphaned/empty messages and merges consecutive same-role messages
+ * for providers that require alternating turns (e.g. Google Gemini).
+ *
+ * @param messages - Messages to sanitize (typically after trimming/pruning)
+ * @param providerId - Optional provider ID for provider-specific rules
+ * @returns Sanitized message array safe for API submission
  */
 export function sanitizeMessages(
   messages: AgentMessage[],

@@ -1,3 +1,15 @@
+/**
+ * @module plugins/services/chat-history-store
+ *
+ * Pluggable per-chat conversation history storage backends.
+ * Provides a {@link ChatHistoryStore} interface and two implementations:
+ *
+ * - {@link FileChatHistoryStore} — Persists history to JSON files on disk (default for connectors).
+ * - {@link SessionChatHistoryStore} — In-memory history with markdown session dumps for archival.
+ *
+ * Both support flat (user/assistant) and rich (tool call/result) message history,
+ * conversation summaries, and configurable max-history limits.
+ */
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -47,9 +59,13 @@ function normalizeMessage(input: unknown): AgentMessage | null {
  * Implementations can store history in-memory, on disk, in SQLite, Redis, etc.
  */
 export interface ChatHistoryStore {
+  /** Retrieve conversation history for a chat. */
   get(chatId: string): Promise<AgentMessage[]>;
+  /** Append messages to a chat's history. */
   append(chatId: string, messages: AgentMessage[]): Promise<void>;
+  /** Clear all history for a chat. */
   clear(chatId: string): Promise<void>;
+  /** Get the number of messages stored for a chat. */
   length(chatId: string): Promise<number>;
   /** Get full rich history including tool call/result messages. */
   getRich?(chatId: string): Promise<RichMessage[]>;

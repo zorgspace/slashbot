@@ -1,3 +1,17 @@
+/**
+ * @module runtime-config
+ *
+ * Loads, validates, and merges the Slashbot runtime configuration from multiple
+ * sources (user-global, cwd-local, workspace-local) using a layered deep-merge
+ * strategy. Configuration is validated against a strict Zod schema and runtime
+ * CLI flags are applied as final overrides.
+ *
+ * Key exports:
+ * - {@link loadRuntimeConfig} - Main entry point to load and merge config
+ * - {@link saveRuntimeConfig} - Persist a RuntimeConfig to disk
+ * - {@link resolveConfigSources} - Resolve the three config file paths
+ * - {@link ConfigSources} - Interface describing resolved config paths
+ */
 import { promises as fs } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -74,9 +88,13 @@ const RuntimeConfigSchema = z.object({
   }).default({ allowBundled: true, entries: {} }),
 }).strict();
 
+/** Resolved file paths for the three configuration layers. */
 export interface ConfigSources {
+  /** Path to the user-global config (default: ~/.slashbot/config.json). */
   userConfigPath: string;
+  /** Path to the current-working-directory config (.slashbot/config.json relative to cwd). */
   cwdConfigPath: string;
+  /** Path to the workspace-scoped config (.slashbot/config.json relative to workspace root). */
   workspaceConfigPath: string;
 }
 
@@ -158,6 +176,14 @@ async function readOptionalJson(path: string): Promise<Record<string, unknown> |
   }
 }
 
+/**
+ * Resolves the three configuration file paths based on the workspace root and
+ * optional CLI flags (e.g. an explicit `--config` path).
+ *
+ * @param workspaceRoot - Absolute path to the workspace root directory.
+ * @param flags - Runtime flags that may override the user config path.
+ * @returns The resolved {@link ConfigSources} with user, cwd, and workspace paths.
+ */
 export function resolveConfigSources(workspaceRoot: string, flags: RuntimeFlags): ConfigSources {
   return {
     userConfigPath: flags.configPath ?? join(homedir(), '.slashbot', 'config.json'),
@@ -180,6 +206,13 @@ function applyRuntimeFlags(config: RuntimeConfig, flags: RuntimeFlags): RuntimeC
   return next;
 }
 
+/**
+ * Persists a RuntimeConfig object to disk as formatted JSON. Uses atomic
+ * write (tmp + rename) to prevent partial writes.
+ *
+ * @param config - The runtime configuration to save.
+ * @param configPath - Optional path override; defaults to ~/.slashbot/config.json.
+ */
 export async function saveRuntimeConfig(config: RuntimeConfig, configPath?: string): Promise<void> {
   const filePath = configPath ?? join(homedir(), '.slashbot', 'config.json');
   await fs.mkdir(join(homedir(), '.slashbot'), { recursive: true });
@@ -188,6 +221,18 @@ export async function saveRuntimeConfig(config: RuntimeConfig, configPath?: stri
   await fs.rename(tmpPath, filePath);
 }
 
+/**
+ * Loads and merges the runtime configuration from all layers.
+ *
+ * Merge order (later wins): defaults -> user-global -> cwd-local -> workspace-local.
+ * The merged result is validated against the Zod schema, and runtime CLI flags
+ * are applied as final overrides.
+ *
+ * @param workspaceRoot - Absolute path to the workspace root directory.
+ * @param flags - Optional runtime CLI flags for overrides.
+ * @returns The fully merged and validated RuntimeConfig.
+ * @throws If any config file contains invalid JSON or fails schema validation.
+ */
 export async function loadRuntimeConfig(workspaceRoot: string, flags: RuntimeFlags = {}): Promise<RuntimeConfig> {
   const sources = resolveConfigSources(workspaceRoot, flags);
 

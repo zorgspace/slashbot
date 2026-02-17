@@ -1,6 +1,24 @@
+/**
+ * @module providers/ollama
+ *
+ * Ollama LLM provider implementation for locally hosted models. Registers
+ * Llama 3.3 70B, Qwen 2.5 32B, DeepSeek R1 32B, Mistral 7B, and
+ * Code Llama 34B models with base-URL authentication (defaults to
+ * `http://localhost:11434/v1`).
+ *
+ * @see {@link createProvider} -- Provider factory function
+ */
+
 import { createBaseUrlAuthHandler } from './shared.js';
 import type { ProviderDefinition } from '../core/kernel/contracts.js';
 
+/**
+ * Creates the Ollama provider definition with locally hosted models.
+ * Uses base-URL auth so users can point to a custom Ollama instance.
+ *
+ * @param pluginId - The plugin identifier that owns this provider
+ * @returns A {@link ProviderDefinition} for Ollama
+ */
 export function createProvider(pluginId: string): ProviderDefinition {
   return {
     id: 'ollama',

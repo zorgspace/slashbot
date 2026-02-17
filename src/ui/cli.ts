@@ -1,3 +1,12 @@
+/**
+ * @module ui/cli
+ *
+ * CLI router for Slashbot3. Parses command-line arguments and dispatches
+ * to the appropriate execution mode: interactive TUI, headless `run`,
+ * `gateway` server, or a registered slash command.
+ *
+ * @see {@link runCli} -- Main CLI entry point
+ */
 import React from 'react';
 import { render } from 'ink';
 import { randomUUID } from 'node:crypto';
@@ -50,6 +59,13 @@ function getStringFlag(flags: Record<string, string | boolean>, name: string): s
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * Parses CLI arguments, boots the kernel with bundled plugins, and dispatches
+ * to the appropriate execution mode (tui, run, gateway, or slash command).
+ *
+ * @param argv - Command-line arguments (process.argv.slice(2)).
+ * @returns Exit code: 0 on success, non-zero on error.
+ */
 export async function runCli(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
   const nonInteractive = Boolean(parsed.flags['non-interactive']);

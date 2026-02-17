@@ -1,3 +1,12 @@
+/**
+ * @module providers/index
+ *
+ * Barrel module that aggregates all built-in LLM provider modules and exposes
+ * a single factory function to instantiate every provider definition at once.
+ *
+ * @see {@link createAllProviders} -- Factory that returns all provider definitions
+ */
+
 import type { ProviderDefinition } from '../core/kernel/contracts.js';
 
 import * as gateway from './gateway-provider.js';
@@ -20,6 +29,7 @@ import * as googleVertex from './google-vertex.js';
 import * as ollama from './ollama.js';
 import * as vllm from './vllm.js';
 
+/** All built-in provider modules, imported and collected for batch instantiation. */
 const providerModules = [
   gateway,
   anthropic,
@@ -42,7 +52,13 @@ const providerModules = [
   vllm,
 ] as const;
 
-/** Create all built-in provider definitions. */
+/**
+ * Creates all built-in provider definitions by invoking each module's
+ * `createProvider` factory.
+ *
+ * @param pluginId - The plugin identifier that owns these providers
+ * @returns An array of {@link ProviderDefinition} for every registered LLM provider
+ */
 export function createAllProviders(pluginId: string): ProviderDefinition[] {
   return providerModules.map(m => m.createProvider(pluginId));
 }

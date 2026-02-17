@@ -1,3 +1,14 @@
+/**
+ * @module ui/clipboard-image
+ *
+ * Cross-platform clipboard access for image and text paste in the TUI.
+ * Supports macOS (pngpaste / pbpaste), Linux Wayland (wl-paste),
+ * and Linux X11 (xclip). Images are returned as base64 data URLs.
+ *
+ * @see {@link readClipboardImageData} -- Read image from clipboard
+ * @see {@link readClipboardText} -- Read text from clipboard
+ * @see {@link ClipboardImageData} -- Image data structure
+ */
 import { platform } from 'node:os';
 import { spawn } from 'node:child_process';
 
@@ -12,10 +23,15 @@ interface CommandResult {
   notFound: boolean;
 }
 
+/** Data returned when an image is read from the system clipboard. */
 export interface ClipboardImageData {
+  /** Base64-encoded data URL of the image. */
   dataUrl: string;
+  /** MIME type of the image (e.g. image/png). */
   mimeType: string;
+  /** Size of the image in bytes. */
   bytes: number;
+  /** Platform source: 'macos', 'wayland', or 'x11'. */
   source: string;
 }
 
@@ -131,6 +147,13 @@ async function readMacImage(): Promise<ClipboardImageData | null> {
   };
 }
 
+/**
+ * Reads plain text from the system clipboard.
+ * Uses pbpaste on macOS, wl-paste or xclip on Linux.
+ *
+ * @returns The clipboard text content.
+ * @throws If clipboard access fails or is unsupported on the platform.
+ */
 export async function readClipboardText(): Promise<string> {
   const os = platform();
   if (os === 'darwin') {
@@ -148,6 +171,13 @@ export async function readClipboardText(): Promise<string> {
   throw new Error(`Clipboard text paste is not supported on ${os}.`);
 }
 
+/**
+ * Reads image data from the system clipboard and returns it as a data URL.
+ * Tries platform-specific tools in order of preference.
+ *
+ * @returns The clipboard image as a {@link ClipboardImageData} object.
+ * @throws If no image is found or clipboard tools are missing.
+ */
 export async function readClipboardImageData(): Promise<ClipboardImageData> {
   const os = platform();
   if (os === 'darwin') {

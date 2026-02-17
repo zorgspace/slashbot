@@ -1,3 +1,17 @@
+/**
+ * @module plugins/provider-auth
+ *
+ * Provider Auth plugin handling authentication and switching for LLM providers.
+ * Registers the Vercel AI Gateway as the built-in provider and exposes commands
+ * for provider onboarding, selection, and model switching.
+ *
+ * Commands:
+ *  - `/setup`      -- Run provider onboarding (supports --provider, --method, --label, --api-key).
+ *  - `/providers`  -- Show active provider or switch with `select <name>`.
+ *  - `/model`      -- Show active model or switch with `select <id>`.
+ *
+ * @see {@link createProviderAuthPlugin} -- Plugin factory function
+ */
 import type { RuntimeConfig, SlashbotPlugin } from '../../plugin-sdk';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
@@ -23,15 +37,14 @@ function formatContextWindow(n: number): string {
 }
 
 /**
- * Provider Auth plugin — authentication for LLM providers.
+ * Create the Provider Auth plugin.
  *
  * Registers the Vercel AI Gateway as the sole built-in provider,
  * giving unified access to all models via a single API key.
+ * Exposes `/setup`, `/providers`, and `/model` commands for provider
+ * management and model selection.
  *
- * Commands:
- *  - `/setup`            — Run provider onboarding (supports --provider, --method, --label, --api-key).
- *  - `/providers`        — Show active provider or switch with `select <name>`.
- *  - `/model`            — Show active model or switch with `select <id>`.
+ * @returns A SlashbotPlugin instance with provider registrations and auth commands.
  */
 export function createProviderAuthPlugin(): SlashbotPlugin {
   return {
@@ -282,4 +295,5 @@ export function createProviderAuthPlugin(): SlashbotPlugin {
   };
 }
 
+/** Alias for {@link createProviderAuthPlugin} conforming to the bundled plugin loader convention. */
 export { createProviderAuthPlugin as createPlugin };

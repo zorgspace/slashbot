@@ -1,3 +1,17 @@
+/**
+ * @module plugins/system-prompt
+ *
+ * System Prompt plugin assembling the LLM system prompt from static rules,
+ * a dynamic tool catalog, and workspace context files. Provides the base
+ * identity, behavioral directives, and environment-awareness for the AI agent.
+ *
+ * Prompt sections:
+ *  - `system.prompt.base`      -- Core "ACT FIRST" directive and behavioral rules.
+ *  - `system.prompt.tools`     -- Dynamic list of all registered tools.
+ *  - `system.prompt.workspace` -- Workspace context files (.slashbot/ directory).
+ *
+ * @see {@link createSystemPromptPlugin} -- Plugin factory function
+ */
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -168,20 +182,22 @@ Before reporting code changes complete: run type checking and tests if available
 When responding via Telegram: never send to group chats; keep responses to 1–3 short paragraphs; format for Telegram entities.`;
 
 /**
- * System Prompt plugin — base system identity, rules, and dynamic tool catalog.
+ * Create the System Prompt plugin.
  *
  * Assembles the LLM system prompt from static rules, a dynamic tool catalog,
  * and workspace context files (AGENTS.md, SOUL.md, TOOLS.md, MEMORY.md, HEARTBEAT.md).
  *
  * Prompt sections:
- *  - `system.prompt.base` — Core "ACT FIRST" directive and behavioral rules.
+ *  - `system.prompt.base` -- Core "ACT FIRST" directive and behavioral rules.
  *
  * Context providers:
- *  - `system.prompt.tools`     — Dynamic list of all registered tools (injected into the system prompt).
- *  - `system.prompt.workspace` — Reads workspace context files (.slashbot/ directory) and injects them.
+ *  - `system.prompt.tools`     -- Dynamic list of all registered tools.
+ *  - `system.prompt.workspace` -- Reads workspace context files (.slashbot/ directory).
  *
  * Hooks:
- *  - `system.prompt.workspace.init` — Initializes the .slashbot/ workspace directory on startup.
+ *  - `system.prompt.workspace.init` -- Initializes the .slashbot/ workspace directory on startup.
+ *
+ * @returns A SlashbotPlugin instance with system prompt contributions and workspace initialization.
  */
 export function createSystemPromptPlugin(): SlashbotPlugin {
   return {
@@ -362,4 +378,5 @@ export function createSystemPromptPlugin(): SlashbotPlugin {
   };
 }
 
+/** Alias for {@link createSystemPromptPlugin} conforming to the bundled plugin loader convention. */
 export { createSystemPromptPlugin as createPlugin };

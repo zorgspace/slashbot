@@ -1,3 +1,15 @@
+/**
+ * @module plugins/explain
+ *
+ * Explain plugin providing a tool that pushes short status updates to the user
+ * mid-reasoning. Resolves the active connector channel (Telegram, Discord, CLI)
+ * from the session ID and delivers an instant explanation message.
+ *
+ * Tools:
+ *  - `explain` -- Send a short status update to the user while the agent works.
+ *
+ * @see {@link createExplainPlugin} -- Plugin factory function
+ */
 import { z } from 'zod';
 import type { ChannelDefinition, JsonValue, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk';
 import type { ChannelRegistry } from '@slashbot/core/kernel/registries.js';
@@ -19,6 +31,15 @@ function resolveConnector(channels: ChannelRegistry, sessionId?: string): Channe
   return connectors.find((ch) => !ch.sessionPrefix) ?? connectors[0];
 }
 
+/**
+ * Create the Explain plugin.
+ *
+ * Registers the `explain` tool that delivers short status messages to the user's
+ * active connector channel during agentic reasoning. Messages are routed based on
+ * session ID prefix matching against registered connector channels.
+ *
+ * @returns A SlashbotPlugin instance with the explain tool registration.
+ */
 export function createExplainPlugin(): SlashbotPlugin {
   return {
     manifest: {
@@ -76,4 +97,5 @@ export function createExplainPlugin(): SlashbotPlugin {
   };
 }
 
+/** Alias for {@link createExplainPlugin} conforming to the bundled plugin loader convention. */
 export { createExplainPlugin as createPlugin };

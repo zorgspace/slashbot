@@ -1,3 +1,14 @@
+/**
+ * @module tool-bridge
+ *
+ * Bridges kernel tool definitions to AI SDK compatible tool sets.
+ * Converts the kernel's ToolDefinition format into the AI SDK ToolSet format,
+ * handling name sanitization, callback lifecycle events, dual-track output
+ * (forUser vs forLlm), and optional tool result truncation.
+ *
+ * @see {@link buildToolSet} — Main entry point for converting kernel tools
+ * @see {@link sanitizeToolName} — Name sanitization for OpenAI compatibility
+ */
 import { tool, type ToolSet } from 'ai';
 import { appendFileSync } from 'node:fs';
 import type { SlashbotKernel } from '../kernel/kernel.js';
@@ -9,14 +20,21 @@ function debugLog(msg: string): void {
   try { appendFileSync('/tmp/slashbot-debug.log', `[tool-bridge ${new Date().toISOString()}] ${msg}\n`); } catch {}
 }
 
+/** Metadata for a tool, used in callback notifications. */
 export interface ToolBridgeToolMeta {
+  /** Human-readable display name of the tool. */
   name: string;
+  /** Description of what the tool does. */
   description: string;
 }
 
+/** Callbacks for observing tool execution lifecycle events within the bridge. */
 export interface ToolBridgeCallbacks {
+  /** Called when a tool begins execution. */
   onToolStart?(toolId: string, args: Record<string, unknown>, meta?: ToolBridgeToolMeta): void;
+  /** Called when a tool finishes execution with its result. */
   onToolEnd?(toolId: string, args: Record<string, unknown>, result: ToolResult, meta?: ToolBridgeToolMeta): void;
+  /** Called when a tool produces user-facing output (dual-track forUser content). */
   onToolUserOutput?(toolId: string, content: string): void;
 }
 
@@ -28,6 +46,13 @@ export function sanitizeToolName(id: string): string {
   return id.replace(/\./g, '_');
 }
 
+/**
+ * Derives a human-readable display name for a tool.
+ *
+ * @param id - The tool identifier
+ * @param title - Optional explicit title; used if provided
+ * @returns The display name (title if available, otherwise the raw id)
+ */
 export function deriveToolDisplayName(id: string, title?: string): string {
   return title ?? id;
 }

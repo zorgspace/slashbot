@@ -1,3 +1,14 @@
+/**
+ * @module plugins/services/context-window
+ *
+ * Context window management utilities for conversation history.
+ * Provides token-budget windowing, MIME type extraction, and
+ * multi-part context summarization (ported from PicoClaw agent/loop.go).
+ *
+ * @see {@link windowByTokenBudget} — Keeps most-recent messages within a token budget
+ * @see {@link maybeSummarize} — Triggers and performs conversation summarization
+ * @see {@link SummarizationResult} — Summary output type
+ */
 import type { AgentMessage, LlmAdapter } from '@slashbot/core/agentic/llm/index.js';
 
 // Re-export shared token estimation utilities from core
