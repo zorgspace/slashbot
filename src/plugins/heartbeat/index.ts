@@ -253,9 +253,8 @@ class HeartbeatService {
             role: 'system',
             content:
               'You are a heartbeat agent. You have tools available — use them to carry out ' +
-              'the tasks described in the HEARTBEAT.md checklist. Execute each item, then ' +
-              'report your final status. Begin your final response with exactly one of: ' +
-              '[OK], [ALERT], or [WARNING]. Keep the final summary brief — one short paragraph max.',
+              'the tasks. Plan, Execute and Verify each item in HEARTBEAT.md. Do' +
+              'not report unless explicityly asked.'
           },
           { role: 'user', content: fullPrompt },
         ],
@@ -274,8 +273,8 @@ class HeartbeatService {
       this.indicatorUpdater?.(result === 'alert' ? 'error' : 'idle');
       this.events?.publish('heartbeat:status', { status: result === 'alert' ? 'error' : 'idle' });
 
-      // Deliver to configured channels
-      await this.deliverToConnectors(response, result);
+      // NOTE: not calling deliverToConnectors here — the LLM already sends
+      // messages via the `message` tool during execution.
 
       return { result, response };
     } catch (err) {

@@ -42,7 +42,7 @@ export function buildToolSet(
   context: ToolCallContext,
   callbacks?: ToolBridgeCallbacks,
   contextConfig?: Pick<ContextPipelineConfig, 'contextLimit' | 'toolResultMaxContextShare' | 'toolResultHardMax' | 'toolResultMinKeep'>,
-  toolAllowlist?: string[],
+  toolFilter?: { allowlist?: string[]; denylist?: string[] },
 ): ToolSet {
   const tools: ToolSet = {};
   const allDefs = kernel.tools.list();
@@ -50,7 +50,8 @@ export function buildToolSet(
 
   for (const def of allDefs) {
     if (!def.parameters) { skippedNoParams.push(def.id); continue; }
-    if (toolAllowlist && !toolAllowlist.includes(def.id)) continue;
+    if (toolFilter?.allowlist && !toolFilter.allowlist.includes(def.id)) continue;
+    if (toolFilter?.denylist && toolFilter.denylist.includes(def.id)) continue;
 
     const safeName = sanitizeToolName(def.id);
     const meta: ToolBridgeToolMeta = {

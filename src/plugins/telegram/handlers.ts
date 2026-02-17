@@ -10,6 +10,7 @@ import type { PreemptiveQueue } from '../services/preemptive-queue.js';
 import { isAuthorized, authorizeChatId } from './config.js';
 import {
   extractCommandPayload,
+  markdownToTelegramHtml,
   parseAgentRouting,
   resolveChatContext,
   sendWithRetry,
@@ -57,7 +58,8 @@ export async function sendMarkdownToChat(
   for (const part of parts) {
     await sendWithRetry(async () => {
       try {
-        await telegram.sendMessage(chatId, part, { parse_mode: 'Markdown' });
+        const html = markdownToTelegramHtml(part);
+        await telegram.sendMessage(chatId, html, { parse_mode: 'HTML' });
       } catch {
         await telegram.sendMessage(chatId, part);
       }

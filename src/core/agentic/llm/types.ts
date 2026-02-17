@@ -56,6 +56,8 @@ export interface LlmCompletionInput {
   pinnedModelId?: string;
   /** Restrict tools available to the LLM to this allowlist of tool IDs. */
   toolAllowlist?: string[];
+  /** Exclude specific tools by ID. */
+  toolDenylist?: string[];
 }
 
 export interface StreamingCallback {

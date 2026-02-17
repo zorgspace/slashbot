@@ -358,7 +358,7 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
         id: 'message',
         title: 'Message',
         pluginId: 'slashbot.agentic.tools',
-        description: 'Send a message to a registered channel. Defaults to CLI. For connectors (Telegram, Discord), chatId is required.',
+        description: 'Send a message to a registered channel. Defaults to CLI. For connectors (Telegram, Discord), chatId is optional — omitting it sends to the default authorized private chat.',
         parameters: z.object({
           content: z.string().describe('Message content to send'),
           channel: z.string().optional().describe('Channel ID (e.g. "telegram", "discord"). Defaults to "cli".'),
@@ -382,11 +382,8 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
               return { ok: false, error: { code: 'CHANNEL_NOT_FOUND', message: `Channel "${channelId}" not found. Available: ${available}` } };
             }
 
-            // Connector channels (non-CLI) require a chatId
-            if (target.connector && channelId !== 'cli' && !chatId) {
-              return { ok: false, error: { code: 'CHAT_ID_REQUIRED', message: `Channel "${channelId}" is a connector and requires a chatId parameter.` } };
-            }
-
+            // When no chatId is given, connector channels default to their
+            // built-in broadcast (e.g. first authorized private chat).
             const payload = chatId ? { text: content, chatId } : content;
             await target.send(payload as JsonValue);
             return { ok: true, output: `Message sent via ${target.id}` };

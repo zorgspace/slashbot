@@ -179,7 +179,7 @@ export async function runAgentLoop(
       onToolUserOutput: (toolId, content) => {
         callbacks?.onToolUserOutput?.(toolId, content);
       },
-    }, undefined, input.toolAllowlist);
+    }, undefined, { allowlist: input.toolAllowlist, denylist: input.toolDenylist });
 
     debugLog(`runAgentLoop: ${Object.keys(tools).length} tools available, noTools=${!!input.noTools}, session=${input.sessionId}`);
 

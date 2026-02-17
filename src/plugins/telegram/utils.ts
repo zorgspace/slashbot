@@ -65,3 +65,50 @@ export function isPrivateChatId(chatId: string): boolean {
   const n = Number(chatId);
   return Number.isNaN(n) || n >= 0;
 }
+
+/**
+ * Convert standard markdown to Telegram-compatible HTML.
+ * Handles code blocks, inline code, bold, italic, and links.
+ * Much more reliable than Telegram's legacy Markdown parse mode.
+ */
+export function markdownToTelegramHtml(md: string): string {
+  const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // Extract code blocks first to protect their content
+  const codeBlocks: string[] = [];
+  let text = md.replace(/```(?:\w*)\n?([\s\S]*?)```/g, (_m, code: string) => {
+    codeBlocks.push(code.replace(/\n$/, ''));
+    return `\x00CB${codeBlocks.length - 1}\x00`;
+  });
+
+  // Extract inline code
+  const inlineCodes: string[] = [];
+  text = text.replace(/`([^`]+)`/g, (_m, code: string) => {
+    inlineCodes.push(code);
+    return `\x00IC${inlineCodes.length - 1}\x00`;
+  });
+
+  // Escape HTML in remaining text
+  text = escHtml(text);
+
+  // Bold **text** or __text__
+  text = text.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  text = text.replace(/__(.+?)__/g, '<b>$1</b>');
+
+  // Italic *text* or _text_
+  text = text.replace(/(?<!\w)\*(.+?)\*(?!\w)/g, '<i>$1</i>');
+  text = text.replace(/(?<!\w)_(.+?)_(?!\w)/g, '<i>$1</i>');
+
+  // Links [text](url)
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  // Restore inline code
+  text = text.replace(/\x00IC(\d+)\x00/g, (_m, i: string) =>
+    `<code>${escHtml(inlineCodes[Number(i)])}</code>`);
+
+  // Restore code blocks
+  text = text.replace(/\x00CB(\d+)\x00/g, (_m, i: string) =>
+    `<pre>${escHtml(codeBlocks[Number(i)])}</pre>`);
+
+  return text;
+}

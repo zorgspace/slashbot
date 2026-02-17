@@ -572,11 +572,11 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
           const text = typeof payload.text === 'string' ? payload.text.trim() : '';
           if (!text) return;
 
-          const modalityPrefix = modality === 'text' ? '' : `[${modality}] `;
+          const modalityPrefix = modality === 'voice' ? '🎙️ ' : modality === 'photo' ? '📷 ' : '';
           pushLine({
             id: `msg-${ind.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             role,
-            label: `${ind.label}(${chatId})`,
+            label: ind.label,
             text: `${modalityPrefix}${text}`,
           });
         });
