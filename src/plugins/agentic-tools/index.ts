@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
-import type { ChannelDefinition, JsonValue, RuntimeConfig, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { ChannelDefinition, JsonValue, RuntimeConfig, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk/index.js';
 import type { ChannelRegistry, ProviderRegistry } from '@slashbot/core/kernel/registries.js';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';

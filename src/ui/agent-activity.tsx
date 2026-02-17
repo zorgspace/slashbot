@@ -52,8 +52,8 @@ export function AgentActivity({ state, busy, cols }: AgentActivityProps) {
     const completedCount = state.actions.filter(a => a.status === 'done' || a.status === 'error').length;
     if (completedCount === 0) return null;
     return (
-      <Box height={1} width={cols}>
-        <Text color={palette.success}>{` \u2713 ${completedCount} tool${completedCount !== 1 ? 's' : ''} completed`}</Text>
+      <Box height={1} width={cols} paddingLeft={1}>
+        <Text color={palette.success}>{`\u2713 ${completedCount} tool${completedCount !== 1 ? 's' : ''} completed`}</Text>
       </Box>
     );
   }
@@ -65,17 +65,15 @@ export function AgentActivity({ state, busy, cols }: AgentActivityProps) {
   const currentStep = state.actions.filter(a => a.status === 'done' || a.status === 'error').length;
 
   return (
-    <Box flexDirection="column" width={cols}>
+    <Box flexDirection="column" width={cols} paddingLeft={1}>
       {state.title ? (
-        <Box height={1} width={cols}>
-          <Text color={palette.accent} bold>{' '}</Text>
+        <Box height={1}>
           <Text color={palette.accent} bold>{state.title}</Text>
         </Box>
       ) : null}
 
       {state.thoughts && busy ? (
-        <Box width={cols}>
-          <Text color={palette.muted}>{' '}</Text>
+        <Box>
           <MarkdownText
             text={state.thoughts.length > cols - 5 ? `${state.thoughts.slice(0, cols - 8)}...` : state.thoughts}
             color={palette.muted}
@@ -85,7 +83,7 @@ export function AgentActivity({ state, busy, cols }: AgentActivityProps) {
       ) : null}
 
       {visibleActions.length > 0 ? (
-        <Box flexDirection="column" width={cols}>
+        <Box flexDirection="column">
           {visibleActions.map((action, i) => {
             const argsPreview = Object.entries(action.args)
               .map(([k, v]) => typeof v === 'string' && v.length <= 40 ? v : k)
@@ -94,16 +92,14 @@ export function AgentActivity({ state, busy, cols }: AgentActivityProps) {
             const output = toolOutputPreview(action, Math.max(80, cols - 12));
             const displayName = action.toolId || action.name || 'tool';
             return (
-              <Box key={action.id || `action-${i}`} width={cols} flexDirection="column">
-                <Box height={1} width={cols}>
-                  <Text color={palette.muted}>{' '}</Text>
+              <Box key={action.id || `action-${i}`} flexDirection="column">
+                <Box height={1}>
                   <Text color={statusColor(action.status)}>{statusIcon(action.status)} </Text>
                   <Text color={palette.text} bold>{displayName}</Text>
                   <Text color={palette.muted}>{argsPreview ? `  ${argsPreview}` : ''}</Text>
                 </Box>
                 {output ? (
-                  <Box width={cols}>
-                    <Text color={palette.muted}>{'   '}</Text>
+                  <Box paddingLeft={2}>
                     <MarkdownText
                       text={output}
                       color={action.status === 'error' ? palette.error : palette.muted}
@@ -118,14 +114,13 @@ export function AgentActivity({ state, busy, cols }: AgentActivityProps) {
       ) : null}
 
       {totalToolCalls > 0 && busy ? (
-        <Box height={1} width={cols}>
-          <Text color={palette.dim}>{` Step ${currentStep} \u00B7 ${totalToolCalls} tool${totalToolCalls !== 1 ? 's' : ''} used`}</Text>
+        <Box height={1}>
+          <Text color={palette.dim}>{`Step ${currentStep} \u00B7 ${totalToolCalls} tool${totalToolCalls !== 1 ? 's' : ''} used`}</Text>
         </Box>
       ) : null}
 
       {state.summary && state.done ? (
-        <Box width={cols} marginTop={1}>
-          <Text color={palette.muted}>{' '}</Text>
+        <Box marginTop={1}>
           <MarkdownText text={state.summary} color={palette.text} wrap="wrap" />
         </Box>
       ) : null}

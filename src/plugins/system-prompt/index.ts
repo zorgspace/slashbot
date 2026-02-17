@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { hostname, platform, arch, userInfo, release } from 'node:os';
-import type { SlashbotPlugin, ToolDefinition } from '@slashbot/plugin-sdk';
+import type { SlashbotPlugin, ToolDefinition } from '../../plugin-sdk';
 import type { ToolRegistry } from '@slashbot/core/kernel/registries.js';
 import { initWorkspace } from '@slashbot/core/workspace-init.js';
 

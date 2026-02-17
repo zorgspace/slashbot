@@ -1,6 +1,6 @@
 import { promises as fsPromises } from 'node:fs';
 import { z } from 'zod';
-import type { PathResolver, SlashbotPlugin } from '@slashbot/plugin-sdk';
+import type { PathResolver, SlashbotPlugin } from '../../plugin-sdk/index.js';
 import type { TranscriptionProvider } from '../services/transcription-service.js';
 import { OpenAIWhisperTranscription } from '../services/transcription-service.js';
 

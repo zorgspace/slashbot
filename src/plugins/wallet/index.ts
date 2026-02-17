@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, pbkdf2Sync, randomBytes, scryptSync, sign } from 'node:crypto';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { JsonValue, PathResolver, SlashbotPlugin } from '@slashbot/plugin-sdk';
+import type { JsonValue, PathResolver, SlashbotPlugin } from '../../plugin-sdk/index.js';
 import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
 import { asObject, asString } from '../utils.js';
 

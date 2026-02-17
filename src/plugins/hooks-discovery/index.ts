@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { SlashbotPlugin, StructuredLogger } from '../../plugin-sdk';
 
 const PLUGIN_ID = 'slashbot.hooks.discovery';
 const execFileAsync = promisify(execFile);

@@ -1,5 +1,5 @@
 import type { Client, Message } from 'discord.js';
-import type { JsonValue, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { JsonValue, StructuredLogger } from '../../plugin-sdk/index.js';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { TranscriptionService } from '../services/transcription-service.js';
 import type { AgentRegistry } from '../agents/index.js';

@@ -1,6 +1,6 @@
 import { promises as fsPromises } from 'node:fs';
 import { z } from 'zod';
-import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk/index.js';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';

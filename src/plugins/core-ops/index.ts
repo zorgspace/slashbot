@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import type { JsonValue, PathResolver, PluginManifest, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { JsonValue, PathResolver, PluginManifest, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk';
 import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
 import type { CommandRegistry, ToolRegistry } from '@slashbot/core/kernel/registries.js';
 import { clearHistory } from '@slashbot/core/history.js';

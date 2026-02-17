@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk/index.js';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';

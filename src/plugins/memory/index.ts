@@ -1,4 +1,4 @@
-import type { JsonValue, SlashbotPlugin } from '@slashbot/plugin-sdk';
+import type { JsonValue, SlashbotPlugin } from '../../plugin-sdk/index.js';
 import { MemoryStore } from '../services/memory-store.js';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';

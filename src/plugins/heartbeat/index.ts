@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { IndicatorStatus, JsonValue, SlashbotPlugin, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { IndicatorStatus, JsonValue, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk/index.js';
 
 const HeartbeatConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -248,6 +248,7 @@ class HeartbeatService {
         agentId: 'default-agent',
         noTools: false,
         maxTokens: 4096,
+        toolAllowlist: ['message', 'telegram.send', 'discord.send'],
         messages: [
           {
             role: 'system',

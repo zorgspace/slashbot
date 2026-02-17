@@ -1,4 +1,4 @@
-import type { StructuredLogger } from '@slashbot/plugin-sdk';
+import type { StructuredLogger } from '../../plugin-sdk/index.js';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { ConnectorStatus, TelegramState } from './types.js';
 import { acquireLock, releaseLock } from './lock.js';

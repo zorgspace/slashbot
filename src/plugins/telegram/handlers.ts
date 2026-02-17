@@ -1,5 +1,5 @@
 import type { Telegraf } from 'telegraf';
-import type { JsonValue, StructuredLogger } from '@slashbot/plugin-sdk';
+import type { JsonValue, StructuredLogger } from '../../plugin-sdk';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel';
 import type { TranscriptionProvider } from '../services/transcription-service';
 import type { AgentRegistry } from '../agents/index';

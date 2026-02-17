@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import type { JsonValue, RuntimeConfig, SlashbotPlugin } from '@slashbot/plugin-sdk';
+import type { JsonValue, RuntimeConfig, SlashbotPlugin } from '../../plugin-sdk/index.js';
 import { asObject, asString } from '../utils.js';
 import { buildSkillEnv } from './env-overrides.js';
 import { SkillManager } from './manager.js';

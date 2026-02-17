@@ -1,4 +1,4 @@
-import type { RuntimeConfig, SlashbotPlugin } from '@slashbot/plugin-sdk';
+import type { RuntimeConfig, SlashbotPlugin } from '../../plugin-sdk';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
@@ -77,7 +77,7 @@ export function createProviderAuthPlugin(): SlashbotPlugin {
           await runOnboarding(getKernel(), {
             agentId: typeof flags['agent-id'] === 'string' ? flags['agent-id'] : 'default-agent',
             providerId,
-            method: method as import('@slashbot/plugin-sdk').ProviderAuthMethod | undefined,
+            method: method as import('../../plugin-sdk').ProviderAuthMethod | undefined,
             profileLabel: typeof flags['label'] === 'string' ? flags['label'] : undefined,
             nonInteractive: commandContext.nonInteractive,
             apiKey: typeof flags['api-key'] === 'string' ? flags['api-key'] : undefined,
