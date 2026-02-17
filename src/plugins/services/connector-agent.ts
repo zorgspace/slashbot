@@ -199,4 +199,4 @@ export class ConnectorAgentSession {
 
 // Re-export for convenience
 export type { ChatHistoryStore } from './chat-history-store.js';
-export { FileChatHistoryStore } from './chat-history-store.js';
+export { FileChatHistoryStore, SessionChatHistoryStore } from './chat-history-store.js';

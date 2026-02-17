@@ -576,7 +576,8 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
           pushLine({
             id: `msg-${ind.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             role,
-            text: `${ind.label}(${chatId}) ${modalityPrefix}${text}`,
+            label: `${ind.label}(${chatId})`,
+            text: `${modalityPrefix}${text}`,
           });
         });
         unsubs.push(unsubMsg);
@@ -878,6 +879,10 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
               },
             },
           );
+
+          // If preempted, silently drop the response
+          if (ac.signal.aborted) break;
+
           const responseText = result.text;
           const normalizedResponse = normalizeAssistantText(responseText);
           pushLine({ id: `assistant-${Date.now()}`, role: 'assistant', text: normalizedResponse });
@@ -978,14 +983,16 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
       // No matching command -> fall through to the normal LLM prompt path
     }
 
-    // Never interrupt an active run on new prompt submission; queue it.
+    // Preempt: abort the current run and make the new prompt next
     if (busy) {
-      queuedPromptsRef.current.push({ value, images: submittedImages });
+      if (abortRef.current) abortRef.current.abort();
+      queuedPromptsRef.current = [{ value, images: submittedImages }];
       setPrompt('');
       pushLine({
-        id: `queued-${Date.now()}`,
+        id: `preempt-${Date.now()}`,
         role: 'system',
-        text: `Queued prompt (${queuedPromptsRef.current.length} pending).`,
+        text: 'New message received — preempting current task...',
+        logLevel: 'warn',
       });
       return;
     }

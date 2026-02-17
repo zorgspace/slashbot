@@ -6,6 +6,7 @@ import type { AgentRegistry } from '../agents/index';
 import { splitMessage } from '../utils';
 import type { TelegramMessageDirection, TelegramMessageModality, TelegramState } from './types';
 import { DEFAULT_AGENT_ID } from './types.js';
+import type { PreemptiveQueue } from '../services/preemptive-queue.js';
 import { isAuthorized, authorizeChatId } from './config.js';
 import {
   extractCommandPayload,
@@ -33,44 +34,6 @@ function publishTelegramMessage(
     modality,
     text: trimForUiEvent(trimmed),
   });
-}
-
-// ── Chat job queue ──────────────────────────────────────────────────
-
-export function enqueueChatJob(state: TelegramState, chatId: string, job: () => Promise<void>): number {
-  const queue = state.pendingJobsByChat.get(chatId) ?? [];
-  const position = (state.processingChats.has(chatId) ? 1 : 0) + queue.length + 1;
-  queue.push(job);
-  state.pendingJobsByChat.set(chatId, queue);
-  if (!state.processingChats.has(chatId)) {
-    void drainChatJobs(state, chatId);
-  }
-  return position;
-}
-
-async function drainChatJobs(state: TelegramState, chatId: string): Promise<void> {
-  if (state.processingChats.has(chatId)) return;
-  state.processingChats.add(chatId);
-  try {
-    while (true) {
-      const queue = state.pendingJobsByChat.get(chatId);
-      const next = queue?.shift();
-      if (!next) {
-        state.pendingJobsByChat.delete(chatId);
-        break;
-      }
-      try {
-        await next();
-      } catch {
-        // Keep draining queued jobs even if one task fails unexpectedly.
-      }
-    }
-  } finally {
-    state.processingChats.delete(chatId);
-    if ((state.pendingJobsByChat.get(chatId)?.length ?? 0) > 0) {
-      void drainChatJobs(state, chatId);
-    }
-  }
 }
 
 function shouldSendCommandHint(state: TelegramState, chatId: string, isGroup: boolean): boolean {
@@ -106,6 +69,7 @@ export async function sendMarkdownToChat(
 
 export function enqueueMessageTask(
   state: TelegramState,
+  queue: PreemptiveQueue,
   kernel: SlashbotKernel,
   logger: StructuredLogger,
   args: {
@@ -121,7 +85,7 @@ export function enqueueMessageTask(
     failMessage: string;
   },
 ): void {
-  enqueueChatJob(state, args.chatId, async () => {
+  queue.enqueue(args.chatId, async (signal) => {
     try {
       if (args.isPrivate) {
         state.privateChatBySessionId.set(args.sessionId, args.chatId);
@@ -131,13 +95,18 @@ export function enqueueMessageTask(
 
       const lifecycleAgentId = `telegram-agent:${args.contextKey}`;
       await kernel.sendMessageLifecycle('message_received', args.sessionId, lifecycleAgentId, args.prompt);
+      if (signal.aborted) return;
       await kernel.sendMessageLifecycle('message_sending', args.sessionId, lifecycleAgentId, args.prompt);
 
       const response = await session.chat(args.contextKey, args.prompt, {
         sessionId: args.sessionId,
         agentId: args.agentId ?? DEFAULT_AGENT_ID,
         images: args.images,
+        abortSignal: signal,
       });
+
+      // If preempted by a newer message, silently drop the response
+      if (signal.aborted) return;
 
       await kernel.sendMessageLifecycle('message_sent', args.sessionId, lifecycleAgentId, response);
 
@@ -151,6 +120,8 @@ export function enqueueMessageTask(
         await sendWithRetry(() => args.replyMarkdown(part));
       }
     } catch (err) {
+      // If preempted, don't send error messages
+      if (signal.aborted) return;
       logger.error('Telegram queued message task failed', {
         chatId: args.chatId,
         contextKey: args.contextKey,
@@ -177,6 +148,7 @@ export function resolveDefaultPrivateChatId(state: TelegramState, sessionId?: st
 export function setupHandlers(
   bot: Telegraf,
   state: TelegramState,
+  queue: PreemptiveQueue,
   kernel: SlashbotKernel,
   logger: StructuredLogger,
   getTranscription: () => TranscriptionProvider | undefined,
@@ -285,7 +257,7 @@ export function setupHandlers(
 
     publishTelegramMessage(kernel, 'in', chatId, userMessage);
     const isPrivate = ctx.chat.type === 'private';
-    enqueueMessageTask(state, kernel, logger, {
+    enqueueMessageTask(state, queue, kernel, logger, {
       chatId,
       contextKey,
       sessionId,
@@ -320,7 +292,7 @@ export function setupHandlers(
       }
       publishTelegramMessage(kernel, 'in', chatId, transcribedText, 'voice');
       const isPrivate = ctx.chat.type === 'private';
-      enqueueMessageTask(state, kernel, logger, {
+      enqueueMessageTask(state, queue, kernel, logger, {
         chatId,
         contextKey,
         sessionId,
@@ -370,7 +342,7 @@ export function setupHandlers(
       const caption = ctx.message.caption ?? 'What is in this image?';
       publishTelegramMessage(kernel, 'in', chatId, caption, 'photo');
       const isPrivate = ctx.chat.type === 'private';
-      enqueueMessageTask(state, kernel, logger, {
+      enqueueMessageTask(state, queue, kernel, logger, {
         chatId,
         contextKey,
         sessionId,

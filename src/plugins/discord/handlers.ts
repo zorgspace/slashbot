@@ -5,7 +5,9 @@ import type { TranscriptionService } from '../services/transcription-service.js'
 import type { AgentRegistry } from '../agents/index.js';
 import { splitMessage } from '../utils.js';
 import type { DiscordMessageDirection, DiscordMessageModality, DiscordState } from './types.js';
-import { DEFAULT_AGENT_ID, DM_AGENTIC_TIMEOUT_MS, DISCORD_MESSAGE_LIMIT, TYPING_INTERVAL_MS } from './types.js';
+import { DEFAULT_AGENT_ID, DISCORD_MESSAGE_LIMIT, TYPING_INTERVAL_MS } from './types.js';
+import type { PreemptiveQueue } from '../services/preemptive-queue.js';
+
 import { isAuthorized, authorizeChannel } from './config.js';
 import {
   parseAgentRouting,
@@ -39,44 +41,6 @@ function publishDiscordMessage(
   });
 }
 
-// ── Chat job queue ──────────────────────────────────────────────────
-
-export function enqueueChatJob(state: DiscordState, channelId: string, job: () => Promise<void>): number {
-  const queue = state.pendingJobsByChannel.get(channelId) ?? [];
-  const position = (state.processingChannels.has(channelId) ? 1 : 0) + queue.length + 1;
-  queue.push(job);
-  state.pendingJobsByChannel.set(channelId, queue);
-  if (!state.processingChannels.has(channelId)) {
-    void drainChatJobs(state, channelId);
-  }
-  return position;
-}
-
-async function drainChatJobs(state: DiscordState, channelId: string): Promise<void> {
-  if (state.processingChannels.has(channelId)) return;
-  state.processingChannels.add(channelId);
-  try {
-    while (true) {
-      const queue = state.pendingJobsByChannel.get(channelId);
-      const next = queue?.shift();
-      if (!next) {
-        state.pendingJobsByChannel.delete(channelId);
-        break;
-      }
-      try {
-        await next();
-      } catch {
-        // Keep draining queued jobs even if one task fails unexpectedly.
-      }
-    }
-  } finally {
-    state.processingChannels.delete(channelId);
-    if ((state.pendingJobsByChannel.get(channelId)?.length ?? 0) > 0) {
-      void drainChatJobs(state, channelId);
-    }
-  }
-}
-
 // ── Send to channel ─────────────────────────────────────────────────
 
 export async function sendToChannel(
@@ -94,6 +58,7 @@ export async function sendToChannel(
 
 export function enqueueMessageTask(
   state: DiscordState,
+  queue: PreemptiveQueue,
   kernel: SlashbotKernel,
   logger: StructuredLogger,
   args: {
@@ -109,7 +74,7 @@ export function enqueueMessageTask(
     metadata: Record<string, string>;
   },
 ): void {
-  enqueueChatJob(state, args.channelId, async () => {
+  queue.enqueue(args.channelId, async (signal) => {
     // Start typing indicator
     const typingInterval = setInterval(() => {
       void (args.message.channel as any).sendTyping().catch(() => {});
@@ -125,29 +90,18 @@ export function enqueueMessageTask(
 
       const lifecycleAgentId = `discord-agent:${args.contextKey}`;
       await kernel.sendMessageLifecycle('message_received', args.sessionId, lifecycleAgentId, args.prompt);
+      if (signal.aborted) return;
       await kernel.sendMessageLifecycle('message_sending', args.sessionId, lifecycleAgentId, args.prompt);
 
-      let response: string;
-      if (args.isDM) {
-        const ac = new AbortController();
-        const agenticTimeout = setTimeout(() => ac.abort(), DM_AGENTIC_TIMEOUT_MS);
-        try {
-          response = await session.chat(args.contextKey, args.prompt, {
-            sessionId: args.sessionId,
-            agentId: args.agentId ?? DEFAULT_AGENT_ID,
-            images: args.images,
-            abortSignal: ac.signal,
-          });
-        } finally {
-          clearTimeout(agenticTimeout);
-        }
-      } else {
-        response = await session.chat(args.contextKey, args.prompt, {
-          sessionId: args.sessionId,
-          agentId: args.agentId ?? DEFAULT_AGENT_ID,
-          images: args.images,
-        });
-      }
+      const response = await session.chat(args.contextKey, args.prompt, {
+        sessionId: args.sessionId,
+        agentId: args.agentId ?? DEFAULT_AGENT_ID,
+        images: args.images,
+        abortSignal: signal,
+      });
+
+      // If preempted by a newer message, silently drop the response
+      if (signal.aborted) return;
 
       await kernel.sendMessageLifecycle('message_sent', args.sessionId, lifecycleAgentId, response);
 
@@ -161,6 +115,8 @@ export function enqueueMessageTask(
         await sendWithRetry(() => (args.message.channel as any).send(part));
       }
     } catch (err) {
+      // If preempted, don't send error messages
+      if (signal.aborted) return;
       logger.error('Discord queued message task failed', {
         channelId: args.channelId,
         contextKey: args.contextKey,
@@ -202,6 +158,7 @@ function buildMessageMetadata(message: Message): Record<string, string> {
 export function setupHandlers(
   client: Client,
   state: DiscordState,
+  queue: PreemptiveQueue,
   kernel: SlashbotKernel,
   logger: StructuredLogger,
   getTranscription: () => TranscriptionService | undefined,
@@ -288,7 +245,7 @@ export function setupHandlers(
     }
 
     publishDiscordMessage(kernel, 'in', channelId, userContent, images.length > 0 ? 'photo' : voiceText ? 'voice' : 'text', metadata);
-    enqueueMessageTask(state, kernel, logger, {
+    enqueueMessageTask(state, queue, kernel, logger, {
       channelId,
       contextKey,
       sessionId,

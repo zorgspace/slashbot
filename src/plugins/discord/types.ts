@@ -5,7 +5,6 @@ import type { ConnectorAgentSession } from '../services/connector-agent.js';
 
 export const PLUGIN_ID = 'slashbot.channel.discord';
 export const DEFAULT_AGENT_ID = 'default-agent';
-export const DM_AGENTIC_TIMEOUT_MS = 300_000;
 export const DM_AGENTIC_MAX_RESPONSE_TOKENS = 6144;
 export const DISCORD_MESSAGE_LIMIT = 2000;
 export const TYPING_INTERVAL_MS = 8000;
@@ -48,7 +47,5 @@ export interface DiscordState {
   dmAgentSession: ConnectorAgentSession | null;
   updateIndicatorStatus: ((s: ConnectorStatus) => void) | null;
   dmChannelBySessionId: Map<string, string>;
-  pendingJobsByChannel: Map<string, Array<() => Promise<void>>>;
-  processingChannels: Set<string>;
   paths: DiscordPaths;
 }

@@ -258,3 +258,114 @@ export class FileChatHistoryStore implements ChatHistoryStore {
     }
   }
 }
+
+// ── Markdown content helper ───────────────────────────────────────────
+
+function contentToMarkdown(content: AgentMessage['content']): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return String(content);
+  return content
+    .map((p) => {
+      const part = p as { type?: string; text?: string };
+      if (part.type === 'text') return part.text ?? '';
+      return `[${part.type ?? 'unknown'}]`;
+    })
+    .join('\n');
+}
+
+/**
+ * SessionChatHistoryStore — in-memory history with markdown session dumps.
+ *
+ * Context is never reloaded from disk across restarts.
+ * Each chat session is dumped to `<sessionsDir>/<chatId>.md` for archival.
+ */
+export class SessionChatHistoryStore implements ChatHistoryStore {
+  private readonly histories = new Map<string, AgentMessage[]>();
+  private readonly richHistories = new Map<string, RichMessage[]>();
+  private readonly summaries = new Map<string, string>();
+  private readonly sessionsDir: string;
+
+  constructor(sessionsDir: string) {
+    this.sessionsDir = sessionsDir;
+  }
+
+  async get(chatId: string): Promise<AgentMessage[]> {
+    return this.histories.get(chatId) ?? [];
+  }
+
+  async append(chatId: string, messages: AgentMessage[]): Promise<void> {
+    const history = this.histories.get(chatId) ?? [];
+    history.push(...messages);
+    if (history.length > MAX_HISTORY) {
+      history.splice(0, history.length - MAX_HISTORY);
+    }
+    this.histories.set(chatId, history);
+    await this.dumpMarkdown(chatId);
+  }
+
+  async clear(chatId: string): Promise<void> {
+    this.histories.delete(chatId);
+  }
+
+  async length(chatId: string): Promise<number> {
+    return this.histories.get(chatId)?.length ?? 0;
+  }
+
+  async getRich(chatId: string): Promise<RichMessage[]> {
+    return this.richHistories.get(chatId) ?? [];
+  }
+
+  async appendRich(chatId: string, messages: RichMessage[]): Promise<void> {
+    const history = this.richHistories.get(chatId) ?? [];
+    history.push(...messages);
+    if (history.length > MAX_RICH_HISTORY) {
+      history.splice(0, history.length - MAX_RICH_HISTORY);
+    }
+    this.richHistories.set(chatId, history);
+
+    // Backward compat: also append user/assistant-only messages to flat history
+    const flat = messages.filter(
+      (m): m is AgentMessage => m.role === 'user' || (m.role === 'assistant' && !('toolCalls' in m)),
+    );
+    if (flat.length > 0) {
+      await this.append(chatId, flat);
+    }
+  }
+
+  async getSummary(chatId: string): Promise<string | undefined> {
+    return this.summaries.get(chatId);
+  }
+
+  async setSummary(chatId: string, summary: string): Promise<void> {
+    this.summaries.set(chatId, summary);
+    await this.dumpMarkdown(chatId);
+  }
+
+  private async dumpMarkdown(chatId: string): Promise<void> {
+    try {
+      await fs.mkdir(this.sessionsDir, { recursive: true });
+      const safeName = chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filePath = join(this.sessionsDir, `${safeName}.md`);
+
+      const history = this.histories.get(chatId) ?? [];
+      const summary = this.summaries.get(chatId);
+
+      const lines: string[] = [`# Session: ${chatId}`, ''];
+      if (summary) {
+        lines.push(`> **Summary:** ${summary}`, '');
+      }
+      lines.push('---', '');
+
+      for (const msg of history) {
+        const role = msg.role === 'user' ? '**User**'
+          : msg.role === 'assistant' ? '**Assistant**'
+          : `**${msg.role}**`;
+        lines.push(`${role}:`, '', contentToMarkdown(msg.content), '', '---', '');
+      }
+
+      await fs.writeFile(filePath, lines.join('\n'), 'utf8');
+    } catch {
+      // best effort
+    }
+  }
+}

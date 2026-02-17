@@ -6,7 +6,8 @@ import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js'
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
 import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
 import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
-import { ConnectorAgentSession } from '../services/connector-agent.js';
+import { ConnectorAgentSession, SessionChatHistoryStore } from '../services/connector-agent.js';
+import { PreemptiveQueue } from '../services/preemptive-queue.js';
 import type { TranscriptionService } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 
@@ -150,6 +151,8 @@ export function createWhatsAppPlugin(): SlashbotPlugin {
       configPath = paths.home('whatsapp.json');
       lockPath = paths.home('whatsapp.lock');
 
+      const queue = new PreemptiveQueue();
+
       // Build agent session
       if (authRouter && providers && kernel) {
         const llm = new KernelLlmAdapter(
@@ -162,7 +165,7 @@ export function createWhatsAppPlugin(): SlashbotPlugin {
         agentSession = new ConnectorAgentSession(
           llm,
           () => kernel.assemblePrompt(),
-          homeDir,
+          new SessionChatHistoryStore(paths.home('sessions')),
         );
       }
 
@@ -351,17 +354,27 @@ export function createWhatsAppPlugin(): SlashbotPlugin {
 
                 kernel?.events.publish('connector:whatsapp:message', { chatId, text });
 
-                const response = await agentSession.chat(chatId, text, {
-                  sessionId,
-                  agentId: 'default-agent',
-                });
+                queue.enqueue(chatId, async (signal) => {
+                  try {
+                    const response = await agentSession!.chat(chatId, text, {
+                      sessionId,
+                      agentId: 'default-agent',
+                      abortSignal: signal,
+                    });
 
-                const parts = splitMessage(response, 4096);
-                for (const part of parts) {
-                  sendToWs({ type: 'message', to: chatId, content: part });
-                }
+                    if (signal.aborted) return;
+
+                    const parts = splitMessage(response, 4096);
+                    for (const part of parts) {
+                      sendToWs({ type: 'message', to: chatId, content: part });
+                    }
+                  } catch (err) {
+                    if (signal.aborted) return;
+                    logger.error('WhatsApp message handler error', { error: String(err) });
+                  }
+                });
               } catch (err) {
-                logger.error('WhatsApp message handler error', { error: String(err) });
+                logger.error('WhatsApp message parse error', { error: String(err) });
               }
             })();
           });
@@ -434,6 +447,7 @@ export function createWhatsAppPlugin(): SlashbotPlugin {
         event: 'shutdown',
         priority: 70,
         handler: async () => {
+          queue.shutdown();
           shouldReconnect = false;
           if (reconnectTimer) {
             clearTimeout(reconnectTimer);

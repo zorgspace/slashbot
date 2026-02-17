@@ -6,7 +6,8 @@ import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js'
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
 import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
 import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
-import { ConnectorAgentSession } from '../services/connector-agent.js';
+import { ConnectorAgentSession, SessionChatHistoryStore } from '../services/connector-agent.js';
+import { PreemptiveQueue } from '../services/preemptive-queue.js';
 import type { TranscriptionService } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 import type { AgentRegistry } from '../agents/index.js';
@@ -186,9 +187,11 @@ export function createSlackPlugin(): SlashbotPlugin {
         agentSession = new ConnectorAgentSession(
           llm,
           () => kernel.assemblePrompt(),
-          homeDir,
+          new SessionChatHistoryStore(paths.home('sessions')),
         );
       }
+
+      const queue = new PreemptiveQueue();
 
       // ── Status service ─────────────────────────────────────────────
 
@@ -487,85 +490,89 @@ export function createSlackPlugin(): SlashbotPlugin {
                   });
                 } catch { /* non-fatal */ }
 
-                try {
-                  // Process images
-                  const images: string[] = [];
-                  if (msg.files) {
-                    for (const file of msg.files) {
-                      if (!file.url_private || !file.name) continue;
-                      const ext = `.${file.name.toLowerCase().split('.').pop() ?? ''}`;
-                      if (IMAGE_EXTENSIONS.includes(ext) || (file.mimetype?.startsWith('image/') ?? false)) {
+                // Process images (before enqueue — fast, no LLM call)
+                const images: string[] = [];
+                if (msg.files) {
+                  for (const file of msg.files) {
+                    if (!file.url_private || !file.name) continue;
+                    const ext = `.${file.name.toLowerCase().split('.').pop() ?? ''}`;
+                    if (IMAGE_EXTENSIONS.includes(ext) || (file.mimetype?.startsWith('image/') ?? false)) {
+                      const buf = await downloadSlackFile(file.url_private, botToken);
+                      if (buf) {
+                        const mimeType = file.mimetype ?? 'image/png';
+                        images.push(`data:${mimeType};base64,${buf.toString('base64')}`);
+                      }
+                    }
+                  }
+                }
+
+                // Process voice files
+                let voiceText = '';
+                if (transcription && msg.files) {
+                  for (const file of msg.files) {
+                    if (!file.url_private || !file.name) continue;
+                    const ext = `.${file.name.toLowerCase().split('.').pop() ?? ''}`;
+                    if (VOICE_EXTENSIONS.includes(ext)) {
+                      try {
                         const buf = await downloadSlackFile(file.url_private, botToken);
                         if (buf) {
-                          const mimeType = file.mimetype ?? 'image/png';
-                          images.push(`data:${mimeType};base64,${buf.toString('base64')}`);
+                          const { text: transcribed } = await transcription.transcribe(buf, file.name);
+                          voiceText += ` ${transcribed}`;
                         }
-                      }
+                      } catch { /* skip voice */ }
                     }
                   }
-
-                  // Process voice files
-                  let voiceText = '';
-                  if (transcription && msg.files) {
-                    for (const file of msg.files) {
-                      if (!file.url_private || !file.name) continue;
-                      const ext = `.${file.name.toLowerCase().split('.').pop() ?? ''}`;
-                      if (VOICE_EXTENSIONS.includes(ext)) {
-                        try {
-                          const buf = await downloadSlackFile(file.url_private, botToken);
-                          if (buf) {
-                            const blob = new Blob([new Uint8Array(buf)]);
-                            const { text: transcribed } = await transcription.transcribe(buf, file.name);
-                            voiceText += ` ${transcribed}`;
-                          }
-                        } catch { /* skip voice */ }
-                      }
-                    }
-                  }
-
-                  let rawText = stripBotMention(msg.text ?? '');
-                  rawText = (rawText + voiceText).trim() || (images.length > 0 ? 'What is in this image?' : '');
-                  if (!rawText) return;
-
-                  // Parse @agent routing
-                  const routing = parseAgentRouting(rawText);
-                  if (routing.agentId) {
-                    const agentRegistry = context.getService<AgentRegistry>('agents.registry');
-                    if (agentRegistry) {
-                      const agent = agentRegistry.get(routing.agentId);
-                      if (!agent) {
-                        await say({ text: `Unknown agent: @${routing.agentId}. Use agents.list to see available agents.`, ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) });
-                        return;
-                      }
-                    }
-                  }
-
-                  kernel?.events.publish('connector:slack:message', { chatId, text: routing.message });
-
-                  const response = await agentSession.chat(chatId, routing.message, {
-                    sessionId,
-                    agentId: routing.agentId ?? 'default-agent',
-                    images: images.length > 0 ? images : undefined,
-                  });
-
-                  const parts = splitMessage(response, 4000);
-                  for (const part of parts) {
-                    await say({ text: part, ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) });
-                  }
-
-                  // Add checkmark reaction to indicate success
-                  try {
-                    await client.reactions.add({
-                      channel: channelId,
-                      timestamp: messageTs,
-                      name: 'white_check_mark',
-                    });
-                  } catch { /* non-fatal */ }
-
-                } catch (err) {
-                  logger.error('Slack message handler error', { error: String(err) });
-                  await say({ text: 'An error occurred processing your message.', ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) }).catch(() => {});
                 }
+
+                let rawText = stripBotMention(msg.text ?? '');
+                rawText = (rawText + voiceText).trim() || (images.length > 0 ? 'What is in this image?' : '');
+                if (!rawText) return;
+
+                // Parse @agent routing
+                const routing = parseAgentRouting(rawText);
+                if (routing.agentId) {
+                  const agentRegistry = context.getService<AgentRegistry>('agents.registry');
+                  if (agentRegistry) {
+                    const agent = agentRegistry.get(routing.agentId);
+                    if (!agent) {
+                      await say({ text: `Unknown agent: @${routing.agentId}. Use agents.list to see available agents.`, ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) });
+                      return;
+                    }
+                  }
+                }
+
+                kernel?.events.publish('connector:slack:message', { chatId, text: routing.message });
+
+                queue.enqueue(chatId, async (signal) => {
+                  try {
+                    const response = await agentSession!.chat(chatId, routing.message, {
+                      sessionId,
+                      agentId: routing.agentId ?? 'default-agent',
+                      images: images.length > 0 ? images : undefined,
+                      abortSignal: signal,
+                    });
+
+                    if (signal.aborted) return;
+
+                    const parts = splitMessage(response, 4000);
+                    for (const part of parts) {
+                      await say({ text: part, ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) });
+                    }
+
+                    // Add checkmark reaction to indicate success
+                    try {
+                      await client.reactions.add({
+                        channel: channelId,
+                        timestamp: messageTs,
+                        name: 'white_check_mark',
+                      });
+                    } catch { /* non-fatal */ }
+                  } catch (err) {
+                    if (signal.aborted) return;
+                    logger.error('Slack message handler error', { error: String(err) });
+                    await say({ text: 'An error occurred processing your message.', ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) }).catch(() => {});
+                  }
+                });
               });
 
               // Handle app mentions (in channels where the bot is @mentioned)
@@ -584,29 +591,35 @@ export function createSlackPlugin(): SlashbotPlugin {
                   await client.reactions.add({ channel: channelId, timestamp: messageTs, name: 'eyes' });
                 } catch { /* non-fatal */ }
 
-                try {
-                  const rawText = stripBotMention(ev.text ?? '').trim();
-                  if (!rawText) return;
+                const rawText = stripBotMention(ev.text ?? '').trim();
+                if (!rawText) return;
 
-                  const routing = parseAgentRouting(rawText);
+                const routing = parseAgentRouting(rawText);
 
-                  const response = await agentSession.chat(chatId, routing.message, {
-                    sessionId,
-                    agentId: routing.agentId ?? 'default-agent',
-                  });
-
-                  const parts = splitMessage(response, 4000);
-                  for (const part of parts) {
-                    await say({ text: part, ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) });
-                  }
-
+                queue.enqueue(chatId, async (signal) => {
                   try {
-                    await client.reactions.add({ channel: channelId, timestamp: messageTs, name: 'white_check_mark' });
-                  } catch { /* non-fatal */ }
-                } catch (err) {
-                  logger.error('Slack app_mention handler error', { error: String(err) });
-                  await say({ text: 'An error occurred processing your message.', ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) }).catch(() => {});
-                }
+                    const response = await agentSession!.chat(chatId, routing.message, {
+                      sessionId,
+                      agentId: routing.agentId ?? 'default-agent',
+                      abortSignal: signal,
+                    });
+
+                    if (signal.aborted) return;
+
+                    const parts = splitMessage(response, 4000);
+                    for (const part of parts) {
+                      await say({ text: part, ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) });
+                    }
+
+                    try {
+                      await client.reactions.add({ channel: channelId, timestamp: messageTs, name: 'white_check_mark' });
+                    } catch { /* non-fatal */ }
+                  } catch (err) {
+                    if (signal.aborted) return;
+                    logger.error('Slack app_mention handler error', { error: String(err) });
+                    await say({ text: 'An error occurred processing your message.', ...(threadTs || messageTs ? { thread_ts: threadTs || messageTs } : {}) }).catch(() => {});
+                  }
+                });
               });
 
               await app.start();
@@ -639,6 +652,7 @@ export function createSlackPlugin(): SlashbotPlugin {
         event: 'shutdown',
         priority: 70,
         handler: async () => {
+          queue.shutdown();
           if (app) {
             await app.stop();
             app = null;

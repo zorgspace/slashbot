@@ -1,17 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import { type ChatLine, palette } from './palette.js';
+import { type ChatLine, palette, badgeFor } from './palette.js';
 import { MarkdownText } from './markdown-text.js';
-
-function dotColor(line: ChatLine): string {
-  if (line.logLevel === 'error') return palette.error;
-  if (line.logLevel === 'warn') return palette.warn;
-  switch (line.role) {
-    case 'user': return palette.user;
-    case 'assistant': return palette.assistant;
-    default: return palette.muted;
-  }
-}
 
 function textColor(line: ChatLine): string {
   if (line.logLevel === 'error') return palette.error;
@@ -37,7 +27,8 @@ function diffLineColor(part: string, fallback: string): string {
 }
 
 export const MessageLine = React.memo(function MessageLine({ line, cols, paddingLeft = 0 }: { line: ChatLine; cols: number; paddingLeft?: number }) {
-  const dot = dotColor(line);
+  const badge = badgeFor(line);
+  const label = line.label ?? badge.label;
   const fg = textColor(line);
   const bold = false;
   const dim = line.role === 'assistant';
@@ -46,10 +37,13 @@ export const MessageLine = React.memo(function MessageLine({ line, cols, padding
   const first = parts[0] ?? '';
   const rest = parts.slice(1);
 
+  // Badge width: space + label + space, for continuation line indentation
+  const badgeWidth = label.length + 2;
+
   return (
     <Box width={cols} flexDirection="column" marginBottom={1} paddingLeft={paddingLeft}>
       <Box width={cols}>
-        <Text color={dot}>{'  ●'}</Text>
+        <Text color={badge.color} backgroundColor={badge.bg} bold>{` ${label} `}</Text>
         <MarkdownText
           text={first.length > 0 ? ` ${first}` : ' '}
           color={diffMode ? diffLineColor(first, fg) : fg}
@@ -61,9 +55,9 @@ export const MessageLine = React.memo(function MessageLine({ line, cols, padding
       </Box>
       {rest.map((part, idx) => (
         <Box key={`${line.id}-cont-${idx}`} width={cols}>
-          <Text>{'    '}</Text>
+          <Text>{' '.repeat(badgeWidth)}</Text>
           <MarkdownText
-            text={part.length > 0 ? part : ' '}
+            text={part.length > 0 ? ` ${part}` : ' '}
             color={diffMode ? diffLineColor(part, fg) : fg}
             bold={bold}
             markdown={!diffMode}

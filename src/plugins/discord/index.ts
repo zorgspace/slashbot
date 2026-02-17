@@ -5,7 +5,8 @@ import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
 import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
-import { ConnectorAgentSession } from '../services/connector-agent.js';
+import { ConnectorAgentSession, SessionChatHistoryStore } from '../services/connector-agent.js';
+import { PreemptiveQueue } from '../services/preemptive-queue.js';
 import type { TranscriptionService } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 import type { AgentRegistry } from '../agents/index.js';
@@ -72,8 +73,6 @@ export function createDiscordPlugin(): SlashbotPlugin {
     dmAgentSession: null,
     updateIndicatorStatus: null,
     dmChannelBySessionId: new Map(),
-    pendingJobsByChannel: new Map(),
-    processingChannels: new Set(),
     paths: {
       configDir: '',
       configPath: '',
@@ -144,10 +143,12 @@ export function createDiscordPlugin(): SlashbotPlugin {
         },
       };
 
+      const sessionsStore = new SessionChatHistoryStore(paths.home('sessions'));
+
       state.agentSession = new ConnectorAgentSession(
         llm,
         () => kernel.assemblePrompt(),
-        state.paths.configDir,
+        sessionsStore,
         undefined,
         undefined,
         2048,
@@ -155,7 +156,7 @@ export function createDiscordPlugin(): SlashbotPlugin {
       state.dmAgentSession = new ConnectorAgentSession(
         dmAgenticAdapter,
         () => kernel.assemblePrompt(),
-        state.paths.configDir,
+        sessionsStore,
         undefined,
         undefined,
         DM_AGENTIC_MAX_RESPONSE_TOKENS,
@@ -163,10 +164,13 @@ export function createDiscordPlugin(): SlashbotPlugin {
 
       // ── Handler setup helper (bound to deps) ─────────────────────────
 
+      const queue = new PreemptiveQueue();
+
       const boundSetupHandlers = (client: import('discord.js').Client) => {
         setupHandlers(
           client,
           state,
+          queue,
           kernel,
           logger,
           () => context.getService<TranscriptionService>('transcription.service'),
@@ -536,9 +540,8 @@ export function createDiscordPlugin(): SlashbotPlugin {
         priority: 70,
         handler: async () => {
           await stopClientSafely(state);
+          queue.shutdown();
           state.dmChannelBySessionId.clear();
-          state.pendingJobsByChannel.clear();
-          state.processingChannels.clear();
           setStatus(state, 'disconnected', kernel);
           await flushRuntimeFiles(state);
         },

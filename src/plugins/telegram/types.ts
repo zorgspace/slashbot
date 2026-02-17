@@ -53,7 +53,5 @@ export interface TelegramState {
   updateIndicatorStatus: ((s: ConnectorStatus) => void) | null;
   lastCommandHintByChat: Map<string, number>;
   privateChatBySessionId: Map<string, string>;
-  pendingJobsByChat: Map<string, Array<() => Promise<void>>>;
-  processingChats: Set<string>;
   paths: TelegramPaths;
 }

@@ -5,7 +5,8 @@ import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel';
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries';
 import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router';
-import { ConnectorAgentSession } from '../services/connector-agent';
+import { ConnectorAgentSession, SessionChatHistoryStore } from '../services/connector-agent';
+import { PreemptiveQueue } from '../services/preemptive-queue.js';
 import type { TranscriptionProvider } from '../services/transcription-service.js';
 import { asObject, asString, splitMessage } from '../utils.js';
 import type { AgentRegistry } from '../agents/index';
@@ -43,8 +44,6 @@ export function createTelegramPlugin(): SlashbotPlugin {
     updateIndicatorStatus: null,
     lastCommandHintByChat: new Map(),
     privateChatBySessionId: new Map(),
-    pendingJobsByChat: new Map(),
-    processingChats: new Set(),
     paths: {
       configDir: '',
       configPath: '',
@@ -117,10 +116,12 @@ export function createTelegramPlugin(): SlashbotPlugin {
         },
       };
 
+      const sessionsStore = new SessionChatHistoryStore(paths.home('sessions'));
+
       state.agentSession = new ConnectorAgentSession(
         llm,
         () => kernel.assemblePrompt(),
-        state.paths.configDir,
+        sessionsStore,
         undefined,
         undefined,
         2048,
@@ -128,18 +129,21 @@ export function createTelegramPlugin(): SlashbotPlugin {
       state.privateAgentSession = new ConnectorAgentSession(
         privateAgenticAdapter,
         () => kernel.assemblePrompt(),
-        state.paths.configDir,
+        sessionsStore,
         undefined,
         undefined,
         PRIVATE_AGENTIC_MAX_RESPONSE_TOKENS,
       );
 
-      // ── Handler setup helper (bound to deps) ─────────────────────────
+      // ── Preemptive queue & handler setup ──────────────────────────────
+
+      const queue = new PreemptiveQueue();
 
       const boundSetupHandlers = (bot: import('telegraf').Telegraf) => {
         setupHandlers(
           bot,
           state,
+          queue,
           kernel,
           logger,
           () => context.getService<TranscriptionProvider>('transcription.service'),
@@ -568,8 +572,7 @@ export function createTelegramPlugin(): SlashbotPlugin {
           await stopBotSafely(state, 'shutdown');
           state.lastCommandHintByChat.clear();
           state.privateChatBySessionId.clear();
-          state.pendingJobsByChat.clear();
-          state.processingChats.clear();
+          queue.shutdown();
           setStatus(state, 'disconnected', kernel);
           await flushRuntimeFiles(state);
         },

@@ -26,7 +26,7 @@ export function createExplainPlugin(): SlashbotPlugin {
       name: 'Explain',
       version: '0.1.0',
       main: 'bundled',
-      description: 'Push short explanations to the user mid-reasoning',
+      description: 'Push short explanations to the user mid-reasoning : for example before editing a file',
     },
     setup: (context) => {
       const channels = context.getService<ChannelRegistry>('kernel.channels.registry');
