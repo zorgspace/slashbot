@@ -1,327 +1,70 @@
-import { promises as fs } from 'node:fs';
-import { join, relative } from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import type { JsonValue, SlashbotPlugin } from '@slashbot/plugin-sdk';
+import type { JsonValue, RuntimeConfig, SlashbotPlugin } from '@slashbot/plugin-sdk';
 import { asObject, asString } from '../utils.js';
-
-const PLUGIN_ID = 'slashbot.skills';
-const execFileAsync = promisify(execFile);
-
-interface SkillPrerequisites {
-  bins?: string[];
-  env?: string[];
-}
-
-interface PrerequisiteCheckResult {
-  ok: boolean;
-  missingBins: string[];
-  missingEnv: string[];
-  hints: string[];
-}
-
-function parseFrontmatter(content: string): Record<string, unknown> {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return {};
-
-  const yaml = match[1];
-  const result: Record<string, unknown> = {};
-
-  for (const line of yaml.split('\n')) {
-    const colonIdx = line.indexOf(':');
-    if (colonIdx === -1) continue;
-    const key = line.slice(0, colonIdx).trim();
-    const rawValue = line.slice(colonIdx + 1).trim();
-
-    // Parse simple YAML arrays: [a, b, c] or comma-separated
-    if (rawValue.startsWith('[') && rawValue.endsWith(']')) {
-      result[key] = rawValue.slice(1, -1).split(',').map((v) => v.trim()).filter((v) => v.length > 0);
-    } else {
-      result[key] = rawValue;
-    }
-  }
-
-  return result;
-}
-
-function stripFrontmatter(content: string): string {
-  return content.replace(/^---\n[\s\S]*?\n---\n*/, '').trim();
-}
-
-function parsePrerequisites(content: string): SkillPrerequisites {
-  const frontmatter = parseFrontmatter(content);
-  const requires = frontmatter.requires as Record<string, unknown> | undefined;
-  if (!requires || typeof requires !== 'object') {
-    // Try flat keys: requires.bins, requires.env
-    const bins = frontmatter['requires.bins'];
-    const env = frontmatter['requires.env'];
-    return {
-      bins: Array.isArray(bins) ? bins.filter((b): b is string => typeof b === 'string') : undefined,
-      env: Array.isArray(env) ? env.filter((e): e is string => typeof e === 'string') : undefined,
-    };
-  }
-  return {
-    bins: Array.isArray(requires.bins) ? requires.bins.filter((b): b is string => typeof b === 'string') : undefined,
-    env: Array.isArray(requires.env) ? requires.env.filter((e): e is string => typeof e === 'string') : undefined,
-  };
-}
-
-async function commandExists(cmd: string): Promise<boolean> {
-  try {
-    await execFileAsync('which', [cmd], { timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-interface Skill {
-  name: string;
-  path: string;
-  content: string;
-  ruleFiles: string[];
-  source: 'workspace' | 'global';
-}
-
-/**
- * SkillManager — discovers, loads, and validates SKILL.md modules.
- *
- * Skills are directories containing a SKILL.md (or skill.md) file with optional
- * frontmatter prerequisites (required binaries and env vars) and additional rule
- * files (*.md). Skills live in ~/.skills/ (global). Workspace-local overrides
- * in .slashbot/skills/ take priority over global ones with the same name.
- */
-class SkillManager {
-  private readonly workspaceSkillsDir: string;
-  private readonly homeSkillsDir: string;
-
-  constructor(workspaceRoot: string, homeSkillsDir: string) {
-    this.workspaceSkillsDir = join(workspaceRoot, '.slashbot', 'skills');
-    this.homeSkillsDir = homeSkillsDir;
-  }
-
-  async init(): Promise<void> {
-    await fs.mkdir(this.homeSkillsDir, { recursive: true });
-  }
-
-  private async listSkillNamesFrom(baseDir: string): Promise<string[]> {
-    try {
-      const entries = await fs.readdir(baseDir, { withFileTypes: true });
-      const names: string[] = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const skillPath = join(baseDir, entry.name);
-        const mainFile = await this.resolveMainFile(skillPath);
-        if (mainFile) {
-          names.push(entry.name);
-        }
-      }
-      return names;
-    } catch {
-      return [];
-    }
-  }
-
-  async listSkills(): Promise<string[]> {
-    const [workspaceSkills, bundledSkills] = await Promise.all([
-      this.listSkillNamesFrom(this.workspaceSkillsDir),
-      this.listSkillNamesFrom(this.homeSkillsDir),
-    ]);
-
-    return [...new Set([...workspaceSkills, ...bundledSkills])].sort((a, b) => a.localeCompare(b));
-  }
-
-  private async resolveMainFile(skillPath: string): Promise<string | null> {
-    const candidates = [join(skillPath, 'SKILL.md'), join(skillPath, 'skill.md')];
-    for (const candidate of candidates) {
-      try {
-        await fs.access(candidate);
-        return candidate;
-      } catch {
-        // Continue.
-      }
-    }
-    return null;
-  }
-
-  private async collectRuleFiles(skillPath: string, mainFile: string): Promise<string[]> {
-    const rules: string[] = [];
-    const mainRel = relative(skillPath, mainFile).replace(/\\/g, '/').toLowerCase();
-
-    const walk = async (dir: string): Promise<void> => {
-      let entries;
-      try {
-        entries = await fs.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-
-      for (const entry of entries) {
-        const fullPath = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          await walk(fullPath);
-          continue;
-        }
-        if (!entry.isFile()) {
-          continue;
-        }
-        if (!entry.name.toLowerCase().endsWith('.md')) {
-          continue;
-        }
-        const rel = relative(skillPath, fullPath).replace(/\\/g, '/');
-        if (rel.toLowerCase() === mainRel) {
-          continue;
-        }
-        rules.push(rel);
-      }
-    };
-
-    await walk(skillPath);
-    return [...new Set(rules)].sort((a, b) => a.localeCompare(b));
-  }
-
-  private async loadSkillFrom(
-    baseDir: string,
-    source: Skill['source'],
-    name: string
-  ): Promise<Skill | null> {
-    const skillPath = join(baseDir, name);
-    const mainFile = await this.resolveMainFile(skillPath);
-    if (!mainFile) {
-      return null;
-    }
-
-    try {
-      const content = await fs.readFile(mainFile, 'utf8');
-      const ruleFiles = await this.collectRuleFiles(skillPath, mainFile);
-      return { name, path: skillPath, content, ruleFiles, source };
-    } catch {
-      return null;
-    }
-  }
-
-  async getSkill(name: string): Promise<Skill | null> {
-    const workspaceSkill = await this.loadSkillFrom(this.workspaceSkillsDir, 'workspace', name);
-    if (workspaceSkill) {
-      return workspaceSkill;
-    }
-    return this.loadSkillFrom(this.homeSkillsDir, 'global', name);
-  }
-
-  async hasGlobalSkills(): Promise<boolean> {
-    try {
-      const entries = await fs.readdir(this.homeSkillsDir, { withFileTypes: true });
-      return entries.some((entry) => entry.isDirectory());
-    } catch {
-      return false;
-    }
-  }
-
-  async installSkill(url: string, name?: string): Promise<{ name: string; path: string }> {
-    const inferredName = name ?? url.split('/').pop()?.replace(/\.git$/, '') ?? 'unnamed-skill';
-    const targetPath = join(this.homeSkillsDir, inferredName);
-
-    try {
-      await fs.access(targetPath);
-      // Already exists - pull updates
-      await execFileAsync('git', ['-C', targetPath, 'pull'], { timeout: 30_000 });
-    } catch {
-      // Clone new
-      await execFileAsync('git', ['clone', '--depth', '1', url, targetPath], { timeout: 60_000 });
-    }
-
-    return { name: inferredName, path: targetPath };
-  }
-
-  async checkPrerequisites(skill: Skill): Promise<PrerequisiteCheckResult> {
-    const prereqs = parsePrerequisites(skill.content);
-    const missingBins: string[] = [];
-    const missingEnv: string[] = [];
-    const hints: string[] = [];
-
-    if (prereqs.bins) {
-      for (const bin of prereqs.bins) {
-        if (!(await commandExists(bin))) {
-          missingBins.push(bin);
-          hints.push(`Install '${bin}' (e.g., apt install ${bin} / brew install ${bin})`);
-        }
-      }
-    }
-
-    if (prereqs.env) {
-      for (const envVar of prereqs.env) {
-        if (!process.env[envVar]) {
-          missingEnv.push(envVar);
-          hints.push(`Set environment variable: export ${envVar}=...`);
-        }
-      }
-    }
-
-    return {
-      ok: missingBins.length === 0 && missingEnv.length === 0,
-      missingBins,
-      missingEnv,
-      hints,
-    };
-  }
-
-  async getSkillsForSystemPrompt(): Promise<string> {
-    const skills = await this.listSkills();
-    if (skills.length === 0) return '';
-
-    const lines = [
-      '## Installed Skills',
-      'IMPORTANT: Always prefer `skill.run` over other tools (search, web fetch, etc.) when an installed skill matches the user\'s request. Skills are purpose-built and more reliable.',
-    ];
-    for (const name of skills) {
-      const skill = await this.getSkill(name);
-      if (skill) {
-        const fm = parseFrontmatter(skill.content);
-        const desc = typeof fm.description === 'string' ? fm.description : '';
-        lines.push(`- **${name}**: ${desc || '(no description)'}`);
-      }
-    }
-    return lines.join('\n');
-  }
-}
-
-// ── Plugin factory ──────────────────────────────────────────────────────
+import { buildSkillEnv } from './env-overrides.js';
+import { SkillManager } from './manager.js';
+import { PLUGIN_ID } from './types.js';
+import type { SkillsConfig } from './types.js';
 
 function resolveHomeSkillsDir(): string {
   return join(process.env.HOME ?? process.env.USERPROFILE ?? '/tmp', '.skills');
 }
 
+function resolveBundledSkillsDir(): string {
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  return join(thisDir, '..', '..', '..', 'skills');
+}
+
+function sourceTag(source: string): string {
+  switch (source) {
+    case 'bundled': return '[B]';
+    case 'global': return '[G]';
+    case 'workspace': return '[W]';
+    default: return '[?]';
+  }
+}
+
 /**
- * Skills plugin — manage and run global (~/.skills/) and workspace SKILL.md modules.
+ * Skills plugin — manage and run bundled, global (~/.skills/), and workspace SKILL.md modules.
  *
  * Tools:
- *  - `skill.run`     — Load a skill by name, check prerequisites, return its content.
- *  - `skill.install`  — Clone a skill from a GitHub URL into ~/.skills/.
+ *  - `skill.run`      — Load a skill by name, check prerequisites, return its content.
+ *  - `skill.install`   — Clone a skill from a GitHub URL into ~/.skills/.
  *
  * Commands:
- *  - `/skill list`        — List all installed skills (global + workspace).
- *  - `/skill info <name>` — Show skill details and prerequisite status.
- *  - `/skill run <name>`  — Run a skill from the TUI.
+ *  - `/skill list`         — List all installed skills with source tags.
+ *  - `/skill info <name>`  — Show skill details, metadata, and prerequisite status.
+ *  - `/skill run <name>`   — Run a skill from the TUI.
+ *  - `/skill check`        — Eligibility report for all skills.
  *
  * Services:
  *  - `skills.manager` — SkillManager instance for programmatic access.
  *
  * Context provider:
- *  - `skills.installed` — Lists installed skills in the system prompt.
+ *  - `skills.installed` — Lists eligible skills in the system prompt.
  */
 export function createSkillsPlugin(): SlashbotPlugin {
   return {
     manifest: {
       id: PLUGIN_ID,
       name: 'Slashbot Skills',
-      version: '0.1.0',
+      version: '0.2.0',
       main: 'bundled',
-      description: 'Skill management: global (~/.skills/) + workspace overrides + install/run tools',
+      description: 'Skill management: bundled + global (~/.skills/) + workspace overrides, with config & eligibility',
     },
     setup: (context) => {
       const workspaceRoot = context.getService<string>('kernel.workspaceRoot') ?? process.cwd();
-      const manager = new SkillManager(workspaceRoot, resolveHomeSkillsDir());
+      const runtimeConfig = context.getService<RuntimeConfig>('kernel.config');
+      const skillsConfig: SkillsConfig = runtimeConfig?.skills ?? { allowBundled: true, entries: {} };
+
+      const manager = new SkillManager({
+        workspaceRoot,
+        homeSkillsDir: resolveHomeSkillsDir(),
+        bundledSkillsDir: resolveBundledSkillsDir(),
+        skillsConfig,
+      });
 
       context.registerService({
         id: 'skills.manager',
@@ -329,6 +72,8 @@ export function createSkillsPlugin(): SlashbotPlugin {
         description: 'Skill manager service',
         implementation: manager,
       });
+
+      // ── skill.run tool ──
 
       context.registerTool({
         id: 'skill.run',
@@ -351,6 +96,17 @@ export function createSkillsPlugin(): SlashbotPlugin {
               return { ok: false, error: { code: 'SKILL_NOT_FOUND', message: `Skill not found: ${name}` } };
             }
 
+            // Check invocation policy
+            if (skill.invocation.disableModelInvocation) {
+              return {
+                ok: false,
+                error: {
+                  code: 'SKILL_NOT_MODEL_INVOCABLE',
+                  message: `Skill '${name}' is not available for direct model invocation. It can only be run by users via /skill run ${name}.`,
+                },
+              };
+            }
+
             // Check prerequisites
             const prereqCheck = await manager.checkPrerequisites(skill);
             if (!prereqCheck.ok) {
@@ -364,14 +120,19 @@ export function createSkillsPlugin(): SlashbotPlugin {
               };
             }
 
-            const body = stripFrontmatter(skill.content);
+            // Build env overrides info
+            const envOverrides = buildSkillEnv(name, skillsConfig);
+            const envNote = Object.keys(envOverrides).length > 0
+              ? `\n\n[ENV OVERRIDES]: ${Object.keys(envOverrides).join(', ')}`
+              : '';
+
             const ruleList =
               skill.ruleFiles.length > 0
                 ? `\n\n[AVAILABLE RULE FILES]:\n${skill.ruleFiles.map((f) => `- ${f}`).join('\n')}`
                 : '';
 
             const taskSuffix = task ? `\n\n[TASK: ${task}]` : '';
-            const output = `[SKILL: ${name}]\nFollow these instructions to complete the task. Do not use other tools unless the skill instructions tell you to.\n\n${body}${ruleList}${taskSuffix}`;
+            const output = `[SKILL: ${name}]\nFollow these instructions to complete the task. Do not use other tools unless the skill instructions tell you to.\n\n${skill.body}${ruleList}${envNote}${taskSuffix}`;
 
             return { ok: true, output };
           } catch (err) {
@@ -379,6 +140,8 @@ export function createSkillsPlugin(): SlashbotPlugin {
           }
         },
       });
+
+      // ── skill.install tool ──
 
       context.registerTool({
         id: 'skill.install',
@@ -405,21 +168,33 @@ export function createSkillsPlugin(): SlashbotPlugin {
         },
       });
 
+      // ── /skill command ──
+
       context.registerCommand({
         id: 'skill',
         pluginId: PLUGIN_ID,
-        description: 'Skill management (list, run <name>, info <name>)',
-        subcommands: ['list', 'run', 'info'],
+        description: 'Skill management (list, run <name>, info <name>, check)',
+        subcommands: ['list', 'run', 'info', 'check'],
         execute: async (args, commandContext) => {
           const sub = (args[0] ?? 'list').toLowerCase();
 
           if (sub === 'list') {
             await manager.init();
-            const skills = await manager.listSkills();
-            if (skills.length === 0) {
+            const names = await manager.listSkillNames();
+            if (names.length === 0) {
               commandContext.stdout.write('No skills installed.\n');
             } else {
-              commandContext.stdout.write(`Installed skills:\n${skills.map((s) => `  - ${s}`).join('\n')}\n`);
+              const lines: string[] = [];
+              for (const name of names) {
+                const entry = await manager.getSkill(name);
+                if (!entry) continue;
+                const tag = sourceTag(entry.source);
+                const disabled = skillsConfig.entries[name]?.enabled === false ? ' (disabled)' : '';
+                const emoji = entry.frontmatter.slashbot?.emoji ?? '';
+                const prefix = emoji ? `${emoji} ` : '';
+                lines.push(`  ${tag} ${prefix}${name}${disabled}`);
+              }
+              commandContext.stdout.write(`Installed skills:\n${lines.join('\n')}\n`);
             }
             return 0;
           }
@@ -437,9 +212,28 @@ export function createSkillsPlugin(): SlashbotPlugin {
               return 1;
             }
             const prereqCheck = await manager.checkPrerequisites(skill);
-            commandContext.stdout.write(
-              `Skill: ${skill.name}\nSource: ${skill.source}\nPath: ${skill.path}\nRule files: ${skill.ruleFiles.length}\nPrerequisites: ${prereqCheck.ok ? 'OK' : `MISSING — ${prereqCheck.hints.join('; ')}`}\n`
-            );
+            const fm = skill.frontmatter;
+            const meta = fm.slashbot;
+            const lines = [
+              `Skill: ${skill.name}`,
+              `Source: ${skill.source}`,
+              `Path: ${skill.path}`,
+              `Description: ${fm.description ?? '(none)'}`,
+            ];
+            if (meta?.emoji) lines.push(`Emoji: ${meta.emoji}`);
+            if (meta?.primaryEnv) lines.push(`Primary env: ${meta.primaryEnv}`);
+            if (meta?.os) lines.push(`OS: ${meta.os.join(', ')}`);
+            if (meta?.requires) {
+              if (meta.requires.bins) lines.push(`Requires bins: ${meta.requires.bins.join(', ')}`);
+              if (meta.requires.anyBins) lines.push(`Requires any of: ${meta.requires.anyBins.join(', ')}`);
+              if (meta.requires.env) lines.push(`Requires env: ${meta.requires.env.join(', ')}`);
+              if (meta.requires.config) lines.push(`Requires config: ${meta.requires.config.join(', ')}`);
+            }
+            lines.push(`Rule files: ${skill.ruleFiles.length}`);
+            lines.push(`User invocable: ${skill.invocation.userInvocable ? 'yes' : 'no'}`);
+            lines.push(`Model invocable: ${skill.invocation.disableModelInvocation ? 'no' : 'yes'}`);
+            lines.push(`Prerequisites: ${prereqCheck.ok ? 'OK' : `MISSING — ${prereqCheck.hints.join('; ')}`}`);
+            commandContext.stdout.write(lines.join('\n') + '\n');
             return 0;
           }
 
@@ -465,8 +259,30 @@ export function createSkillsPlugin(): SlashbotPlugin {
               ? `\n\n[AVAILABLE RULE FILES]:\n${skill.ruleFiles.map((f) => `- ${f}`).join('\n')}`
               : '';
             const taskSuffix = task ? `\n\n[TASK: ${task}]` : '';
-            const body = stripFrontmatter(skill.content);
-            commandContext.stdout.write(`[SKILL: ${name}]\n${body}${ruleList}${taskSuffix}\n`);
+            commandContext.stdout.write(`[SKILL: ${name}]\n${skill.body}${ruleList}${taskSuffix}\n`);
+            return 0;
+          }
+
+          if (sub === 'check') {
+            await manager.init();
+            const report = await manager.getStatusReport();
+            const lines = [
+              `Skills status: ${report.total} total, ${report.eligible} eligible, ${report.disabled} disabled, ${report.ineligible} ineligible`,
+              '',
+            ];
+            for (const entry of report.entries) {
+              const tag = sourceTag(entry.source);
+              let status: string;
+              if (entry.eligible) {
+                status = 'OK';
+              } else if (entry.disabled) {
+                status = 'DISABLED';
+              } else {
+                status = `INELIGIBLE — ${entry.reasons.join('; ')}`;
+              }
+              lines.push(`  ${tag} ${entry.name}: ${status}`);
+            }
+            commandContext.stdout.write(lines.join('\n') + '\n');
             return 0;
           }
 
@@ -475,14 +291,16 @@ export function createSkillsPlugin(): SlashbotPlugin {
         },
       });
 
+      // ── Context provider ──
+
       context.contributeContextProvider({
         id: 'skills.installed',
         pluginId: PLUGIN_ID,
         priority: 30,
         provide: async () => {
           await manager.init();
-          const hasGlobal = await manager.hasGlobalSkills();
-          const header = hasGlobal ? 'Slashbot skills are available.' : '';
+          const hasAny = await manager.hasSkills();
+          const header = hasAny ? 'Slashbot skills are available.' : '';
           const details = await manager.getSkillsForSystemPrompt();
           return [header, details].filter((part) => part.length > 0).join('\n\n');
         },

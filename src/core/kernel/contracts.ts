@@ -449,6 +449,11 @@ export interface RuntimeConfig {
   logging: {
     level: 'debug' | 'info' | 'warn' | 'error';
   };
+  skills: {
+    allowBundled: boolean;
+    bundledAllowlist?: string[];
+    entries: Record<string, { enabled?: boolean; env?: Record<string, string> }>;
+  };
 }
 
 export interface AuthResolution {

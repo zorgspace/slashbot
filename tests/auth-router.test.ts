@@ -57,7 +57,8 @@ describe('AuthProfileRouter', () => {
         },
         hooks: { defaultTimeoutMs: 10 },
         commandSafety: { defaultTimeoutMs: 10, riskyCommands: [], requireExplicitApproval: true },
-        logging: { level: 'info' }
+        logging: { level: 'info' },
+        skills: { allowBundled: true, entries: {} }
       },
       loggerStub()
     );
@@ -85,7 +86,8 @@ describe('AuthProfileRouter', () => {
         providers: {},
         hooks: { defaultTimeoutMs: 10 },
         commandSafety: { defaultTimeoutMs: 10, riskyCommands: [], requireExplicitApproval: true },
-        logging: { level: 'info' }
+        logging: { level: 'info' },
+        skills: { allowBundled: true, entries: {} }
       },
       loggerStub()
     );

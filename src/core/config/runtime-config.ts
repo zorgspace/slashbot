@@ -64,6 +64,14 @@ const RuntimeConfigSchema = z.object({
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error']),
   }).strict(),
+  skills: z.object({
+    allowBundled: z.boolean(),
+    bundledAllowlist: z.array(z.string()).optional(),
+    entries: z.record(z.string(), z.object({
+      enabled: z.boolean().optional(),
+      env: z.record(z.string(), z.string()).optional(),
+    })).default({}),
+  }).default({ allowBundled: true, entries: {} }),
 }).strict();
 
 export interface ConfigSources {
@@ -95,6 +103,10 @@ const DEFAULT_CONFIG: RuntimeConfig = {
   },
   logging: {
     level: 'info'
+  },
+  skills: {
+    allowBundled: true,
+    entries: {}
   }
 };
 

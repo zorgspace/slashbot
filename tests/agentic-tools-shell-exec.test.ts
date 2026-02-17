@@ -34,6 +34,7 @@ async function setupShellExec(workspaceRoot: string): Promise<(args: unknown) =>
       requireExplicitApproval: false,
     },
     logging: { level: 'error' },
+    skills: { allowBundled: true, entries: {} },
   };
 
   await plugin.setup({

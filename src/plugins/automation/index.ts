@@ -562,9 +562,10 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.list',
-        title: 'List',
+        title: 'List automations',
         pluginId: PLUGIN_ID,
-        description: 'List all automation jobs. Args: {}',
+        description: 'List all automation jobs (cron, timer, once, webhook)',
+        parameters: z.object({}),
         execute: async () => {
           const jobs = service.list();
           return { ok: true, output: jobs as unknown as JsonValue };
@@ -573,9 +574,16 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.add_cron',
-        title: 'Cron',
+        title: 'Schedule cron job',
         pluginId: PLUGIN_ID,
-        description: 'Add a cron automation job. Args: { name: string, expression: string, prompt: string, deliverChannel?: string, deliverChatId?: string }',
+        description: 'Schedule a recurring job using a cron expression (e.g. "*/5 * * * *" for every 5 min, or @hourly/@daily/@weekly/@monthly)',
+        parameters: z.object({
+          name: z.string().describe('Short name for this job'),
+          expression: z.string().describe('Cron expression (5-field) or alias like @hourly, @daily'),
+          prompt: z.string().describe('The prompt to execute when the job fires'),
+          deliverChannel: z.string().optional().describe('Channel to deliver result to (e.g. "telegram")'),
+          deliverChatId: z.string().optional().describe('Chat ID for delivery'),
+        }),
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -595,9 +603,14 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.add_webhook',
-        title: 'Webhook',
+        title: 'Add webhook job',
         pluginId: PLUGIN_ID,
-        description: 'Add a webhook automation job. Args: { name: string, prompt: string, secret?: string }',
+        description: 'Add a job triggered by an incoming HTTP POST to /automation/webhook/:name',
+        parameters: z.object({
+          name: z.string().describe('Webhook name (used in the URL path)'),
+          prompt: z.string().describe('The prompt to execute when the webhook fires'),
+          secret: z.string().optional().describe('HMAC-SHA256 secret for signature validation'),
+        }),
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -614,9 +627,16 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.add_timer',
-        title: 'Timer',
+        title: 'Schedule repeating timer',
         pluginId: PLUGIN_ID,
-        description: 'Add a recurring interval automation job. Args: { name: string, intervalSeconds: number, prompt: string, deliverChannel?: string, deliverChatId?: string }',
+        description: 'Schedule a job that repeats at a fixed interval (e.g. every 60s, every 300s)',
+        parameters: z.object({
+          name: z.string().describe('Short name for this job'),
+          intervalSeconds: z.number().describe('Repeat interval in seconds (minimum 1)'),
+          prompt: z.string().describe('The prompt to execute each time the timer fires'),
+          deliverChannel: z.string().optional().describe('Channel to deliver result to (e.g. "telegram")'),
+          deliverChatId: z.string().optional().describe('Chat ID for delivery'),
+        }),
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -639,9 +659,16 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.add_once',
-        title: 'Once',
+        title: 'Schedule one-shot',
         pluginId: PLUGIN_ID,
-        description: 'Add a one-shot automation job that runs after a delay. Args: { name: string, delaySeconds: number, prompt: string, deliverChannel?: string, deliverChatId?: string }',
+        description: 'Schedule a one-shot job that fires once after a delay then auto-removes. Use for reminders, alarms, and deferred tasks.',
+        parameters: z.object({
+          name: z.string().describe('Short name for this job (e.g. "5min-alarm")'),
+          delaySeconds: z.number().describe('Seconds from now until the job fires'),
+          prompt: z.string().describe('The prompt to execute when the delay expires'),
+          deliverChannel: z.string().optional().describe('Channel to deliver result to (e.g. "telegram")'),
+          deliverChatId: z.string().optional().describe('Chat ID for delivery'),
+        }),
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -665,9 +692,12 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.run',
-        title: 'Run',
+        title: 'Run job now',
         pluginId: PLUGIN_ID,
-        description: 'Run an automation job immediately. Args: { id: string }',
+        description: 'Run an existing automation job immediately by ID or name',
+        parameters: z.object({
+          id: z.string().describe('Job ID or name'),
+        }),
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -684,9 +714,12 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.remove',
-        title: 'Remove',
+        title: 'Remove job',
         pluginId: PLUGIN_ID,
-        description: 'Remove an automation job. Args: { id: string }',
+        description: 'Remove an automation job by ID or name',
+        parameters: z.object({
+          id: z.string().describe('Job ID or name'),
+        }),
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -703,9 +736,13 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.enable',
-        title: 'Toggle',
+        title: 'Toggle job',
         pluginId: PLUGIN_ID,
-        description: 'Enable or disable an automation job. Args: { id: string, enabled: boolean }',
+        description: 'Enable or disable an automation job',
+        parameters: z.object({
+          id: z.string().describe('Job ID or name'),
+          enabled: z.boolean().describe('true to enable, false to disable'),
+        }),
         execute: async (args) => {
           try {
             const input = asObject(args);
@@ -723,9 +760,14 @@ export function createAutomationPlugin(): SlashbotPlugin {
 
       context.registerTool({
         id: 'automation.add_delivery',
-        title: 'Delivery',
+        title: 'Set delivery',
         pluginId: PLUGIN_ID,
-        description: 'Set or remove channel delivery on an existing automation job. Args: { id: string, channel?: string, chatId?: string }',
+        description: 'Set or remove channel delivery on an existing automation job',
+        parameters: z.object({
+          id: z.string().describe('Job ID or name'),
+          channel: z.string().optional().describe('Channel ID (e.g. "telegram"). Omit both to remove delivery.'),
+          chatId: z.string().optional().describe('Chat ID for delivery'),
+        }),
         execute: async (args) => {
           try {
             const input = asObject(args);

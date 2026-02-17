@@ -16,6 +16,7 @@ import { loadConfig, saveConfig, isAuthorized, authorizeChatId, unauthorizeChatI
 import { flushRuntimeFiles } from './lock';
 import { setStatus, stopBotSafely, connectBot, connectIfTokenPresent } from './connection';
 import { setupHandlers, sendMarkdownToChat, resolveDefaultPrivateChatId } from './handlers';
+import { sendWithRetry } from './utils.js';
 import { isPrivateChatId } from './utils';
 
 declare module '@slashbot/core/kernel/event-bus.js' {
@@ -227,10 +228,11 @@ export function createTelegramPlugin(): SlashbotPlugin {
         id: 'telegram.send',
         title: 'Send',
         pluginId: PLUGIN_ID,
-        description: 'Send a message to a Telegram chat. Args: { chatId?: string, text: string }',
+        description: 'Send text message or photo to authorized private Telegram chats. Args: { chatId?: string, text?: string, photo?: string }',
         parameters: z.object({
           chatId: z.string().optional().describe('Target chat ID (defaults to originating private chat, otherwise all authorized private chats)'),
-          text: z.string().min(1, 'Message text must not be empty').describe('Message text to send'),
+          text: z.string().optional().describe('Message text (or caption if photo provided)'),
+          photo: z.string().optional().describe('Photo: URL, local path, or Telegram file_id'),
         }),
         execute: async (rawArgs, toolContext) => {
           try {
@@ -238,7 +240,8 @@ export function createTelegramPlugin(): SlashbotPlugin {
 
             const parseResult = z.object({
               chatId: z.string().optional(),
-              text: z.string().min(1, 'Message text must not be empty'),
+              text: z.string().optional(),
+              photo: z.string().optional(),
             }).safeParse(rawArgs);
 
             if (!parseResult.success) {
@@ -252,7 +255,17 @@ export function createTelegramPlugin(): SlashbotPlugin {
               };
             }
 
-            const { chatId, text } = parseResult.data;
+            if (!parseResult.data.text && !parseResult.data.photo) {
+              return {
+                ok: false,
+                error: {
+                  code: 'VALIDATION_ERROR',
+                  message: 'text or photo required',
+                },
+              };
+            }
+
+            const { chatId, text, photo } = parseResult.data;
             const defaultChatId = resolveDefaultPrivateChatId(state, toolContext.sessionId);
 
             if (typeof chatId === 'string') {
@@ -276,13 +289,31 @@ export function createTelegramPlugin(): SlashbotPlugin {
             }
 
             for (const id of privateChatIds) {
-              await sendMarkdownToChat(state.bot.telegram, id, text);
-              kernel.events.publish('connector:telegram:message', {
-                direction: 'out',
-                chatId: id,
-                modality: 'text',
-                text: text.length <= 2000 ? text : `${text.slice(0, 2000)}...[truncated]`,
-              });
+              if (photo) {
+                const options: any = {};
+                if (text) {
+                  options.caption = text;
+                  options.parse_mode = 'Markdown';
+                }
+                await sendWithRetry(async () => {
+                  await state.bot!.telegram.sendPhoto(id, photo, options);
+                });
+                const pubText = text || '[Photo]';
+                kernel.events.publish('connector:telegram:message', {
+                  direction: 'out',
+                  chatId: id,
+                  modality: 'photo',
+                  text: pubText.length <= 2000 ? pubText : `${pubText.slice(0, 2000)}...[truncated]`,
+                });
+              } else {
+                await sendMarkdownToChat(state.bot!.telegram, id, text!);
+                kernel.events.publish('connector:telegram:message', {
+                  direction: 'out',
+                  chatId: id,
+                  modality: 'text',
+                  text: text!.length <= 2000 ? text! : `${text!.slice(0, 2000)}...[truncated]`,
+                });
+              }
             }
 
             return { ok: true, output: privateChatIds.length === 1 ? 'sent' : `sent to ${privateChatIds.length} chats` };

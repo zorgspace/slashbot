@@ -32,6 +32,7 @@ export function defaultRuntimeConfig(): RuntimeConfig {
       requireExplicitApproval: false,
     },
     logging: { level: 'error' },
+    skills: { allowBundled: true, entries: {} },
   };
 }
 
