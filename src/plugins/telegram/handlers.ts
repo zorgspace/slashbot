@@ -5,7 +5,7 @@ import type { TranscriptionProvider } from '../services/transcription-service';
 import type { AgentRegistry } from '../agents/index';
 import { splitMessage } from '../utils';
 import type { TelegramMessageDirection, TelegramMessageModality, TelegramState } from './types';
-import { DEFAULT_AGENT_ID, PRIVATE_AGENTIC_TIMEOUT_MS } from './types.js';
+import { DEFAULT_AGENT_ID } from './types.js';
 import { isAuthorized, authorizeChatId } from './config.js';
 import {
   extractCommandPayload,
@@ -133,27 +133,11 @@ export function enqueueMessageTask(
       await kernel.sendMessageLifecycle('message_received', args.sessionId, lifecycleAgentId, args.prompt);
       await kernel.sendMessageLifecycle('message_sending', args.sessionId, lifecycleAgentId, args.prompt);
 
-      let response: string;
-      if (args.isPrivate) {
-        const ac = new AbortController();
-        const agenticTimeout = setTimeout(() => ac.abort(), PRIVATE_AGENTIC_TIMEOUT_MS);
-        try {
-          response = await session.chat(args.contextKey, args.prompt, {
-            sessionId: args.sessionId,
-            agentId: args.agentId ?? DEFAULT_AGENT_ID,
-            images: args.images,
-            abortSignal: ac.signal,
-          });
-        } finally {
-          clearTimeout(agenticTimeout);
-        }
-      } else {
-        response = await session.chat(args.contextKey, args.prompt, {
-          sessionId: args.sessionId,
-          agentId: args.agentId ?? DEFAULT_AGENT_ID,
-          images: args.images,
-        });
-      }
+      const response = await session.chat(args.contextKey, args.prompt, {
+        sessionId: args.sessionId,
+        agentId: args.agentId ?? DEFAULT_AGENT_ID,
+        images: args.images,
+      });
 
       await kernel.sendMessageLifecycle('message_sent', args.sessionId, lifecycleAgentId, response);
 

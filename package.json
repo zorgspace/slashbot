@@ -63,7 +63,7 @@
   "devDependencies": {
     "@slashbot/plugin-sdk": "file:./plugin-sdk",
     "@types/bun": "^1.3.9",
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.19.11",
     "@types/react": "^18.3.12",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
