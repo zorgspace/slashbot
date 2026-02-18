@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index';
+import { VoltAgentAdapter } from '@slashbot/core/voltagent/index';
 import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index';
 import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel';
@@ -83,7 +83,7 @@ export function createTelegramPlugin(): SlashbotPlugin {
 
       // ── LLM adapters & agent sessions ───────────────────────────────
 
-      const llm = new KernelLlmAdapter(
+      const llm = new VoltAgentAdapter(
         authRouter,
         providers,
         logger,
@@ -186,12 +186,32 @@ export function createTelegramPlugin(): SlashbotPlugin {
             logger.warn('Telegram: cannot send — no bot');
             return;
           }
+
+          // Support targeted { text, chatId } payloads
+          const obj = typeof payload === 'object' && payload !== null && !Array.isArray(payload) ? payload as Record<string, unknown> : null;
+          const rawChatId = typeof obj?.chatId === 'string' ? obj.chatId : undefined;
+          // chatId may arrive as "private-123456" (from sessionId suffix) — extract numeric part
+          const targetChatId = rawChatId?.match(/(\d+)$/)?.[1] ?? rawChatId;
+          const text = targetChatId && typeof obj?.text === 'string'
+            ? obj.text
+            : (typeof payload === 'string' ? payload : JSON.stringify(payload));
+
+          if (targetChatId) {
+            await sendMarkdownToChat(state.bot.telegram, targetChatId, text);
+            kernel.events.publish('connector:telegram:message', {
+              direction: 'out',
+              chatId: targetChatId,
+              modality: 'text',
+              text: text.length <= 2000 ? text : `${text.slice(0, 2000)}...[truncated]`,
+            });
+            return;
+          }
+
           const chatIds = listAuthorizedPrivateChatIds(state);
           if (chatIds.length === 0) {
             logger.warn('Telegram: cannot send — no authorized private chat IDs');
             return;
           }
-          const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
           for (const chatId of chatIds) {
             await sendMarkdownToChat(state.bot.telegram, chatId, text);
             kernel.events.publish('connector:telegram:message', {

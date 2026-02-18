@@ -13,7 +13,62 @@
 import type { AuthProfileRouter } from '../../providers/auth-router.js';
 import type { StructuredLogger } from '../../kernel/contracts.js';
 import type { ProviderRegistry } from '../../kernel/registries.js';
-import type { AgentLoopCallbacks, AgentLoopResult } from '../agent-loop.js';
+
+// ---------------------------------------------------------------------------
+// Agent loop types (previously in agent-loop.ts, moved here after migration)
+// ---------------------------------------------------------------------------
+
+/** Represents a single tool invocation during the agent loop, tracking its lifecycle. */
+export interface AgentToolAction {
+  /** Unique identifier for this action instance. */
+  id: string;
+  /** Human-readable display name of the tool. */
+  name: string;
+  /** Description of what the tool does. */
+  description: string;
+  /** Canonical tool identifier from the kernel registry. */
+  toolId: string;
+  /** Arguments passed to the tool. */
+  args: Record<string, unknown>;
+  /** Current lifecycle status of the tool action. */
+  status: 'running' | 'done' | 'error';
+  /** Serialized result output when status is 'done'. */
+  result?: string;
+  /** Error message when status is 'error'. */
+  error?: string;
+}
+
+/** Callbacks for observing the progress and events of an agent loop execution. */
+export interface AgentLoopCallbacks {
+  /** Called when a conversation title is derived from the first LLM response line. */
+  onTitle?(title: string): void;
+  /** Called with the LLM text output at each step of the loop. */
+  onThoughts?(text: string, stepIndex: number): void;
+  /** Called when a tool invocation begins. */
+  onToolStart?(action: AgentToolAction): void;
+  /** Called when a tool invocation completes (success or error). */
+  onToolEnd?(action: AgentToolAction): void;
+  /** Called when a tool produces user-facing output (dual-track forUser content). */
+  onToolUserOutput?(toolId: string, content: string): void;
+  /** Called with a compact summary of the final response text. */
+  onSummary?(summary: string): void;
+  /** Called when the agent loop finishes with the final result. */
+  onDone?(result: AgentLoopResult): void;
+}
+
+/** Result returned by the agent loop upon completion. */
+export interface AgentLoopResult {
+  /** Final text response from the LLM. */
+  text: string;
+  /** Number of LLM generation steps performed. */
+  steps: number;
+  /** Total number of tool calls made across all steps. */
+  toolCalls: number;
+  /** Reason the loop terminated (e.g. 'stop', 'error', 'abort'). */
+  finishReason: string;
+  /** Full tool chain from the loop, for rich history persistence. */
+  messages?: RichMessage[];
+}
 
 // ---------------------------------------------------------------------------
 // Message types

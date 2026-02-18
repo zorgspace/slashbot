@@ -96,12 +96,12 @@ describe('trimMessagesToFit', () => {
 
 describe('extractToken', () => {
   test('apiKey field', () => {
-    const profile = { data: { apiKey: 'sk-123' } } as AuthProfile;
+    const profile = { data: { apiKey: 'sk-123' } } as unknown as AuthProfile;
     expect(extractToken(profile)).toBe('sk-123');
   });
 
   test('access field', () => {
-    const profile = { data: { access: 'tok-456' } } as AuthProfile;
+    const profile = { data: { access: 'tok-456' } } as unknown as AuthProfile;
     expect(extractToken(profile)).toBe('tok-456');
   });
 
@@ -272,7 +272,7 @@ describe('trimMessagesToFit (additional)', () => {
 
 describe('extractToken (additional)', () => {
   test('apiKey takes priority over access', () => {
-    const profile = { data: { apiKey: 'key', access: 'tok' } } as AuthProfile;
+    const profile = { data: { apiKey: 'key', access: 'tok' } } as unknown as AuthProfile;
     expect(extractToken(profile)).toBe('key');
   });
 });

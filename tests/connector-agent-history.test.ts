@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { ConnectorAgentSession } from '../src/plugins/services/connector-agent.js';
 import type { LlmAdapter, LlmCompletionInput } from '../src/core/agentic/llm/index.js';
-import type { AgentLoopResult } from '../src/core/agentic/agent-loop.js';
+import type { AgentLoopResult } from '../src/core/agentic/llm/types.js';
 
 class FakeLlm implements LlmAdapter {
   readonly calls: LlmCompletionInput[] = [];

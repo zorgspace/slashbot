@@ -7,7 +7,7 @@ import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
 import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
-import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import { VoltAgentAdapter } from '@slashbot/core/voltagent/index.js';
 import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 import { asObject, asString } from '../utils.js';
 
@@ -267,7 +267,7 @@ export function createAgentsPlugin(): SlashbotPlugin {
       registry = new AgentRegistry(paths.home());
 
       if (authRouter && providers && kernel) {
-        llm = new KernelLlmAdapter(
+        llm = new VoltAgentAdapter(
           authRouter,
           providers,
           logger,

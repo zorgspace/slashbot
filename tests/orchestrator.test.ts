@@ -4,20 +4,16 @@ import type { AgentLoopResult } from '../src/core/agentic/llm/index.js';
 import type { LlmCompletionInput } from '../src/core/agentic/llm/index.js';
 
 // ---------------------------------------------------------------------------
-// Mock KernelLlmAdapter — intercept before the plugin imports it
+// Mock VoltAgentAdapter — intercept before the plugin imports it
 // ---------------------------------------------------------------------------
 
 const mockComplete = vi.fn<(input: LlmCompletionInput) => Promise<AgentLoopResult>>();
 
-vi.mock('../src/core/agentic/llm/index.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../src/core/agentic/llm/index.js')>();
-  return {
-    ...original,
-    KernelLlmAdapter: vi.fn().mockImplementation(() => ({
-      complete: mockComplete,
-    })),
-  };
-});
+vi.mock('../src/core/voltagent/index.js', () => ({
+  VoltAgentAdapter: vi.fn().mockImplementation(() => ({
+    complete: mockComplete,
+  })),
+}));
 
 // Import AFTER mock is in place
 const { createOrchestratorPlugin, RunRegistry } = await import('../src/plugins/orchestrator/index.js');

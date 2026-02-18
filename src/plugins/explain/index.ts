@@ -2,8 +2,8 @@
  * @module plugins/explain
  *
  * Explain plugin providing a tool that pushes short status updates to the user
- * mid-reasoning. Resolves the active connector channel (Telegram, Discord, CLI)
- * from the session ID and delivers an instant explanation message.
+ * mid-reasoning. Resolves the active connector channel and specific chat from
+ * the session ID and delivers an instant targeted explanation message.
  *
  * Tools:
  *  - `explain` -- Send a short status update to the user while the agent works.
@@ -17,26 +17,33 @@ import type { ChannelRegistry } from '@slashbot/core/kernel/registries.js';
 const PLUGIN_ID = 'slashbot.explain';
 
 /**
- * Find the connector that owns this session.
+ * Find the connector that owns this session and extract the chat ID.
  * Iterates channels marked as `connector: true` and matches by sessionPrefix.
  * Falls back to 'cli' when no prefix matches (TUI uses random UUIDs).
  */
-function resolveConnector(channels: ChannelRegistry, sessionId?: string): ChannelDefinition | undefined {
+function resolveConnectorAndChat(
+  channels: ChannelRegistry,
+  sessionId?: string,
+): { connector: ChannelDefinition; chatId?: string } | undefined {
   const connectors = channels.list().filter((ch) => ch.connector);
   if (sessionId) {
     const match = connectors.find((ch) => ch.sessionPrefix && sessionId.startsWith(ch.sessionPrefix));
-    if (match) return match;
+    if (match) {
+      const chatId = sessionId.slice(match.sessionPrefix!.length);
+      return { connector: match, chatId: chatId || undefined };
+    }
   }
   // fallback: connector without a prefix (cli)
-  return connectors.find((ch) => !ch.sessionPrefix) ?? connectors[0];
+  const cli = connectors.find((ch) => !ch.sessionPrefix) ?? connectors[0];
+  return cli ? { connector: cli } : undefined;
 }
 
 /**
  * Create the Explain plugin.
  *
  * Registers the `explain` tool that delivers short status messages to the user's
- * active connector channel during agentic reasoning. Messages are routed based on
- * session ID prefix matching against registered connector channels.
+ * originating chat. Messages are routed to the specific chat ID that initiated
+ * the query (e.g. the exact Telegram chat, Discord channel, or CLI session).
  *
  * @returns A SlashbotPlugin instance with the explain tool registration.
  */
@@ -77,16 +84,24 @@ export function createExplainPlugin(): SlashbotPlugin {
             return { ok: true, output: '(no channel registry — message logged only)' };
           }
 
-          const connector = resolveConnector(channels, callContext.sessionId);
-          if (!connector) {
+          const resolved = resolveConnectorAndChat(channels, callContext.sessionId);
+          if (!resolved) {
             logger.warn('explain: no connector found', { sessionId: callContext.sessionId ?? 'unknown' });
             return { ok: true, output: '(no connector found — message logged only)' };
           }
 
+          const text = `💡 ${message}`;
+
           try {
-            await connector.send(`💡 ${message}`);
+            // Send targeted payload with chatId so the connector routes to the
+            // specific chat that initiated the query, not broadcast to all chats.
+            if (resolved.chatId) {
+              await resolved.connector.send({ text, chatId: resolved.chatId } as unknown as JsonValue);
+            } else {
+              await resolved.connector.send(text);
+            }
           } catch (err) {
-            logger.warn('explain: send failed', { channelId: connector.id, error: String(err) });
+            logger.warn('explain: send failed', { channelId: resolved.connector.id, error: String(err) });
             return { ok: false, error: { code: 'SEND_FAILED', message: String(err) } };
           }
 

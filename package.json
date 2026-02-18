@@ -17,7 +17,9 @@
     "dev": "f(){ bun src/index.ts \"$@\"; c=$?; [ $c -eq 130 ] && exit 0; exit $c; }; f",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "package": "bun build src/index.ts --compile --target=bun-linux-x64 --outfile=dist/slashbot-linux-x64 && bun build src/index.ts --compile --target=bun-linux-arm64 --outfile=dist/slashbot-linux-arm64 && bun build src/index.ts --compile --target=bun-darwin-arm64 --outfile=dist/slashbot-macos-arm64 && bun build src/index.ts --compile --target=bun-darwin-x64 --outfile=dist/slashbot-macos-x64 && bun build src/index.ts --compile --target=bun-windows-x64 --outfile=dist/slashbot-windows-x64.exe",
+    "install-global": "bun build src/index.ts --compile --outfile=$HOME/.local/bin/slashbot"
   },
   "engines": {
     "node": ">=20"
@@ -36,13 +38,14 @@
     "@ai-sdk/google-vertex": "^4.0.58",
     "@ai-sdk/groq": "^3.0.24",
     "@ai-sdk/mistral": "^3.0.20",
-    "@ai-sdk/openai": "^1.3.24",
+    "@ai-sdk/openai": "^3.0.29",
     "@ai-sdk/perplexity": "^3.0.19",
     "@ai-sdk/togetherai": "^2.0.33",
     "@ai-sdk/xai": "^3.0.57",
     "@slack/bolt": "^4.6.0",
     "@solana/spl-token": "^0.1.8",
     "@solana/web3.js": "^1.98.4",
+    "@voltagent/core": "^2.4.1",
     "ai": "^6.0.86",
     "bip39": "^3.1.0",
     "bs58": "^6.0.0",
@@ -61,11 +64,12 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@slashbot/plugin-sdk": "file:./plugin-sdk",
+    "@slashbot/plugin-sdk": "file:./src/plugin-sdk",
     "@types/bun": "^1.3.9",
     "@types/node": "^22.19.11",
     "@types/react": "^18.3.12",
     "@types/ws": "^8.5.13",
+    "react-devtools-core": "^7.0.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

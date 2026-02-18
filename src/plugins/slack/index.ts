@@ -4,7 +4,7 @@ import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
-import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import { VoltAgentAdapter } from '@slashbot/core/voltagent/index.js';
 import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
 import { ConnectorAgentSession, SessionChatHistoryStore } from '../services/connector-agent.js';
 import { PreemptiveQueue } from '../services/preemptive-queue.js';
@@ -177,7 +177,7 @@ export function createSlackPlugin(): SlashbotPlugin {
 
       // Build agent session
       if (authRouter && providers && kernel) {
-        const llm = new KernelLlmAdapter(
+        const llm = new VoltAgentAdapter(
           authRouter,
           providers,
           logger,

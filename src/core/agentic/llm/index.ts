@@ -2,7 +2,7 @@
  * @module llm
  *
  * Public barrel export for the LLM subsystem. Re-exports all types,
- * the kernel adapter, provider registry functions, helper utilities,
+ * the VoltAgent adapter, provider registry functions, helper utilities,
  * and context pipeline components used by the agentic layer.
  */
 export type {
@@ -23,16 +23,12 @@ export type {
   TokenModeProxyResolver,
   CompletionConfig,
   CompletionExecution,
-  RunCompletionDeps,
-} from './types.js';
-
-export type {
   AgentToolAction,
   AgentLoopCallbacks,
   AgentLoopResult,
-} from '../agent-loop.js';
+} from './types.js';
 
-export { KernelLlmAdapter } from './adapter.js';
+export { VoltAgentAdapter } from '../../voltagent/index.js';
 
 export {
   registerProvider,

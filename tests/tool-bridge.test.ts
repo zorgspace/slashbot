@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { sanitizeToolName, deriveToolDisplayName } from '../src/core/agentic/tool-bridge.js';
+import { sanitizeToolName, deriveToolDisplayName } from '../src/core/voltagent/tool-bridge.js';
 
 describe('sanitizeToolName', () => {
   test('dots replaced with underscores', () => {

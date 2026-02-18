@@ -25,7 +25,7 @@ import type { ChannelRegistry, ProviderRegistry } from '@slashbot/core/kernel/re
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 import type { TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/types.js';
-import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/adapter.js';
+import { VoltAgentAdapter } from '@slashbot/core/voltagent/index.js';
 
 const CronTriggerSchema = z.object({
   type: z.literal('cron'),
@@ -553,7 +553,7 @@ export function createAutomationPlugin(): SlashbotPlugin {
       const assemblePrompt = context.getService<() => Promise<string>>('kernel.assemblePrompt');
 
       if (kernel && authRouter && providers && logger && assemblePrompt) {
-        const llm = new KernelLlmAdapter(
+        const llm = new VoltAgentAdapter(
           authRouter, providers, logger, kernel,
           () => context.getService<TokenModeProxyAuthService>('wallet.proxyAuth'),
         );

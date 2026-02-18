@@ -13,7 +13,7 @@
  * @see {@link createPlugin} - Re-exported alias for createDiscordPlugin
  */
 import { z } from 'zod';
-import { KernelLlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import { VoltAgentAdapter } from '@slashbot/core/voltagent/index.js';
 import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
 import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk/index.js';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
@@ -124,7 +124,7 @@ export function createDiscordPlugin(): SlashbotPlugin {
 
       // ── LLM adapters & agent sessions ───────────────────────────────
 
-      const llm = new KernelLlmAdapter(
+      const llm = new VoltAgentAdapter(
         authRouter,
         providers,
         logger,
@@ -223,20 +223,32 @@ export function createDiscordPlugin(): SlashbotPlugin {
         connector: true,
         sessionPrefix: 'dc-',
         send: async (payload) => {
-          if (!state.client || !state.config.primaryChannelId) {
-            logger.warn('Discord: cannot send — no client or primary channel');
+          if (!state.client) {
+            logger.warn('Discord: cannot send — no client');
             return;
           }
-          const channel = await state.client.channels.fetch(state.config.primaryChannelId).catch(() => null);
+
+          // Support targeted { text, chatId } payloads
+          const obj = typeof payload === 'object' && payload !== null && !Array.isArray(payload) ? payload as Record<string, unknown> : null;
+          const targetChannelId = typeof obj?.chatId === 'string' ? obj.chatId : state.config.primaryChannelId;
+          const text = obj && typeof obj.text === 'string'
+            ? obj.text
+            : (typeof payload === 'string' ? payload : JSON.stringify(payload));
+
+          if (!targetChannelId) {
+            logger.warn('Discord: cannot send — no target channel');
+            return;
+          }
+
+          const channel = await state.client.channels.fetch(targetChannelId).catch(() => null);
           if (!channel || !('send' in channel)) return;
-          const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
           const parts = splitMessage(text, DISCORD_MESSAGE_LIMIT);
           for (const part of parts) {
             await (channel as import('discord.js').TextChannel).send(part);
           }
           kernel.events.publish('connector:discord:message', {
             direction: 'out',
-            channelId: state.config.primaryChannelId,
+            channelId: targetChannelId,
             modality: 'text',
             text: text.length <= 2000 ? text : `${text.slice(0, 2000)}...[truncated]`,
           });

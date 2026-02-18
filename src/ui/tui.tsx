@@ -6,10 +6,10 @@ import { Box, Text, useApp, useInput } from 'ink';
 function debugLog(msg: string): void {
   try { appendFileSync('/tmp/slashbot-debug.log', `[tui ${new Date().toISOString()}] ${msg}\n`); } catch {}
 }
-import Spinner from 'ink-spinner';
+
 import { useSpawn } from 'ink-spawn';
 import type { SlashbotKernel } from '../core/kernel/kernel.js';
-import { KernelLlmAdapter } from '../core/agentic/llm/index.js';
+import { VoltAgentAdapter } from '../core/voltagent/index.js';
 import type { AgentToolAction, TokenModeProxyAuthService } from '../core/agentic/llm/index.js';
 import type { StatusIndicatorContribution, StructuredLogger } from '../core/kernel/contracts.js';
 import type { ProviderRegistry, StatusIndicatorRegistry } from '../core/kernel/registries.js';
@@ -75,7 +75,7 @@ const CONTEXT_BYPASS_PREFIXES = new Set([
   'date',
   'whoami',
 ]);
-const BUSY_SPINNER_TYPE = 'simpleDots';
+const BUSY_CHAR = '◐';
 
 function normalizeAssistantText(text: string): string {
   return text
@@ -131,14 +131,6 @@ function applyToolEnd(state: AgentLoopDisplayState, action: AgentToolAction): Ag
         : a
     ),
   };
-}
-
-function estimateWrappedRows(text: string, width: number): number {
-  const safeWidth = Math.max(8, width);
-  return text.split('\n').reduce((total, part) => {
-    const lineLength = Math.max(1, part.length);
-    return total + Math.max(1, Math.ceil(lineLength / safeWidth));
-  }, 0);
 }
 
 // ── SpawnRunner (invisible, manages ink-spawn lifecycle) ───────────────
@@ -303,6 +295,7 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
   const [agentState, setAgentState] = useState<AgentLoopDisplayState>(initialAgentState);
   const [connectorAgentState, setConnectorAgentState] = useState<AgentLoopDisplayState>(initialAgentState);
   const [connectorAgentBusy, setConnectorAgentBusy] = useState(false);
+  const [connectorDisplayLabel, setConnectorDisplayLabel] = useState('');
   const [subagents, setSubagents] = useState<SubagentTask[]>([]);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [activeSpawns, setActiveSpawns] = useState<SpawnRequest[]>([]);
@@ -357,7 +350,7 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
     const providers = kernel.services.get<ProviderRegistry>('kernel.providers.registry');
     const logger = kernel.services.get<StructuredLogger>('kernel.logger') ?? kernel.logger;
     if (!authRouter || !providers) return null;
-    return new KernelLlmAdapter(
+    return new VoltAgentAdapter(
       authRouter,
       providers,
       logger,
@@ -484,7 +477,9 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
       description: 'TUI chat channel',
       connector: true,
       send: async (payload) => {
-        const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
+        // Support targeted { text, chatId } payloads — extract text
+        const obj = typeof payload === 'object' && payload !== null && !Array.isArray(payload) ? payload as Record<string, unknown> : null;
+        const text = obj && typeof obj.text === 'string' ? obj.text : (typeof payload === 'string' ? payload : JSON.stringify(payload));
         pushLineRef.current?.({
           id: `cli-channel-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           role: 'system',
@@ -612,6 +607,7 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
         connectorAgentContextRef.current = contextKey;
         connectorAgentDepthRef.current = 1;
         setConnectorAgentBusy(true);
+        setConnectorDisplayLabel(payloadLabel);
         setConnectorAgentState({
           title: payloadLabel,
           thoughts: '',
@@ -1048,19 +1044,6 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
   const contentViewportRows = Math.max(1, rows - reservedRows);
   const contentMinHeight = Math.max(1, Math.floor(contentViewportRows * 0.6));
 
-  const estimatedContentRows = useMemo(() => {
-    const textWidth = Math.max(20, panelWidth - 6);
-    let total = 0;
-    for (const line of lines) {
-      total += estimateWrappedRows(line.text, textWidth) + 1; // +1 for message spacing
-    }
-    if (busy && agentState.actions.length > 0) total += agentState.actions.length + 2;
-    if (paletteOpen && filteredCommands.length > 0) {
-      total += Math.min(8, filteredCommands.length + 1);
-    }
-    return total;
-  }, [agentState.actions.length, busy, filteredCommands.length, lines, paletteOpen, panelWidth]);
-
   // ── Input (global keys) ─────────────────────────────────────────────
 
   useInput((input, key) => {
@@ -1135,9 +1118,7 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
   }, [paletteOpen, filteredCommands, paletteIndex, paletteState.mode, paletteParentCmd]);
 
   // ── Render ─────────────────────────────────────────────────────────
-  // Animated spinners during overflow can cause aggressive terminal repaint/auto-scroll.
   const anyAgentBusy = busy || connectorAgentBusy;
-  const animateBusyIndicator = anyAgentBusy && estimatedContentRows <= contentViewportRows;
 
   return (
     <Box flexDirection="column" width={cols} minHeight={rows} alignItems="center">
@@ -1171,8 +1152,8 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
               {lines.map((line) => (
                 <MessageLine key={line.id} line={line} cols={panelWidth} />
               ))}
-              <AgentActivity state={agentState} busy={busy} cols={panelWidth} />
-              <AgentActivity state={connectorAgentState} busy={connectorAgentBusy} cols={panelWidth} />
+              <AgentActivity state={agentState} busy={busy} cols={panelWidth} displayLabel="Agent" />
+              <AgentActivity state={connectorAgentState} busy={connectorAgentBusy} cols={panelWidth} displayLabel={connectorDisplayLabel || undefined} />
               {paletteOpen && filteredCommands.length > 0 && (
                 <CommandPalette
                   commands={filteredCommands}
@@ -1197,9 +1178,7 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
               {anyAgentBusy ? (
                 <>
                   <Text color={palette.accent}>{'  '}</Text>
-                  <Text color={palette.accent}>
-                    {animateBusyIndicator ? <Spinner type={BUSY_SPINNER_TYPE} /> : '⋯'}
-                  </Text>
+                  <Text color={palette.accent}>{BUSY_CHAR}</Text>
                 </>
               ) : (
                 <Text>{' '}</Text>
