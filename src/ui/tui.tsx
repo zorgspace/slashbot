@@ -942,6 +942,14 @@ export function SlashbotTui(props: SlashbotTuiProps): React.ReactElement {
       const parts = value.slice(1).split(/\s+/);
       const cmdName = parts[0];
       const cmdArgs = parts.slice(1);
+
+      // /setup in TUI → show the interactive SetupWizard component
+      if (cmdName === 'setup') {
+        setPrompt('');
+        setNeedsOnboarding(true);
+        return;
+      }
+
       const command = kernel.commands.get(cmdName);
       if (command) {
         setPrompt('');

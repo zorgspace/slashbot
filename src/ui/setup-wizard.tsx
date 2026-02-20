@@ -348,7 +348,17 @@ export function SetupWizard(props: SetupWizardProps): React.ReactElement {
               }
               setError(undefined);
               setOauthCode(trimmed);
-              setStage('oauth_state');
+
+              // If manualCodePaste (e.g. Anthropic), state + verifier are already
+              // known from start() — complete immediately without an extra prompt.
+              if (startResult?.metadata?.manualCodePaste && startResult.state) {
+                const verifier = typeof startResult.metadata.verifier === 'string'
+                  ? startResult.metadata.verifier
+                  : undefined;
+                void completeSetup({ code: trimmed, state: startResult.state, verifier });
+              } else {
+                setStage('oauth_state');
+              }
             }}
             focus={!busy}
             placeholder="Paste OAuth code"
@@ -364,7 +374,10 @@ export function SetupWizard(props: SetupWizardProps): React.ReactElement {
             onChange={setOauthState}
             onSubmit={(value) => {
               const state = value.trim() || startResult?.state;
-              void completeSetup({ code: oauthCode.trim(), state });
+              const verifier = typeof startResult?.metadata?.verifier === 'string'
+                ? startResult.metadata.verifier
+                : undefined;
+              void completeSetup({ code: oauthCode.trim(), state, verifier });
             }}
             focus={!busy}
             placeholder={startResult?.state ? `Default: ${startResult.state}` : 'Paste OAuth state'}
