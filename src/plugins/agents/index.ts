@@ -1,15 +1,14 @@
-import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { JsonValue, PathResolver, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk/index.js';
-import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { JsonValue, PathResolver, SlashbotPlugin } from '../../plugin-sdk/index.js';
 import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
-import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
-import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
-import { VoltAgentAdapter } from '@slashbot/core/voltagent/index.js';
-import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
-import { asObject, asString } from '../utils.js';
+import type { LlmAdapter } from '@slashbot/core/agentic/llm/index.js';
+import { asObject, asString, createLlmAdapter, resolveCommonServices } from '../utils.js';
+import { AgentRegistry } from './agent-registry.js';
+import type { AgentSpec, TeamSpec } from './types.js';
+
+export { AgentRegistry } from './agent-registry.js';
+export type { AgentSpec, TeamSpec } from './types.js';
 
 declare module '@slashbot/core/kernel/event-bus.js' {
   interface EventMap {
@@ -17,223 +16,6 @@ declare module '@slashbot/core/kernel/event-bus.js' {
     'agents:removed': { agentId: string; name: string };
     'agents:invoked': { agentId: string; name: string; promptLength: number };
     'agents:completed': { agentId: string; name: string; steps: number; toolCalls: number; durationMs: number; finishReason: string };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Schemas
-// ---------------------------------------------------------------------------
-
-const AgentSpecSchema = z.object({
-  id: z.string().regex(/^[a-z0-9_-]+$/),
-  name: z.string().min(1),
-  role: z.string().default(''),
-  systemPrompt: z.string().default(''),
-  provider: z.string().optional(),
-  model: z.string().optional(),
-  enabled: z.boolean().default(true),
-  toolAllowlist: z.array(z.string()).optional(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-
-interface AgentSpec {
-  id: string;
-  name: string;
-  role: string;
-  systemPrompt: string;
-  provider?: string;
-  model?: string;
-  enabled: boolean;
-  toolAllowlist?: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-const TeamSpecSchema = z.object({
-  id: z.string().regex(/^[a-z0-9_-]+$/),
-  name: z.string().min(1),
-  leaderAgentId: z.string(),
-  memberAgentIds: z.array(z.string()),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-
-interface TeamSpec {
-  id: string;
-  name: string;
-  leaderAgentId: string;
-  memberAgentIds: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-// ---------------------------------------------------------------------------
-// AgentRegistry
-// ---------------------------------------------------------------------------
-
-export class AgentRegistry {
-  private agents = new Map<string, AgentSpec>();
-  private teams = new Map<string, TeamSpec>();
-  private readonly agentsPath: string;
-  private readonly teamsPath: string;
-
-  constructor(private readonly homeDir: string) {
-    this.agentsPath = join(homeDir, 'agents.json');
-    this.teamsPath = join(homeDir, 'teams.json');
-  }
-
-  // ── Persistence ──────────────────────────────────────────────────
-
-  async load(): Promise<void> {
-    await this.loadAgents();
-    await this.loadTeams();
-  }
-
-  private async loadAgents(): Promise<void> {
-    try {
-      const data = await fs.readFile(this.agentsPath, 'utf8');
-      const parsed = JSON.parse(data);
-      if (!Array.isArray(parsed)) return;
-      for (const raw of parsed) {
-        const result = AgentSpecSchema.safeParse(raw);
-        if (result.success) {
-          this.agents.set(result.data.id, result.data as AgentSpec);
-        }
-      }
-    } catch { /* no file or invalid JSON — start empty */ }
-  }
-
-  private async loadTeams(): Promise<void> {
-    try {
-      const data = await fs.readFile(this.teamsPath, 'utf8');
-      const parsed = JSON.parse(data);
-      if (!Array.isArray(parsed)) return;
-      for (const raw of parsed) {
-        const result = TeamSpecSchema.safeParse(raw);
-        if (result.success) {
-          this.teams.set(result.data.id, result.data as TeamSpec);
-        }
-      }
-    } catch { /* no file or invalid JSON — start empty */ }
-  }
-
-  private async saveAgents(): Promise<void> {
-    await fs.mkdir(this.homeDir, { recursive: true });
-    const data = JSON.stringify([...this.agents.values()], null, 2);
-    await fs.writeFile(this.agentsPath, `${data}\n`, 'utf8');
-  }
-
-  private async saveTeams(): Promise<void> {
-    await fs.mkdir(this.homeDir, { recursive: true });
-    const data = JSON.stringify([...this.teams.values()], null, 2);
-    await fs.writeFile(this.teamsPath, `${data}\n`, 'utf8');
-  }
-
-  // ── Agent CRUD ───────────────────────────────────────────────────
-
-  list(): AgentSpec[] {
-    return [...this.agents.values()];
-  }
-
-  get(id: string): AgentSpec | undefined {
-    return this.agents.get(id);
-  }
-
-  async register(spec: AgentSpec): Promise<AgentSpec> {
-    this.agents.set(spec.id, spec);
-    await this.saveAgents();
-    return spec;
-  }
-
-  async remove(id: string): Promise<boolean> {
-    const existed = this.agents.delete(id);
-    if (existed) await this.saveAgents();
-    return existed;
-  }
-
-  async setEnabled(id: string, enabled: boolean): Promise<boolean> {
-    const agent = this.agents.get(id);
-    if (!agent) return false;
-    agent.enabled = enabled;
-    agent.updatedAt = new Date().toISOString();
-    await this.saveAgents();
-    return true;
-  }
-
-  // ── Team CRUD ────────────────────────────────────────────────────
-
-  listTeams(): TeamSpec[] {
-    return [...this.teams.values()];
-  }
-
-  getTeam(id: string): TeamSpec | undefined {
-    return this.teams.get(id);
-  }
-
-  async registerTeam(spec: TeamSpec): Promise<TeamSpec> {
-    this.teams.set(spec.id, spec);
-    await this.saveTeams();
-    return spec;
-  }
-
-  async removeTeam(id: string): Promise<boolean> {
-    const existed = this.teams.delete(id);
-    if (existed) await this.saveTeams();
-    return existed;
-  }
-
-  // ── Routing ──────────────────────────────────────────────────────
-
-  resolveAgent(prefix: string): { agentId?: string; strippedMessage: string } {
-    const match = prefix.match(/^@([a-z0-9_-]+)\s+([\s\S]+)$/i);
-    if (!match) return { strippedMessage: prefix };
-
-    const id = match[1].toLowerCase();
-    const strippedMessage = match[2].trim();
-
-    // Direct agent match
-    if (this.agents.has(id)) {
-      return { agentId: id, strippedMessage };
-    }
-
-    // Team match → route to leader
-    const team = this.teams.get(id);
-    if (team) {
-      return { agentId: team.leaderAgentId, strippedMessage };
-    }
-
-    return { strippedMessage: prefix };
-  }
-
-  // ── Prompt formatting ────────────────────────────────────────────
-
-  formatRoster(): string {
-    const lines: string[] = [];
-    const agents = this.list();
-    const teams = this.listTeams();
-
-    if (agents.length > 0) {
-      lines.push('## Available Agents');
-      lines.push('Use `agents.invoke` to delegate tasks to specialist agents.');
-      for (const a of agents) {
-        const model = a.provider
-          ? `[${a.provider}${a.model ? `/${a.model}` : ''}]`
-          : '[default provider]';
-        const status = a.enabled ? '' : ' (disabled)';
-        lines.push(`- **${a.id}** (${a.name}): ${a.role || 'No role defined'}${status} ${model}`);
-      }
-    }
-
-    if (teams.length > 0) {
-      if (lines.length > 0) lines.push('');
-      lines.push('## Teams');
-      for (const t of teams) {
-        lines.push(`- **${t.id}** (${t.name}): Leader: ${t.leaderAgentId}, Members: ${t.memberAgentIds.join(', ')}`);
-      }
-    }
-
-    return lines.join('\n');
   }
 }
 
@@ -257,24 +39,11 @@ export function createAgentsPlugin(): SlashbotPlugin {
       dependencies: ['slashbot.providers.auth'],
     },
     setup: (context) => {
-      const kernel = context.getService<SlashbotKernel>('kernel.instance');
-      const authRouter = context.getService<AuthProfileRouter>('kernel.authRouter');
-      const providers = context.getService<ProviderRegistry>('kernel.providers.registry');
-      const logger = context.getService<StructuredLogger>('kernel.logger') ?? context.logger;
+      const { kernel, logger, events } = resolveCommonServices(context);
       const paths = context.getService<PathResolver>('kernel.paths')!;
-      const events = kernel?.events as EventBus | undefined;
 
       registry = new AgentRegistry(paths.home());
-
-      if (authRouter && providers && kernel) {
-        llm = new VoltAgentAdapter(
-          authRouter,
-          providers,
-          logger,
-          kernel,
-          () => context.getService<TokenModeProxyAuthService>('wallet.proxyAuth'),
-        );
-      }
+      llm = createLlmAdapter(context);
 
       // ── Service ────────────────────────────────────────────────────
 

@@ -13,7 +13,13 @@
  * @see {@link stripHtml} -- Strip HTML tags, scripts, styles, and decode entities
  * @see {@link slugify} -- Convert text to URL-safe slug
  */
-import type { JsonValue } from '../core/kernel/contracts.js';
+import type { JsonValue, PluginRegistrationContext, StructuredLogger } from '../plugin-sdk/index.js';
+import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
+import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
+import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
+import { VoltAgentAdapter } from '@slashbot/core/voltagent/index.js';
+import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
 
 /**
  * Assert that a JSON value is a plain object (not an array or primitive).
@@ -154,4 +160,55 @@ export function slugify(text: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
+}
+
+// ── Shared service resolution ──────────────────────────────────────────
+
+export interface CommonServices {
+  kernel: SlashbotKernel | undefined;
+  authRouter: AuthProfileRouter | undefined;
+  providers: ProviderRegistry | undefined;
+  logger: StructuredLogger;
+  events: EventBus | undefined;
+}
+
+/**
+ * Resolve the common kernel services used by most plugins.
+ *
+ * @param context - The plugin registration context.
+ * @returns An object containing the resolved services (any may be undefined if unavailable).
+ */
+export function resolveCommonServices(context: PluginRegistrationContext): CommonServices {
+  const kernel = context.getService<SlashbotKernel>('kernel.instance');
+  return {
+    kernel,
+    authRouter: context.getService<AuthProfileRouter>('kernel.authRouter'),
+    providers: context.getService<ProviderRegistry>('kernel.providers.registry'),
+    logger: context.getService<StructuredLogger>('kernel.logger') ?? context.logger,
+    events: kernel?.events as EventBus | undefined,
+  };
+}
+
+/**
+ * Create a VoltAgentAdapter LLM instance from the standard kernel services.
+ *
+ * Returns `null` if the required services (authRouter, providers, kernel) are unavailable.
+ *
+ * @param context - The plugin registration context.
+ * @param services - Optional pre-resolved common services (avoids duplicate lookups).
+ * @returns A VoltAgentAdapter instance or null.
+ */
+export function createLlmAdapter(
+  context: PluginRegistrationContext,
+  services?: CommonServices,
+): LlmAdapter | null {
+  const { kernel, authRouter, providers, logger } = services ?? resolveCommonServices(context);
+  if (!authRouter || !providers || !kernel) return null;
+  return new VoltAgentAdapter(
+    authRouter,
+    providers,
+    logger,
+    kernel,
+    () => context.getService<TokenModeProxyAuthService>('wallet.proxyAuth'),
+  );
 }

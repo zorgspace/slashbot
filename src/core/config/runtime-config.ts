@@ -128,7 +128,32 @@ const DEFAULT_CONFIG: RuntimeConfig = {
   }
 };
 
-function deepMerge<T extends Record<string, unknown>>(base: T, override?: Partial<T>): T {
+const CONCAT_UNIQUE_ARRAY_PATHS = new Set(['plugins.paths']);
+
+function mergeArrayField(path: string, baseValue: unknown[], overrideValue: unknown[]): unknown[] {
+  if (!CONCAT_UNIQUE_ARRAY_PATHS.has(path)) {
+    return overrideValue;
+  }
+  if (!baseValue.every((item) => typeof item === 'string') || !overrideValue.every((item) => typeof item === 'string')) {
+    return overrideValue;
+  }
+
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const item of [...(baseValue as string[]), ...(overrideValue as string[])]) {
+    if (!seen.has(item)) {
+      seen.add(item);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
+function deepMerge<T extends Record<string, unknown>>(
+  base: T,
+  override?: Partial<T>,
+  pathPrefix = '',
+): T {
   if (!override) {
     return structuredClone(base);
   }
@@ -141,6 +166,7 @@ function deepMerge<T extends Record<string, unknown>>(base: T, override?: Partia
     }
 
     const baseValue = output[key];
+    const keyPath = pathPrefix ? `${pathPrefix}.${key}` : key;
 
     if (
       value &&
@@ -150,7 +176,16 @@ function deepMerge<T extends Record<string, unknown>>(base: T, override?: Partia
       typeof baseValue === 'object' &&
       !Array.isArray(baseValue)
     ) {
-      output[key] = deepMerge(baseValue as Record<string, unknown>, value as Record<string, unknown>);
+      output[key] = deepMerge(
+        baseValue as Record<string, unknown>,
+        value as Record<string, unknown>,
+        keyPath,
+      );
+      continue;
+    }
+
+    if (Array.isArray(value) && Array.isArray(baseValue)) {
+      output[key] = mergeArrayField(keyPath, baseValue, value);
       continue;
     }
 

@@ -12,7 +12,7 @@
  *
  * @see {@link createProviderAuthPlugin} -- Plugin factory function
  */
-import type { RuntimeConfig, SlashbotPlugin } from '../../plugin-sdk';
+import type { ProviderDefinition, ProviderModel, RuntimeConfig, SlashbotPlugin } from '../../plugin-sdk';
 import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
 import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
 import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
@@ -34,6 +34,84 @@ function formatContextWindow(n: number): string {
   if (n >= 1_000_000) return `${Math.round(n / 1_000_000)}M ctx`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}K ctx`;
   return `${n} ctx`;
+}
+
+type ActiveProviderSelection = RuntimeConfig['providers']['active'];
+
+interface ProviderDisplayRow {
+  id: string;
+  isActive: boolean;
+  modelName: string;
+  contextWindow: string;
+}
+
+function selectDisplayModel(provider: ProviderDefinition, active: ActiveProviderSelection): ProviderModel | undefined {
+  if (active?.providerId === provider.id) {
+    return provider.models.find((model) => model.id === active.modelId) ?? provider.models[0];
+  }
+  return provider.models[0];
+}
+
+function buildProviderDisplayRows(providers: ProviderDefinition[], active: ActiveProviderSelection): ProviderDisplayRow[] {
+  return providers.map((provider) => {
+    const model = selectDisplayModel(provider, active);
+    return {
+      id: provider.id,
+      isActive: provider.id === active?.providerId,
+      modelName: model?.displayName ?? '—',
+      contextWindow: model ? formatContextWindow(model.contextWindow) : '',
+    };
+  });
+}
+
+function buildProviderPickerItems(providers: ProviderDefinition[], active: ActiveProviderSelection): PickerItem[] {
+  return buildProviderDisplayRows(providers, active).map((row) => ({
+    id: row.id,
+    label: row.id,
+    description: `${row.modelName}  ${row.contextWindow}`,
+    active: row.isActive,
+  }));
+}
+
+function renderProvidersOverview(providers: ProviderDefinition[], active: ActiveProviderSelection): string {
+  if (providers.length === 0) {
+    return 'No providers configured.\n';
+  }
+
+  const rows = buildProviderDisplayRows(providers, active);
+  const maxId = Math.max(...rows.map((row) => row.id.length));
+  const maxModel = Math.max(...rows.map((row) => row.modelName.length));
+  const activeId = active?.providerId ?? 'none';
+  const activeModelId = active?.modelId ?? 'none';
+
+  let output = '\nProviders\n\n';
+  for (const row of rows) {
+    const marker = row.isActive ? '\u25cf' : ' ';
+    const id = row.id.padEnd(maxId);
+    const model = row.modelName.padEnd(maxModel);
+    output += `  ${marker} ${id}  ${model}  ${row.contextWindow}\n`;
+  }
+  output += `\nActive: ${activeId} (${activeModelId})\n`;
+  output += 'Use /providers select to switch.\n';
+  return output;
+}
+
+function buildModelPickerItems(provider: ProviderDefinition, activeModelId: string): PickerItem[] {
+  return provider.models.map((model) => ({
+    id: model.id,
+    label: model.id,
+    description: `${model.displayName}  ${formatContextWindow(model.contextWindow)}`,
+    active: model.id === activeModelId,
+  }));
+}
+
+function formatModelLine(model: ProviderModel, activeModelId?: string): string {
+  const marker = model.id === activeModelId ? ' *' : '';
+  return `  ${model.id}${marker} — ${model.displayName}`;
+}
+
+function buildModelLines(provider: ProviderDefinition | undefined, activeModelId?: string): string[] {
+  return provider?.models.map((model) => formatModelLine(model, activeModelId)) ?? [];
 }
 
 /**
@@ -120,18 +198,7 @@ export function createProviderAuthPlugin(): SlashbotPlugin {
               // Try interactive picker via bridge
               const picker = context.getService<PickerBridge>('kernel.pickerBridge');
               if (picker) {
-                const items: PickerItem[] = providersRegistry.list().map(p => {
-                  const isActive = p.id === active?.providerId;
-                  const model = isActive
-                    ? p.models.find(m => m.id === active?.modelId) ?? p.models[0]
-                    : p.models[0];
-                  return {
-                    id: p.id,
-                    label: p.id,
-                    description: `${model?.displayName ?? '—'}  ${model ? formatContextWindow(model.contextWindow) : ''}`,
-                    active: isActive,
-                  };
-                });
+                const items = buildProviderPickerItems(providersRegistry.list(), active);
                 const result = await picker.request('Select provider', items);
                 if (result.selected) {
                   name = result.selected;
@@ -166,39 +233,7 @@ export function createProviderAuthPlugin(): SlashbotPlugin {
 
           // Default: formatted provider list
           const allProviders = providersRegistry.list();
-          if (allProviders.length === 0) {
-            commandContext.stdout.write('No providers configured.\n');
-            return 0;
-          }
-
-          const activeId = active?.providerId ?? null;
-          const activeModelId = active?.modelId ?? null;
-
-          // Compute column widths
-          const maxId = Math.max(...allProviders.map(p => p.id.length));
-          const rows = allProviders.map(p => {
-            const isActive = p.id === activeId;
-            const model = isActive
-              ? p.models.find(m => m.id === activeModelId) ?? p.models[0]
-              : p.models[0];
-            return {
-              id: p.id,
-              isActive,
-              modelName: model?.displayName ?? '—',
-              ctx: model ? formatContextWindow(model.contextWindow) : '',
-            };
-          });
-          const maxModel = Math.max(...rows.map(r => r.modelName.length));
-
-          commandContext.stdout.write('\nProviders\n\n');
-          for (const row of rows) {
-            const marker = row.isActive ? '\u25cf' : ' ';
-            const id = row.id.padEnd(maxId);
-            const model = row.modelName.padEnd(maxModel);
-            commandContext.stdout.write(`  ${marker} ${id}  ${model}  ${row.ctx}\n`);
-          }
-          commandContext.stdout.write(`\nActive: ${activeId ?? 'none'} (${activeModelId ?? 'none'})\n`);
-          commandContext.stdout.write('Use /providers select to switch.\n');
+          commandContext.stdout.write(renderProvidersOverview(allProviders, active));
           return 0;
         }
       });
@@ -225,12 +260,7 @@ export function createProviderAuthPlugin(): SlashbotPlugin {
               const picker = context.getService<PickerBridge>('kernel.pickerBridge');
               const currentProvider = providersRegistry.get(active.providerId);
               if (picker && currentProvider && currentProvider.models.length > 0) {
-                const items: PickerItem[] = currentProvider.models.map(m => ({
-                  id: m.id,
-                  label: m.id,
-                  description: `${m.displayName}  ${formatContextWindow(m.contextWindow)}`,
-                  active: m.id === active.modelId,
-                }));
+                const items = buildModelPickerItems(currentProvider, active.modelId);
                 const result = await picker.request(`Select model (${active.providerId})`, items);
                 if (result.selected) {
                   modelId = result.selected;
@@ -238,8 +268,7 @@ export function createProviderAuthPlugin(): SlashbotPlugin {
                   return 0;
                 }
               } else {
-                const provider = currentProvider;
-                const models = provider?.models.map(m => `  ${m.id} — ${m.displayName}`) ?? [];
+                const models = buildModelLines(currentProvider);
                 commandContext.stderr.write(`Usage: /model select <model-id>\nAvailable for ${active.providerId}:\n${models.join('\n')}\n`);
                 return 1;
               }
@@ -282,9 +311,8 @@ export function createProviderAuthPlugin(): SlashbotPlugin {
           commandContext.stdout.write(`Active: ${active.modelId} (${active.providerId})\n`);
           if (provider && provider.models.length > 1) {
             commandContext.stdout.write(`\nAvailable for ${active.providerId}:\n`);
-            for (const m of provider.models) {
-              const marker = m.id === active.modelId ? ' *' : '';
-              commandContext.stdout.write(`  ${m.id}${marker} — ${m.displayName}\n`);
+            for (const line of buildModelLines(provider, active.modelId)) {
+              commandContext.stdout.write(`${line}\n`);
             }
           }
           commandContext.stdout.write('\nUse /model select to switch.\n');

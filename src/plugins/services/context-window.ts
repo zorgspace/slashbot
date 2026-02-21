@@ -11,10 +11,9 @@
  */
 import type { AgentMessage, LlmAdapter } from '@slashbot/core/agentic/llm/index.js';
 
-// Re-export shared token estimation utilities from core
-export { contentToText, estimateTokens, estimateMessageTokens } from '@slashbot/core/agentic/llm/helpers.js';
-
 import { contentToText, estimateTokens, estimateMessageTokens } from '@slashbot/core/agentic/llm/helpers.js';
+// Re-export shared token estimation utilities from core.
+export { contentToText, estimateTokens, estimateMessageTokens };
 
 /**
  * Window messages by token budget, keeping the most recent messages

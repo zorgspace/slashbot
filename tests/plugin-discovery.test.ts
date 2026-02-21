@@ -69,4 +69,90 @@ describe('Plugin discovery precedence', () => {
       )
     ).rejects.toThrowError('Unknown plugin id');
   });
+
+  test('emits discovery diagnostics for invalid manifest JSON', async () => {
+    const workspace = join(tmpdir(), `slashbot-${randomUUID()}`);
+    const configPath = join(workspace, 'extensions-config');
+    mkdirSync(join(configPath, 'broken.plugin'), { recursive: true });
+    writeFileSync(join(configPath, 'broken.plugin', 'manifest.json'), '{ invalid json');
+
+    const result = await discoverPlugins(
+      {
+        allow: [],
+        deny: [],
+        entries: [],
+        paths: ['extensions-config']
+      },
+      workspace,
+      []
+    );
+
+    expect(result.plugins).toHaveLength(0);
+    expect(result.diagnostics.some((item) =>
+      item.pluginId === 'broken.plugin' &&
+      item.status === 'failed' &&
+      typeof item.reason === 'string' &&
+      item.reason.includes('Invalid manifest JSON')
+    )).toBe(true);
+  });
+
+  test('emits discovery diagnostics for invalid manifest schema', async () => {
+    const workspace = join(tmpdir(), `slashbot-${randomUUID()}`);
+    const configPath = join(workspace, 'extensions-config');
+    mkdirSync(join(configPath, 'schema.plugin'), { recursive: true });
+    writeFileSync(
+      join(configPath, 'schema.plugin', 'manifest.json'),
+      JSON.stringify({
+        name: 'Schema Plugin',
+        version: '1.0.0',
+        main: 'index.js'
+      })
+    );
+
+    const result = await discoverPlugins(
+      {
+        allow: [],
+        deny: [],
+        entries: [],
+        paths: ['extensions-config']
+      },
+      workspace,
+      []
+    );
+
+    expect(result.plugins).toHaveLength(0);
+    expect(result.diagnostics.some((item) =>
+      item.pluginId === 'schema.plugin' &&
+      item.status === 'failed' &&
+      typeof item.reason === 'string' &&
+      item.reason.includes('Invalid manifest schema')
+    )).toBe(true);
+  });
+
+  test('emits discovery diagnostics for unreadable manifest paths', async () => {
+    const workspace = join(tmpdir(), `slashbot-${randomUUID()}`);
+    const configPath = join(workspace, 'extensions-config');
+    mkdirSync(join(configPath, 'io.plugin'), { recursive: true });
+    // Create a directory named manifest.json so readFile fails (EISDIR)
+    mkdirSync(join(configPath, 'io.plugin', 'manifest.json'), { recursive: true });
+
+    const result = await discoverPlugins(
+      {
+        allow: [],
+        deny: [],
+        entries: [],
+        paths: ['extensions-config']
+      },
+      workspace,
+      []
+    );
+
+    expect(result.plugins).toHaveLength(0);
+    expect(result.diagnostics.some((item) =>
+      item.pluginId === 'io.plugin' &&
+      item.status === 'failed' &&
+      typeof item.reason === 'string' &&
+      item.reason.includes('Failed to read manifest')
+    )).toBe(true);
+  });
 });

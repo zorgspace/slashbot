@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { FileChatHistoryStore } from '../src/plugins/services/chat-history-store.js';
+import { FileChatHistoryStore, SessionChatHistoryStore } from '../src/plugins/services/chat-history-store.js';
 
 describe('FileChatHistoryStore', () => {
   test('append + get stores and retrieves messages', async () => {
@@ -223,6 +223,78 @@ describe('FileChatHistoryStore', () => {
       expect(await store.length('c')).toBe(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('warns on invalid persisted JSON during hydrate', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'slashbot-hist-badjson-'));
+    const warnings: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (message: string, fields?: Record<string, unknown>) => {
+        warnings.push({ message, fields });
+      },
+      error: () => undefined,
+    };
+
+    try {
+      await writeFile(join(dir, 'connector-history.json'), '{ invalid-json', 'utf8');
+      const store = new FileChatHistoryStore(dir, 'connector-history.json', logger);
+      const result = await store.get('chat1');
+      expect(result).toEqual([]);
+      expect(warnings.some((entry) => entry.message.includes('Invalid connector history JSON'))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('warns on persist failures but keeps in-memory history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'slashbot-hist-persist-warn-'));
+    const blockedHome = join(root, 'blocked-home');
+    const warnings: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (message: string, fields?: Record<string, unknown>) => {
+        warnings.push({ message, fields });
+      },
+      error: () => undefined,
+    };
+
+    try {
+      // Use a file where a directory is expected to force mkdir/write failures.
+      await writeFile(blockedHome, 'not-a-directory', 'utf8');
+      const store = new FileChatHistoryStore(blockedHome, 'connector-history.json', logger);
+      await store.append('chat1', [{ role: 'user', content: 'hello' }]);
+      expect(await store.get('chat1')).toHaveLength(1);
+      expect(warnings.some((entry) => entry.message.includes('Failed to persist connector history file'))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('session store warns on markdown dump failure', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'slashbot-hist-session-warn-'));
+    const blockedSessionsDir = join(root, 'blocked-sessions');
+    const warnings: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (message: string, fields?: Record<string, unknown>) => {
+        warnings.push({ message, fields });
+      },
+      error: () => undefined,
+    };
+
+    try {
+      // Make the sessions path a file so markdown dumps cannot create directories.
+      await writeFile(blockedSessionsDir, 'not-a-directory', 'utf8');
+      const store = new SessionChatHistoryStore(blockedSessionsDir, logger);
+      await store.append('chat1', [{ role: 'user', content: 'hello' }]);
+      expect(warnings.some((entry) => entry.message.includes('Failed to persist session markdown history'))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

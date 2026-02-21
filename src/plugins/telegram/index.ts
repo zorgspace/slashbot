@@ -116,7 +116,7 @@ export function createTelegramPlugin(): SlashbotPlugin {
         },
       };
 
-      const sessionsStore = new SessionChatHistoryStore(paths.home('sessions'));
+      const sessionsStore = new SessionChatHistoryStore(paths.home('sessions'), logger);
 
       state.agentSession = new ConnectorAgentSession(
         llm,

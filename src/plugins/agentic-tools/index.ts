@@ -83,6 +83,33 @@ function normalizeArgs(value: JsonValue | undefined): string[] {
   throw new Error('Expected string[] field: args');
 }
 
+class FsToolError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'FsToolError';
+  }
+}
+
+function toFsToolFailure(err: unknown): { ok: false; error: { code: string; message: string } } {
+  if (err instanceof FsToolError) {
+    return { ok: false, error: { code: err.code, message: err.message } };
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  const code = (err as NodeJS.ErrnoException).code ?? 'FS_ERROR';
+  return { ok: false, error: { code, message } };
+}
+
+async function runFsTool<TOutput extends JsonValue>(
+  handler: () => Promise<TOutput>,
+): Promise<{ ok: true; output: TOutput } | { ok: false; error: { code: string; message: string } }> {
+  try {
+    const output = await handler();
+    return { ok: true, output };
+  } catch (err) {
+    return toFsToolFailure(err);
+  }
+}
+
 async function resolvePath(workspaceRoot: string, inputPath: string): Promise<string> {
   // Expand ~ to home directory (Node's resolve doesn't do this)
   const expanded = inputPath.startsWith('~/') || inputPath === '~'
@@ -249,18 +276,13 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
         parameters: z.object({
           path: z.string().describe('File path (absolute like /etc/hosts or ~/.config/... , or relative to workspace)'),
         }),
-        execute: async (args) => {
-          try {
+        execute: async (args) =>
+          runFsTool(async () => {
             const input = asObject(args);
             const filePath = await resolvePath(workspaceRoot, asString(input.path, 'path'));
             const content = await fs.readFile(filePath, 'utf8');
-            return { ok: true, output: content };
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            const code = (err as NodeJS.ErrnoException).code ?? 'FS_ERROR';
-            return { ok: false, error: { code, message } };
-          }
-        }
+            return content;
+          }),
       });
 
       context.registerTool({
@@ -272,20 +294,15 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
           path: z.string().describe('File path (absolute or relative to workspace)'),
           content: z.string().describe('File content to write'),
         }),
-        execute: async (args) => {
-          try {
+        execute: async (args) =>
+          runFsTool(async () => {
             const input = asObject(args);
             const filePath = await resolvePath(workspaceRoot, asString(input.path, 'path'));
             const content = asText(input.content, 'content');
             await fs.mkdir(dirname(filePath), { recursive: true });
             await fs.writeFile(filePath, content, 'utf8');
-            return { ok: true, output: `wrote ${filePath}` };
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            const code = (err as NodeJS.ErrnoException).code ?? 'FS_ERROR';
-            return { ok: false, error: { code, message } };
-          }
-        }
+            return `wrote ${filePath}`;
+          }),
       });
 
       context.registerTool({
@@ -298,28 +315,26 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
           find: z.string().describe('Text to find'),
           replace: z.string().describe('Replacement text'),
         }),
-        execute: async (args) => {
-          try {
+        execute: async (args) =>
+          runFsTool(async () => {
             const input = asObject(args);
             const filePath = await resolvePath(workspaceRoot, asString(input.path, 'path'));
             const find = asString(input.find, 'find');
             const replace = asText(input.replace, 'replace');
             const current = await fs.readFile(filePath, 'utf8');
             if (!current.includes(find)) {
-              return { ok: false, error: { code: 'PATCH_FIND_NOT_FOUND', message: `Target text not found in ${filePath}` } };
+              throw new FsToolError('PATCH_FIND_NOT_FOUND', `Target text not found in ${filePath}`);
             }
             const occurrences = current.split(find).length - 1;
             if (occurrences > 1) {
-              return { ok: false, error: { code: 'PATCH_AMBIGUOUS', message: `Found ${occurrences} occurrences of the target text in ${filePath}. Provide more surrounding context to make the match unique.` } };
+              throw new FsToolError(
+                'PATCH_AMBIGUOUS',
+                `Found ${occurrences} occurrences of the target text in ${filePath}. Provide more surrounding context to make the match unique.`,
+              );
             }
             await fs.writeFile(filePath, current.replace(find, replace), 'utf8');
-            return { ok: true, output: `patched ${filePath}` };
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            const code = (err as NodeJS.ErrnoException).code ?? 'FS_ERROR';
-            return { ok: false, error: { code, message } };
-          }
-        }
+            return `patched ${filePath}`;
+          }),
       });
 
       context.registerTool({
@@ -331,20 +346,15 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
           path: z.string().describe('File path (absolute or relative to workspace)'),
           content: z.string().describe('Content to append'),
         }),
-        execute: async (args) => {
-          try {
+        execute: async (args) =>
+          runFsTool(async () => {
             const input = asObject(args);
             const filePath = await resolvePath(workspaceRoot, asString(input.path, 'path'));
             const content = asText(input.content, 'content');
             await fs.mkdir(dirname(filePath), { recursive: true });
             await fs.appendFile(filePath, content, 'utf8');
-            return { ok: true, output: `appended to ${filePath}` };
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            const code = (err as NodeJS.ErrnoException).code ?? 'FS_ERROR';
-            return { ok: false, error: { code, message } };
-          }
-        }
+            return `appended to ${filePath}`;
+          }),
       });
 
       context.registerTool({
@@ -355,8 +365,8 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
         parameters: z.object({
           path: z.string().describe('Directory path (absolute or relative to workspace)'),
         }),
-        execute: async (args) => {
-          try {
+        execute: async (args) =>
+          runFsTool(async () => {
             const input = asObject(args);
             const dirPath = await resolvePath(workspaceRoot, asString(input.path, 'path'));
             const entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -364,13 +374,8 @@ export function createAgenticToolsPlugin(): SlashbotPlugin {
               const prefix = entry.isDirectory() ? 'DIR' : 'FILE';
               return `${prefix}: ${entry.name}`;
             });
-            return { ok: true, output: lines.join('\n') };
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            const code = (err as NodeJS.ErrnoException).code ?? 'FS_ERROR';
-            return { ok: false, error: { code, message } };
-          }
-        }
+            return lines.join('\n');
+          }),
       });
 
       context.registerTool({

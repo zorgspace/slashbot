@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { JsonValue, SlashbotPlugin, StructuredLogger } from '../../plugin-sdk/index.js';
-import type { SlashbotKernel } from '@slashbot/core/kernel/kernel.js';
+import type { JsonValue, SlashbotPlugin } from '../../plugin-sdk/index.js';
 import type { EventBus } from '@slashbot/core/kernel/event-bus.js';
-import type { ProviderRegistry } from '@slashbot/core/kernel/registries.js';
-import type { LlmAdapter, TokenModeProxyAuthService } from '@slashbot/core/agentic/llm/index.js';
-import { VoltAgentAdapter } from '@slashbot/core/voltagent/index.js';
-import type { AuthProfileRouter } from '@slashbot/core/providers/auth-router.js';
+import type { LlmAdapter } from '@slashbot/core/agentic/llm/index.js';
 import type { AgentRegistry } from '../agents/index.js';
-import { asObject, asString } from '../utils.js';
+import { asObject, asString, createLlmAdapter, resolveCommonServices } from '../utils.js';
+import { RunRegistry } from './run-registry.js';
+import type { AgentResult, RunRecord, RunStatus } from './types.js';
+
+export { RunRegistry } from './run-registry.js';
+export type { RunRecord, RunStatus, AgentResult } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Event declarations
@@ -20,117 +21,6 @@ declare module '@slashbot/core/kernel/event-bus.js' {
     'orchestrate:spawned': { runId: string; strategy: string; label: string; background: boolean };
     'orchestrate:completed': { runId: string; strategy: string; agentCount: number; durationMs: number; status: RunStatus };
     'orchestrate:killed': { runId: string; label: string };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Run Registry
-// ---------------------------------------------------------------------------
-
-type RunStatus = 'pending' | 'running' | 'completed' | 'error' | 'killed';
-
-export interface RunRecord {
-  runId: string;
-  label: string;
-  task: string;
-  strategy: string;
-  agents: string[];
-  status: RunStatus;
-  background: boolean;
-  depth: number;
-  createdAt: number;
-  startedAt?: number;
-  endedAt?: number;
-  durationMs?: number;
-  outcome?: {
-    ok: boolean;
-    text?: string;
-    error?: string;
-    agentResults?: Array<{ agentId: string; text: string; steps: number; toolCalls: number; finishReason: string; durationMs: number }>;
-  };
-  abort?: AbortController;
-}
-
-const MAX_CONCURRENT_DEFAULT = 8;
-const MAX_DEPTH_DEFAULT = 2;
-const ARCHIVE_AFTER_MS = 60 * 60 * 1000; // 1 hour
-
-export class RunRegistry {
-  private runs = new Map<string, RunRecord>();
-  maxConcurrent = MAX_CONCURRENT_DEFAULT;
-  maxDepth = MAX_DEPTH_DEFAULT;
-
-  create(record: RunRecord): void {
-    this.runs.set(record.runId, record);
-  }
-
-  get(runId: string): RunRecord | undefined {
-    return this.runs.get(runId);
-  }
-
-  /** Find a run by runId prefix, label, or numeric 1-based index of active runs. */
-  resolve(target: string): RunRecord | undefined {
-    // Exact runId
-    const exact = this.runs.get(target);
-    if (exact) return exact;
-
-    // Numeric index (1-based) into active runs
-    const idx = parseInt(target, 10);
-    if (!isNaN(idx) && idx >= 1) {
-      const active = this.active();
-      if (idx <= active.length) return active[idx - 1];
-    }
-
-    // "last" keyword
-    if (target === 'last') {
-      const active = this.active();
-      return active.length > 0 ? active[active.length - 1] : undefined;
-    }
-
-    // Label match
-    const all = Array.from(this.runs.values());
-    for (const r of all) {
-      if (r.label === target) return r;
-    }
-
-    // RunId prefix match
-    for (const r of all) {
-      if (r.runId.startsWith(target)) return r;
-    }
-
-    // Label prefix match
-    for (const r of all) {
-      if (r.label.startsWith(target)) return r;
-    }
-
-    return undefined;
-  }
-
-  active(): RunRecord[] {
-    return Array.from(this.runs.values()).filter((r) => r.status === 'pending' || r.status === 'running');
-  }
-
-  recent(limit = 20): RunRecord[] {
-    return Array.from(this.runs.values())
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, limit);
-  }
-
-  activeCount(): number {
-    return this.active().length;
-  }
-
-  /** Sweep completed runs older than the archive threshold. */
-  sweep(): number {
-    const cutoff = Date.now() - ARCHIVE_AFTER_MS;
-    let swept = 0;
-    for (const [id, r] of Array.from(this.runs.entries())) {
-      if ((r.status === 'completed' || r.status === 'error' || r.status === 'killed') && r.createdAt < cutoff) {
-        this.runs.delete(id);
-        swept++;
-      }
-    }
-    return swept;
   }
 }
 
@@ -154,22 +44,9 @@ export function createOrchestratorPlugin(): SlashbotPlugin {
       dependencies: ['slashbot.agents', 'slashbot.providers.auth'],
     },
     setup: (context) => {
-      const kernel = context.getService<SlashbotKernel>('kernel.instance');
-      const authRouter = context.getService<AuthProfileRouter>('kernel.authRouter');
-      const providers = context.getService<ProviderRegistry>('kernel.providers.registry');
-      const logger = context.getService<StructuredLogger>('kernel.logger') ?? context.logger;
-      const events = kernel?.events as EventBus | undefined;
+      const { kernel, logger, events } = resolveCommonServices(context);
       const registry = context.getService<AgentRegistry>('agents.registry');
-
-      if (authRouter && providers && kernel) {
-        llm = new VoltAgentAdapter(
-          authRouter,
-          providers,
-          logger,
-          kernel,
-          () => context.getService<TokenModeProxyAuthService>('wallet.proxyAuth'),
-        );
-      }
+      llm = createLlmAdapter(context);
 
       // ── Service ──────────────────────────────────────────────────
 
@@ -187,7 +64,7 @@ export function createOrchestratorPlugin(): SlashbotPlugin {
         task: string,
         extraContext?: string,
         signal?: AbortSignal,
-      ): Promise<{ agentId: string; text: string; steps: number; toolCalls: number; finishReason: string; durationMs: number }> {
+      ): Promise<AgentResult> {
         if (!llm || !kernel) throw new Error('LLM adapter not available');
         if (!registry) throw new Error('Agent registry not available');
         signal?.throwIfAborted();
@@ -239,7 +116,7 @@ export function createOrchestratorPlugin(): SlashbotPlugin {
         task: string,
         extraContext?: string,
         signal?: AbortSignal,
-      ): Promise<{ agentId: string; text: string; steps: number; toolCalls: number; finishReason: string; durationMs: number }> {
+      ): Promise<AgentResult> {
         if (!llm || !kernel) throw new Error('LLM adapter not available');
         signal?.throwIfAborted();
 
@@ -320,8 +197,6 @@ export function createOrchestratorPlugin(): SlashbotPlugin {
       }
 
       // ── Core: execute orchestration ────────────────────────────────
-
-      type AgentResult = { agentId: string; text: string; steps: number; toolCalls: number; finishReason: string; durationMs: number };
 
       async function executeOrchestration(
         run: RunRecord,

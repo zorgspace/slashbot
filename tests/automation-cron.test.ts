@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { parseCronExpression, parseField, computeNextCronRun } from '../src/plugins/automation/index.js';
+import { parseCronExpression, parseField, computeNextCronRun } from '../src/plugins/automation/cron.js';
 
 describe('parseField', () => {
   test('wildcard expands to full range', () => {
@@ -101,10 +101,9 @@ describe('computeNextCronRun', () => {
 });
 
 describe('parseField (additional)', () => {
-  test('range with step: 0-30/10 (unsupported combo returns empty)', () => {
-    // parseField handles range and step separately; combined range/step is not supported
+  test('range with step: 0-30/10', () => {
     const result = parseField('0-30/10', 0, 59);
-    expect(result.size).toBe(0);
+    expect(result).toEqual(new Set([0, 10, 20, 30]));
   });
 
   test('boundary values 0 and 59', () => {
@@ -120,6 +119,12 @@ describe('parseField (additional)', () => {
   test('step from all: */1 produces every value', () => {
     const result = parseField('*/1', 0, 23);
     expect(result.size).toBe(24);
+  });
+
+  test('invalid values throw', () => {
+    expect(() => parseField('a', 0, 59)).toThrow('Invalid cron');
+    expect(() => parseField('60', 0, 59)).toThrow('out of range');
+    expect(() => parseField('*/0', 0, 59)).toThrow('Invalid cron step');
   });
 });
 

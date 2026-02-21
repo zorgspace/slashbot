@@ -187,7 +187,7 @@ export function createSlackPlugin(): SlashbotPlugin {
         agentSession = new ConnectorAgentSession(
           llm,
           () => kernel.assemblePrompt(),
-          new SessionChatHistoryStore(paths.home('sessions')),
+          new SessionChatHistoryStore(paths.home('sessions'), logger),
         );
       }
 

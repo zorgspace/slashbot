@@ -14,6 +14,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { AgentMessage, RichMessage } from '@slashbot/core/agentic/llm/index.js';
+import type { StructuredLogger } from '../../plugin-sdk/index.js';
 
 const ConnectorHistorySchema = z.record(
   z.string(),
@@ -96,36 +97,54 @@ export class FileChatHistoryStore implements ChatHistoryStore {
   private readonly richFilePath: string;
   private readonly summaryFilePath: string;
   private readonly dirPath: string;
+  private readonly logger?: StructuredLogger;
 
-  constructor(homeDir: string, filename = 'connector-history.json') {
+  constructor(homeDir: string, filename = 'connector-history.json', logger?: StructuredLogger) {
     this.dirPath = homeDir;
     this.filePath = join(homeDir, filename);
     this.richFilePath = join(homeDir, 'connector-rich-history.json');
     this.summaryFilePath = join(homeDir, 'connector-summaries.json');
+    this.logger = logger;
   }
 
   private async hydrate(): Promise<void> {
     if (this.hydrated) return;
     this.hydrated = true;
 
+    let raw: string;
     try {
-      const raw = await fs.readFile(this.filePath, 'utf8');
-      const result = ConnectorHistorySchema.safeParse(JSON.parse(raw));
-      if (!result.success) return;
-
-      for (const [chatId, entry] of Object.entries(result.data)) {
-        if (!Array.isArray(entry)) continue;
-        const messages = entry
-          .map((item) => normalizeMessage(item))
-          .filter((item): item is AgentMessage => item !== null)
-          .filter((message) => message.role !== 'system')
-          .slice(-MAX_HISTORY);
-        if (messages.length > 0) {
-          this.histories.set(chatId, messages);
-        }
+      raw = await fs.readFile(this.filePath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.warn('Failed to read connector history file', this.filePath, error);
       }
-    } catch {
-      // best effort
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      this.warn('Invalid connector history JSON', this.filePath, error);
+      return;
+    }
+
+    const result = ConnectorHistorySchema.safeParse(parsed);
+    if (!result.success) {
+      this.warn('Invalid connector history schema', this.filePath, result.error.message);
+      return;
+    }
+
+    for (const [chatId, entry] of Object.entries(result.data)) {
+      if (!Array.isArray(entry)) continue;
+      const messages = entry
+        .map((item) => normalizeMessage(item))
+        .filter((item): item is AgentMessage => item !== null)
+        .filter((message) => message.role !== 'system')
+        .slice(-MAX_HISTORY);
+      if (messages.length > 0) {
+        this.histories.set(chatId, messages);
+      }
     }
   }
 
@@ -141,8 +160,8 @@ export class FileChatHistoryStore implements ChatHistoryStore {
       );
       await fs.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
       await fs.rename(tempPath, this.filePath);
-    } catch {
-      // best effort
+    } catch (error) {
+      this.warn('Failed to persist connector history file', this.filePath, error);
     }
   }
 
@@ -199,20 +218,36 @@ export class FileChatHistoryStore implements ChatHistoryStore {
   private async hydrateRich(): Promise<void> {
     if (this.richHydrated) return;
     this.richHydrated = true;
+    let raw: string;
     try {
-      const raw = await fs.readFile(this.richFilePath, 'utf8');
-      const result = ConnectorHistorySchema.safeParse(JSON.parse(raw));
-      if (!result.success) return;
-      for (const [chatId, entry] of Object.entries(result.data)) {
-        if (!Array.isArray(entry)) continue;
-        // Store as-is (RichMessage includes tool messages)
-        const messages = (entry as RichMessage[]).slice(-MAX_RICH_HISTORY);
-        if (messages.length > 0) {
-          this.richHistories.set(chatId, messages);
-        }
+      raw = await fs.readFile(this.richFilePath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.warn('Failed to read connector rich history file', this.richFilePath, error);
       }
-    } catch {
-      // best effort
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      this.warn('Invalid connector rich history JSON', this.richFilePath, error);
+      return;
+    }
+
+    const result = ConnectorHistorySchema.safeParse(parsed);
+    if (!result.success) {
+      this.warn('Invalid connector rich history schema', this.richFilePath, result.error.message);
+      return;
+    }
+    for (const [chatId, entry] of Object.entries(result.data)) {
+      if (!Array.isArray(entry)) continue;
+      // Store as-is (RichMessage includes tool messages)
+      const messages = (entry as RichMessage[]).slice(-MAX_RICH_HISTORY);
+      if (messages.length > 0) {
+        this.richHistories.set(chatId, messages);
+      }
     }
   }
 
@@ -228,8 +263,8 @@ export class FileChatHistoryStore implements ChatHistoryStore {
       );
       await fs.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
       await fs.rename(tempPath, this.richFilePath);
-    } catch {
-      // best effort
+    } catch (error) {
+      this.warn('Failed to persist connector rich history file', this.richFilePath, error);
     }
   }
 
@@ -247,18 +282,32 @@ export class FileChatHistoryStore implements ChatHistoryStore {
   private async hydrateSummaries(): Promise<void> {
     if (this.summaryHydrated) return;
     this.summaryHydrated = true;
+    let raw: string;
     try {
-      const raw = await fs.readFile(this.summaryFilePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        for (const [chatId, summary] of Object.entries(parsed)) {
-          if (typeof summary === 'string') {
-            this.summaries.set(chatId, summary);
-          }
+      raw = await fs.readFile(this.summaryFilePath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.warn('Failed to read connector summary file', this.summaryFilePath, error);
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      this.warn('Invalid connector summary JSON', this.summaryFilePath, error);
+      return;
+    }
+
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const [chatId, summary] of Object.entries(parsed)) {
+        if (typeof summary === 'string') {
+          this.summaries.set(chatId, summary);
         }
       }
-    } catch {
-      // best effort
+    } else {
+      this.warn('Invalid connector summary schema', this.summaryFilePath, 'summary file must be an object');
     }
   }
 
@@ -269,9 +318,17 @@ export class FileChatHistoryStore implements ChatHistoryStore {
       const payload = Object.fromEntries(this.summaries.entries());
       await fs.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
       await fs.rename(tempPath, this.summaryFilePath);
-    } catch {
-      // best effort
+    } catch (error) {
+      this.warn('Failed to persist connector summary file', this.summaryFilePath, error);
     }
+  }
+
+  private warn(message: string, path: string, error: unknown): void {
+    if (!this.logger) return;
+    this.logger.warn(message, {
+      path,
+      reason: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -300,9 +357,11 @@ export class SessionChatHistoryStore implements ChatHistoryStore {
   private readonly richHistories = new Map<string, RichMessage[]>();
   private readonly summaries = new Map<string, string>();
   private readonly sessionsDir: string;
+  private readonly logger?: StructuredLogger;
 
-  constructor(sessionsDir: string) {
+  constructor(sessionsDir: string, logger?: StructuredLogger) {
     this.sessionsDir = sessionsDir;
+    this.logger = logger;
   }
 
   async get(chatId: string): Promise<AgentMessage[]> {
@@ -380,8 +439,12 @@ export class SessionChatHistoryStore implements ChatHistoryStore {
       }
 
       await fs.writeFile(filePath, lines.join('\n'), 'utf8');
-    } catch {
-      // best effort
+    } catch (error) {
+      this.logger?.warn('Failed to persist session markdown history', {
+        chatId,
+        sessionsDir: this.sessionsDir,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

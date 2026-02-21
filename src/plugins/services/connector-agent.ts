@@ -10,6 +10,7 @@
  */
 import type { AgentMessage, LlmAdapter, LlmCompletionInput, RichMessage, StreamingCallback } from '@slashbot/core/agentic/llm/index.js';
 import type { AgentLoopResult } from '@slashbot/core/agentic/llm/types.js';
+import type { StructuredLogger } from '../../plugin-sdk/index.js';
 import type { ChatHistoryStore } from './chat-history-store.js';
 import { FileChatHistoryStore } from './chat-history-store.js';
 import { contentToText, estimateTokens, maybeSummarize, mimeTypeFromDataUrl, windowByTokenBudget } from './context-window.js';
@@ -44,9 +45,10 @@ export class ConnectorAgentSession {
     private readonly runAgent?: ConnectorAgentRunner,
     private readonly contextBudget: number = 32000,
     private readonly maxResponseTokens?: number,
+    logger?: StructuredLogger,
   ) {
     this.store = typeof storeOrHomeDir === 'string'
-      ? new FileChatHistoryStore(storeOrHomeDir)
+      ? new FileChatHistoryStore(storeOrHomeDir, 'connector-history.json', logger)
       : storeOrHomeDir;
   }
 

@@ -28,9 +28,29 @@ export interface DiscoveryResult {
   diagnostics: PluginDiagnostic[];
 }
 
-async function discoverFromDirectory(basePath: string, source: DiscoveredPlugin['source']): Promise<DiscoveredPlugin[]> {
+interface DirectoryDiscoveryResult {
+  plugins: DiscoveredPlugin[];
+  diagnostics: PluginDiagnostic[];
+}
+
+function errorReason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function derivePluginIdFromManifest(parsed: unknown, fallback: string): string {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const maybeId = (parsed as Record<string, unknown>).id;
+    if (typeof maybeId === 'string' && maybeId.trim().length > 0) {
+      return maybeId;
+    }
+  }
+  return fallback;
+}
+
+async function discoverFromDirectory(basePath: string, source: DiscoveredPlugin['source']): Promise<DirectoryDiscoveryResult> {
   const entries = await fs.readdir(basePath, { withFileTypes: true }).catch(() => []);
   const discovered: DiscoveredPlugin[] = [];
+  const diagnostics: PluginDiagnostic[] = [];
 
   for (const entry of entries) {
     if (!entry.isDirectory()) {
@@ -39,17 +59,49 @@ async function discoverFromDirectory(basePath: string, source: DiscoveredPlugin[
 
     const pluginRoot = join(basePath, entry.name);
     const manifestPath = join(pluginRoot, 'manifest.json');
+    let rawManifest: string;
+    try {
+      rawManifest = await fs.readFile(manifestPath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        continue;
+      }
+      diagnostics.push({
+        pluginId: entry.name,
+        status: 'failed',
+        reason: `Failed to read manifest: ${errorReason(error)}`,
+        sourcePath: manifestPath,
+      });
+      continue;
+    }
+
+    let parsedManifest: unknown;
+    try {
+      parsedManifest = JSON.parse(rawManifest);
+    } catch (error) {
+      diagnostics.push({
+        pluginId: entry.name,
+        status: 'failed',
+        reason: `Invalid manifest JSON: ${errorReason(error)}`,
+        sourcePath: manifestPath,
+      });
+      continue;
+    }
 
     try {
-      const rawManifest = await fs.readFile(manifestPath, 'utf8');
-      const manifest = validateManifest(JSON.parse(rawManifest));
+      const manifest = validateManifest(parsedManifest);
       discovered.push({ manifest, pluginPath: pluginRoot, source });
-    } catch {
-      // Skip invalid plugins at discovery level. Loader emits detailed diagnostics.
+    } catch (error) {
+      diagnostics.push({
+        pluginId: derivePluginIdFromManifest(parsedManifest, entry.name),
+        status: 'failed',
+        reason: `Invalid manifest schema: ${errorReason(error)}`,
+        sourcePath: manifestPath,
+      });
     }
   }
 
-  return discovered;
+  return { plugins: discovered, diagnostics };
 }
 
 function normalizePaths(config: PluginLoadConfig, workspaceRoot: string): Record<DiscoveredPlugin['source'], string[]> {
@@ -78,8 +130,9 @@ export async function discoverPlugins(
 
   for (const source of ['config', 'workspace', 'user-global'] as const) {
     for (const sourcePath of pathMap[source]) {
-      const plugins = await discoverFromDirectory(sourcePath, source);
-      for (const plugin of plugins) {
+      const directoryResult = await discoverFromDirectory(sourcePath, source);
+      diagnostics.push(...directoryResult.diagnostics);
+      for (const plugin of directoryResult.plugins) {
         if (!discoveredById.has(plugin.manifest.id)) {
           discoveredById.set(plugin.manifest.id, plugin);
         }

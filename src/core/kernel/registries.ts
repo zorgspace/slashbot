@@ -91,6 +91,10 @@ export class ServiceRegistry {
     this.services.set(service.id, service as ServiceDefinition<unknown>);
   }
 
+  upsert<T>(service: ServiceDefinition<T>): void {
+    this.services.set(service.id, service as ServiceDefinition<unknown>);
+  }
+
   get<T>(serviceId: string): T | undefined {
     const service = this.services.get(serviceId);
     return service?.implementation as T | undefined;

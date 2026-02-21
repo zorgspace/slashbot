@@ -428,7 +428,7 @@ export async function runAgentLoop(
       }
     }
 
-    // All attempts exhausted — surface context overflow with a clear message (openclaw-style)
+    // All attempts exhausted
     deps.logger.warn('Agent loop failed, all providers exhausted', { lastError: lastError ?? 'unknown' });
     const contextOverflowText =
       'Context overflow: prompt too large for the model. Try /reset (or /new) to start a fresh session, or use a larger-context model. You can also reduce system prompt size in config.';
