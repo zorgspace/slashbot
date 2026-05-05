@@ -12,6 +12,13 @@
  */
 import { promises as fs } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import type { EventBus } from '../../core/kernel/event-bus.js';
+
+declare module '../../core/kernel/event-bus.js' {
+  interface EventMap {
+    'memory:upserted': { text: string; tags: string[]; file: string; path: string; line: number };
+  }
+}
 
 interface MemoryChunk {
   path: string;
@@ -31,6 +38,8 @@ export interface MemoryHit {
   text: string;
   /** BM25 relevance score (higher is better). */
   score: number;
+  /** Hit origin: direct BM25 match or graph expansion. */
+  source?: 'direct' | 'graph';
 }
 
 /** Input for appending a new entry to a memory file via {@link MemoryStore.upsert}. */
@@ -114,9 +123,14 @@ function parseChunks(path: string, content: string): MemoryChunk[] {
 export class MemoryStore {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly baseDir: string;
+  private eventBus: EventBus | undefined;
 
   constructor(workspaceRoot: string) {
     this.baseDir = join(workspaceRoot, '.slashbot');
+  }
+
+  setEventBus(eventBus: EventBus): void {
+    this.eventBus = eventBus;
   }
 
   private memoryRoot(): string {
@@ -184,7 +198,42 @@ export class MemoryStore {
    * @param limit - Maximum number of results to return (default 10).
    * @returns Scored search results sorted by relevance.
    */
-  async search(query: string, limit = 10): Promise<MemoryHit[]> {
+  async search(
+    query: string,
+    limit = 10,
+    graph?: { slugify(label: string): string; neighbors(nodeId: string, depth?: number, typeFilter?: string): Array<{ id: string; label: string; type: string; rel: string; weight: number; direction: string }> },
+    expand = true,
+  ): Promise<MemoryHit[]> {
+    const directHits = await this.bm25Search(query, limit);
+    for (const hit of directHits) hit.source = 'direct';
+
+    if (!graph || !expand) return directHits;
+
+    // Graph expansion: extract top concept from query, get neighbors, run secondary searches
+    const queryId = graph.slugify(query);
+    const neighbors = graph.neighbors(queryId, 1);
+    if (neighbors.length === 0) return directHits;
+
+    const seen = new Set(directHits.map(h => `${h.path}:${h.line}`));
+    const expandedHits: MemoryHit[] = [];
+
+    for (const neighbor of neighbors.slice(0, 3)) {
+      const secondaryHits = await this.bm25Search(neighbor.label, 3);
+      for (const hit of secondaryHits) {
+        const key = `${hit.path}:${hit.line}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          expandedHits.push({ ...hit, score: hit.score * 0.5, source: 'graph' });
+        }
+      }
+    }
+
+    const combined = [...directHits, ...expandedHits];
+    combined.sort((a, b) => b.score - a.score);
+    return combined.slice(0, limit);
+  }
+
+  private async bm25Search(query: string, limit: number): Promise<MemoryHit[]> {
     const chunks = await this.allChunks();
     if (chunks.length === 0) return [];
 
@@ -306,6 +355,17 @@ export class MemoryStore {
     }
 
     this.cache.delete(fileName);
+
+    if (this.eventBus) {
+      this.eventBus.publish('memory:upserted', {
+        text: entry.text,
+        tags: entry.tags ?? [],
+        file: fileName,
+        path: fileName,
+        line: lineNumber,
+      });
+    }
+
     return { path: fileName, line: lineNumber };
   }
 

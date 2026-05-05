@@ -352,15 +352,25 @@ export async function runAgentLoop(
     }
 
     deps.logger.warn('Agent loop failed, fallback selected', { reason });
+    debugLog(`CATCH error: ${reason} | stack: ${error instanceof Error ? error.stack : 'n/a'}`);
     const contextOverflowText =
       'Context overflow: prompt too large for the model. Try /reset (or /new) to start a fresh session, or use a larger-context model. You can also reduce system prompt size in config.';
-    const text = isContextOverflowError(reason) ? contextOverflowText : fallbackChatResponse();
+    const text = isContextOverflowError(reason)
+      ? contextOverflowText
+      : isApiError(reason)
+        ? `API error: ${reason}. Try again in a moment.`
+        : fallbackChatResponse();
     callbacks?.onDone?.({ text, steps: 0, toolCalls: 0, finishReason: 'error' });
     return { text, steps: 0, toolCalls: 0, finishReason: 'error' };
   } finally {
     clearTimeout(timeout);
     input.abortSignal?.removeEventListener('abort', onAbort);
   }
+}
+
+/** Detect HTTP-level API errors (e.g. 503 Service Unavailable, 429 Too Many Requests). */
+function isApiError(reason: string): boolean {
+  return /service unavailable|too many requests|internal server error|bad gateway|gateway timeout|rate limit/i.test(reason);
 }
 
 // ---------------------------------------------------------------------------
